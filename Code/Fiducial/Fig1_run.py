@@ -4,7 +4,7 @@
 
 # Figure 1 showcases the amplification factor change across model scatters and limb-darkening law used (aka the dimensionality)
 # The goal of this file is to run injection-retrievals for a grid of 1. model scatters 2. noise seeds and 3. limb-darkening laws
-# In particular the grid is 14 model scatters by 3 polynomial limb-darkening laws by 10 noise seeds.
+# In particular the grid is 14 model scatters by 3 polynomial limb-darkening laws by 10 noise seeds, i.e. 420 injection-retrievals.
 
 
 ######################################
@@ -47,35 +47,50 @@ jaxnoise_key = jax.random.PRNGKey(0)
 ########## Define hyper-parameters ##########
 #############################################
 #%% Mock light curve
-#%%%% Model time
-low_t = -1/13
-high_t = 1/13
-num_t = 500
-
-#%%%% Coefficients for non-linear limb-darkening law
-init_NLLD_coeffs = [0.1, 0.2, 0.4, 0.3]
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.1, u2=0.2, u3=0.4, u4=0.3)
 
 #%%%% Define G in units needed now to avoid JAX tracing issues
 G_solar_units = G.to(u.Rsun**3 / (u.Msun * u.day**2)).value
 R_star = (1.0 * u.R_sun).value
 #%%%% Mock system - fiducial
 init_state_dic = {}
-init_state_dic['times'] = jnp.linspace(low_t, high_t, num_t)  #days
 init_state_dic['period'] = 1.                                 #days
 a_meters = ( (G.value * (1.0 * u.M_sun).to(u.kg).value * (init_state_dic['period'] * 24 * 3600)**2)/(4 * jnp.pi**2) )**(1/3)  
 init_state_dic['a'] = a_meters / (1.0 * u.R_sun).to(u.m).value  #stellar radius
 init_state_dic['r'] = 0.1                                     #stellar radius
 init_state_dic['i'] = jnp.deg2rad(90)                         #radians
-for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
-    init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
-# init_state_dic['LD_u1'] = 0.1                                 #unitless
-# init_state_dic['LD_u2'] = 0.2                                 #unitless
-# init_state_dic['LD_u3'] = 0.4                                 #unitless
-# init_state_dic['LD_u4'] = 0.3                                 #unitless
 init_state_dic['omega'] = 0.0                                 #radians
 init_state_dic['e'] = 0.                                      #unitless
 init_state_dic['t0'] = 0.0                                    #days
+
+
+#%%%% Calculate transit duration
+# Convert angles to radians
+# Impact parameter (eccentricity-corrected)
+b = (
+    (init_state_dic['a'] * np.cos(init_state_dic['i'])) / R_star
+    * (1 - init_state_dic['e']**2) / (1 + init_state_dic['e'] * np.sin(init_state_dic['omega']))
+)
+# Argument inside arcsin
+arg = (
+    (1/init_state_dic['a'])
+    * np.sqrt((1 + init_state_dic['r'])**2 - b**2)
+    / np.sin(init_state_dic['i'])
+)
+# Numerical safety
+arg = np.clip(arg, -1.0, 1.0)
+# Transit duration
+T_dur = (
+    (init_state_dic['period'] / np.pi)
+    * np.sqrt(1 - init_state_dic['e']**2) / (1 + init_state_dic['e'] * np.sin(init_state_dic['omega']))
+    * np.arcsin(arg)
+)
+
+#%%%% Model time - ensure pre- and post-transit are same duration as transit
+low_t = -1.5*T_dur                                                      #days
+high_t = 1.5*T_dur                                                      #days
+exposure_time = 5                                                       #seconds
+num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number of points
+init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
 #%% Storing outputs of nested sampling and plots
 raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Jaxoplanet_Runs_Storage/'
@@ -84,29 +99,8 @@ raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Jaxoplanet_Ru
 mod_prop = {
     'r'         : {'vary':True, 'guess':0.11, 'bounds':[0.09, 0.13]},
     'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(90.)]},
-    # 'i'         : {'vary':False, 'guess':jnp.deg2rad(88.7), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(90.)]},
     'a'         : {'vary':True, 'guess':15.5, 'bounds':[14., 16.]},
-    # 'a'         : {'vary':False, 'guess':14.97, 'bounds':[14., 16.]},
-    'LD_u1'     : {'vary':True, 'guess':0.8, 'bounds':[0.6, 1.0]},
-    # 'LD_u1'     : {'vary':False, 'guess':0.2, 'bounds':[0., 0.3]},
-    'LD_u2'     : {'vary':True, 'guess':0.3, 'bounds':[0.1, 0.5]},
-    # 'LD_u2'     : {'vary':False, 'guess':0.2, 'bounds':[0.1, 0.3]},
-    'LD_u3'     : {'vary':True, 'guess':0.2, 'bounds':[0., 0.4]},
-    # 'LD_u3'     : {'vary':False, 'guess':0.4, 'bounds':[0.2, 0.6]},
-    'LD_u4'     : {'vary':True, 'guess':0., 'bounds':[-0.2, 0.2]},
-    # 'LD_u4'     : {'vary':False, 'guess':0.3, 'bounds':[0.2, 0.4]},
-    # 'LD_u5'     : {'vary':True, 'guess':0.15, 'bounds':[0.1, 0.3]},
-    # 'LD_u5'     : {'vary':False, 'guess':0.2, 'bounds':[0.1, 0.3]},
-    # 'LD_u6'     : {'vary':True, 'guess':0.05, 'bounds':[0., 0.2]},
-    # 'LD_u6'     : {'vary':False, 'guess':0.1, 'bounds':[0., 0.2]},
-    # 'period'    : {'vary':True, 'guess':1.5804, 'bounds':[1.5803, 1.5802]}, #Uniform prior
     'period'    : {'vary':True, 'guess':1., 'bounds':[1.00035, 1.00045]}, #Gaussian prior
-    # 'period'    : {'vary':False, 'guess':1.580404531 , 'bounds':[1.5803, 1.5802]},
-    # 'sqrtecosw' : {'vary':True, 'guess':0.1, 'bounds':[0., 0.3]},
-    # 'e' : {'vary':False, 'guess':0.1, 'bounds':[0., 0.3]},
-    # 'sqrtesinw' : {'vary':True, 'guess':0.1, 'bounds':[0., 0.3]},
-    # 'omega' : {'vary':False, 'guess':jnp.deg2rad(50), 'bounds':[0., 0.3]},
-    # 'f1'        : {'vary':True, 'guess':0.45, 'bounds':[0.4, 0.6]},
     't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
 }
 
@@ -165,6 +159,7 @@ fixed_args['ndim']=ndim
 fixed_args['nwalkers'] = 50
 fixed_args['nsteps'] = 100000
 fixed_args['nburn'] = 50000
+
 # Numpyro specific - set to False for faster
 fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
 fixed_args['adapt_step_size'] = True
@@ -189,17 +184,108 @@ else:
 model_scatters = [0.1, 1, 10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127,
                    129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0]
 seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
+PLD_orders = [2, 3, 4]
 
 # # Distribute tasks
-# task_arrays = [model_scatters, seeds]
+# task_arrays = [model_scatters, seeds, PLD_orders]
 # param_combos = list(itertools.product(*task_arrays))
 # param_combos = [list(c) for c in param_combos]
 
 # my_task_id = int(sys.argv[1])
-# model_scatter, seed = param_combos[my_task_id - 1]
+# model_scatter, seed, PLD_order = param_combos[my_task_id - 1]
 
-model_scatter = 10
+model_scatter = 129.1549665014884
 seed = 50
+PLD_order = 2
+
+
+############################################
+########## Setting limb-darkening ##########
+############################################
+
+if PLD_order == 2:
+    #Setting base LDCs
+    init_NLLD_coeffs = [0.1, 0.2]
+
+    #Updating initial state dictionary
+    for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
+        init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
+
+    #Updating fit dictionaries
+    mod_prop.update(
+        {
+            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.6]},
+            'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
+        }
+    )
+
+    #Updating priors
+    priors_dic.update(
+        {
+            'LD_u1'         : {'type':'uf', 'bounds':[-5, 5]},
+            'LD_u2'         : {'type':'uf', 'bounds':[-5, 5]},
+        }
+    )
+
+elif PLD_order == 3:
+    #Setting base LDCs
+    init_NLLD_coeffs = [0.1, 0.2, 0.4]
+
+    #Updating initial state dictionary
+    for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
+        init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
+
+    #Updating fit dictionaries
+    mod_prop.update(
+        {
+            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.7]},
+            'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
+            'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
+        }
+    )
+
+    #Updating priors
+    priors_dic.update(
+        {
+            'LD_u1'         : {'type':'uf', 'bounds':[-5, 5]},
+            'LD_u2'         : {'type':'uf', 'bounds':[-5, 5]},
+            'LD_u3'         : {'type':'uf', 'bounds':[-5, 5]},
+        }
+    )
+
+elif PLD_order == 4:
+    #Setting base LDCs
+    init_NLLD_coeffs = [0.1, 0.2, 0.4, 0.3]
+
+    #Updating initial state dictionary
+    for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
+        init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
+
+    #Updating fit dictionaries
+    mod_prop.update(
+        {
+            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.7]},
+            'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
+            'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
+            'LD_u4'     : {'vary':True, 'guess':0.2, 'bounds':[-0.2, 0.8]},
+        }
+    )
+
+    #Updating priors
+    priors_dic.update(
+        {
+            'LD_u1'         : {'type':'uf', 'bounds':[-5, 5]},
+            'LD_u2'         : {'type':'uf', 'bounds':[-5, 5]},
+            'LD_u3'         : {'type':'uf', 'bounds':[-5, 5]},
+            'LD_u4'         : {'type':'uf', 'bounds':[-5, 5]},
+        }
+    )
+
+else:
+    raise KeyError('Wrong order of polynomial limb darkening law.')
+
+
+
 
 ##############################
 ##### Relevant functions #####
@@ -426,6 +512,9 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=[10, 6], sharex=True, gridspec_kw={
 ax1.errorbar(init_state_dic['times'], noisy_LC, yerr=noisy_std, fmt='.', zorder=1)
 ax1.plot(init_state_dic['times'], true_lc, color='red', zorder=2)
 ax2.errorbar(init_state_dic['times'], 1e6*(noisy_LC - true_lc), yerr=noisy_std, fmt='r.', zorder=1)
+for ax in [ax1, ax2]:
+    ax.axvline(-0.5 * T_dur, color='black', linestyle='dashed')
+    ax.axvline(0.5 * T_dur, color='black', linestyle='dashed')
 ax1.set_title('Model LC with %.f ppm scatter'%model_scatter)
 ax2.set_xlabel('Time (BJD)')
 ax1.set_ylabel('Flux')
@@ -552,8 +641,7 @@ print('POST-PROCESSING')
 print('STEP 0: CHI2 CHAINS')
 plt.figure(figsize=[12, 6])
 for iwalk in range(fixed_args['nwalkers']):
-    plt.plot(jnp.arange(fixed_args['nsteps']), chi2_chain[iwalk, :])
-plt.xscale('log')
+    plt.loglog(jnp.arange(fixed_args['nsteps']), chi2_chain[iwalk, :])
 plt.xlabel('Steps')
 plt.ylabel('Chi-squared')
 plt.savefig(fixed_args['save_loc']+'chi2.pdf')
@@ -563,8 +651,8 @@ plt.close()
 print('STEP 0.5: LOG PROB')
 plt.figure(figsize=[12, 6])
 for w in range(fixed_args['nwalkers']):
-    plt.plot(jnp.arange(fixed_args['nburn']), logprob[w, :fixed_args['nburn']], color='red', alpha=0.5, lw=0.7, zorder=1)
-    plt.plot(jnp.arange(fixed_args['nburn'], fixed_args['nsteps']), logprob[w, fixed_args['nburn']:], color='blue', alpha=0.5, lw=0.7, zorder=1)
+    plt.loglog(jnp.arange(fixed_args['nburn']), -logprob[w, :fixed_args['nburn']], color='red', alpha=0.5, lw=0.7, zorder=1)
+    plt.loglog(jnp.arange(fixed_args['nburn'], fixed_args['nsteps']), -logprob[w, fixed_args['nburn']:], color='blue', alpha=0.5, lw=0.7, zorder=1)
 plt.ylabel('Log-probability')
 plt.xlabel("Step")
 plt.savefig(fixed_args['save_loc']+'logprob.pdf')
