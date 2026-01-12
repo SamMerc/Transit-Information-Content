@@ -1,3 +1,12 @@
+#############################
+########## Purpose ##########
+#############################
+
+# Figure 1 showcases the amplification factor change across model scatters and limb-darkening law used (aka the dimensionality)
+# The goal of this file is to run injection-retrievals for a grid of 1. model scatters 2. noise seeds and 3. limb-darkening laws
+# In particular the grid is 14 model scatters by 3 polynomial limb-darkening laws by 10 noise seeds.
+
+
 ######################################
 ########## Import libraries ##########
 ######################################
