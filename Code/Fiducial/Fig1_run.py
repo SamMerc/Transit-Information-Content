@@ -109,73 +109,23 @@ priors_dic = {
     'r'             : {'type':'uf', 'bounds':[0.0001, 0.2]},
     'i'             : {'type':'uf', 'bounds':[jnp.deg2rad(60), jnp.deg2rad(91)]},
     'a'             : {'type':'uf', 'bounds':[5, 25]},
-    'LD_u1'         : {'type':'uf', 'bounds':[-5, 5]},
-    'LD_u2'         : {'type':'uf', 'bounds':[-5, 5]},
-    'LD_u3'         : {'type':'uf', 'bounds':[-5, 5]},
-    'LD_u4'         : {'type':'uf', 'bounds':[-5, 5]},
-    # 'LD_u5'         : {'type':'uf', 'bounds':[0., 1.]},
-    # 'LD_u6'         : {'type':'uf', 'bounds':[0., 1.]},
     'period'        : {'type':'gauss', 'val':1.0004, 's_val':0.00006},
-    # 'period'        : {'type':'uf', 'bounds':[0., 100.]},
-    # 'sqrtecosw'     : {'type':'uf', 'bounds':[-1., 1.]},
-    # 'sqrtesinw'     : {'type':'uf', 'bounds':[-1., 1.]},
-    # 'e'             : {'type':'gauss', 'val':0.00620, 's_val':0.0079},
-    # 'omega'             : {'type':'gauss', 'val':77, 's_val':30},
-    # 'f1'            : {'type':'uf', 'bounds':[0., 1.]},
-    # 'stellar_rho'   : {'type':'gauss', 'val':25.41, 's_val':5},
 }
 
-#%% Defining important lists
-ndim=0
-var_param_list = []
-fix_param_list = []
-fix_param_val = []
-priors_list = []
-for key in mod_prop:
-    if mod_prop[key]['vary']:
-        var_param_list.append(str(key))
-        if key in priors_dic:priors_list.append(str(key))
-        ndim+=1
-    else:
-        fix_param_list.append(str(key))
-        fix_param_val.append(mod_prop[key]['guess'])
-
-#%% Defining dictionary to store additional info. needed for the model
-fixed_args={}
-fixed_args['priors_dic']=priors_dic
-fixed_args['priors_list']=priors_list
-fixed_args['var_param_list']=var_param_list
-fixed_args['fix_param_list']=fix_param_list
-fixed_args['fix_param_val']=fix_param_val
-fixed_args['all_param_list']=var_param_list+fix_param_list
-
 #%% Fitting mode
+fixed_args={}
 fixed_args['run_mode'] = 'use'
 fixed_args['nthreads'] = jax.device_count()
-fixed_args['model_type'] = 'PLD' # 'NLLD' or 'PLD'
 
 #%% MCMC specific settings
-fixed_args['ndim']=ndim
 fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 100000
-fixed_args['nburn'] = 50000
-
-# Numpyro specific - set to False for faster
+fixed_args['nsteps'] = 1000
+fixed_args['nburn'] = 500
 fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
+#%% Numpyro specific - set to False for faster
 fixed_args['adapt_step_size'] = True
 fixed_args['dense_matrix'] = True
 fixed_args['regularize_mass_matrix'] = True
-
-#Uniform distribution of walker starting positions
-fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "u$_1$", "u$_2$", "u$_3$", "u$_4$", "P"]#, , "f1"]
-if fixed_args['kernel'] == 'emcee':
-    fixed_args['pos'] = np.zeros((fixed_args['nwalkers'], fixed_args['ndim']), dtype=float)
-    for i in range(fixed_args['ndim']):
-        fixed_args['pos'][:, i] = jax.random.uniform(jaxnoise_key, minval=mod_prop[var_param_list[i]]['bounds'][0], maxval=mod_prop[var_param_list[i]]['bounds'][1], shape=(fixed_args['nwalkers'],))
-else:
-    fixed_args['pos'] = {}
-    for i in range(fixed_args['ndim']):
-        fixed_args['pos'][var_param_list[i]] = jnp.array(mod_prop[var_param_list[i]]['guess'])
 
 #############################################
 ########## Define parrallelization ##########
@@ -227,6 +177,9 @@ if PLD_order == 2:
         }
     )
 
+    #Define plotting labels
+    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "u$_1$", "u$_2$"]
+
 elif PLD_order == 3:
     #Setting base LDCs
     init_NLLD_coeffs = [0.1, 0.2, 0.4]
@@ -252,6 +205,9 @@ elif PLD_order == 3:
             'LD_u3'         : {'type':'uf', 'bounds':[-5, 5]},
         }
     )
+
+    #Define plotting labels
+    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "u$_1$", "u$_2$", "u$_3$"]
 
 elif PLD_order == 4:
     #Setting base LDCs
@@ -281,10 +237,50 @@ elif PLD_order == 4:
         }
     )
 
+    #Define plotting labels
+    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "u$_1$", "u$_2$", "u$_3$", "u$_4$"]
+
 else:
     raise KeyError('Wrong order of polynomial limb darkening law.')
 
 
+#######################################
+##### Finalizing hyper-parameters #####
+#######################################
+
+#%% Defining important lists
+ndim=0
+var_param_list = []
+fix_param_list = []
+fix_param_val = []
+priors_list = []
+for key in mod_prop:
+    if mod_prop[key]['vary']:
+        var_param_list.append(str(key))
+        if key in priors_dic:priors_list.append(str(key))
+        ndim+=1
+    else:
+        fix_param_list.append(str(key))
+        fix_param_val.append(mod_prop[key]['guess'])
+
+#%% Defining dictionary to store additional info. needed for the model
+fixed_args['priors_dic']=priors_dic
+fixed_args['priors_list']=priors_list
+fixed_args['var_param_list']=var_param_list
+fixed_args['fix_param_list']=fix_param_list
+fixed_args['fix_param_val']=fix_param_val
+fixed_args['all_param_list']=var_param_list+fix_param_list
+fixed_args['ndim']=ndim
+
+#Uniform distribution of walker starting positions
+if fixed_args['kernel'] == 'emcee':
+    fixed_args['pos'] = np.zeros((fixed_args['nwalkers'], fixed_args['ndim']), dtype=float)
+    for i in range(fixed_args['ndim']):
+        fixed_args['pos'][:, i] = jax.random.uniform(jaxnoise_key, minval=mod_prop[var_param_list[i]]['bounds'][0], maxval=mod_prop[var_param_list[i]]['bounds'][1], shape=(fixed_args['nwalkers'],))
+else:
+    fixed_args['pos'] = {}
+    for i in range(fixed_args['ndim']):
+        fixed_args['pos'][var_param_list[i]] = jnp.array(mod_prop[var_param_list[i]]['guess'])
 
 
 ##############################
@@ -329,10 +325,8 @@ def create_jaxoplanet_model(x, p):
     )
 
     #Apply limb-darkening
-    if fixed_args['model_type']=='PLD':
-        max_coeff = len([param for param in p if 'LD' in param])
-        ld_u_coeffs = jnp.array([p[f"LD_u{i}"] for i in range(1, max_coeff+1)])
-    elif fixed_args['model_type']=='NLLD':ld_u_coeffs = nonlinear_4param_ld_law(u1 = p['LD_u1'], u2 = p['LD_u2'], u3 = p['LD_u3'], u4 = p['LD_u4'])
+    max_coeff = len([param for param in p if 'LD' in param])
+    ld_u_coeffs = jnp.array([p[f"LD_u{i}"] for i in range(1, max_coeff+1)])
 
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
     return jaxo_lc.reshape((-1))
