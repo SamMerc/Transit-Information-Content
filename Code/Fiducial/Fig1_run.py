@@ -190,7 +190,7 @@ elif PLD_order == 3:
     #Updating fit dictionaries
     mod_prop.update(
         {
-            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.7]},
+            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.6]},
             'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
             'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
         }
@@ -219,7 +219,7 @@ elif PLD_order == 4:
     #Updating fit dictionaries
     mod_prop.update(
         {
-            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.7]},
+            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.6]},
             'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
             'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
             'LD_u4'     : {'vary':True, 'guess':0.2, 'bounds':[-0.2, 0.8]},
@@ -265,7 +265,6 @@ fixed_args['priors_dic']=priors_dic
 fixed_args['var_param_list']=var_param_list
 fixed_args['fix_param_list']=fix_param_list
 fixed_args['fix_param_val']=fix_param_val
-fixed_args['all_param_list']=var_param_list+fix_param_list
 fixed_args['ndim']=ndim
 
 #Uniform distribution of walker starting positions
