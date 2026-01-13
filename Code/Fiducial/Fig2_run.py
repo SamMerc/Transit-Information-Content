@@ -161,8 +161,8 @@ fixed_args['nthreads'] = jax.device_count()
 
 #%% MCMC specific settings
 fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 10000
-fixed_args['nburn'] = 7000
+fixed_args['nsteps'] = 1000000
+fixed_args['nburn'] = 700000
 fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
 #%% Numpyro specific - set to False for faster
 fixed_args['adapt_step_size'] = True
