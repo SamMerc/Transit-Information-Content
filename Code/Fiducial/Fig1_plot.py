@@ -78,7 +78,7 @@ exposure_time = 5                                                       #seconds
 num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number of points
 init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
-#%% Storing outputs of nested sampling and plots
+#%% Location of MCMC results and where plot will be output
 raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig1_Storage/'
 
 #%% Model parameters
