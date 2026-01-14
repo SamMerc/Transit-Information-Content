@@ -83,7 +83,7 @@ mod_prop = {
 priors_dic = {
     'r'             : {'type':'uf', 'bounds':[0., 1.]},
     'a'             : {'type':'uf', 'bounds':[0, 50]},
-    'period'        : {'type':'gauss', 'val':1.0005, 's_val':0.005},
+    'period'        : {'type':'gauss', 'val':1.0000, 's_val':0.0005},
     'i'             : {'type':'uf', 'bounds':[jnp.deg2rad(70), jnp.deg2rad(110)]},
 }
 
