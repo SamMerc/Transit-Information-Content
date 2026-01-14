@@ -30,7 +30,6 @@ import os, itertools, sys
 import numpyro
 from numpyro.distributions import Normal, Uniform
 from numpyro.infer import MCMC, NUTS, HMC, init_to_value
-from lmfit import minimize, Parameters
 
 # For multi-core parallelism (useful when running multiple MCMC chains in parallel)
 numpyro.set_host_device_count(1)
@@ -168,28 +167,7 @@ if 'PLD' in LDL:
     #Identify order of LDL
     PLD_order = int(LDL[-1])
 
-    #Fit the intensity curve with this order PLD law to get a starting value for the walkers    
-    def polynomial_LD(mu, coeffs):
-        return 1 - sum(c * (1-mu**(i+1)) for i, c in enumerate(coeffs))
-    def nonlinear_LD(mu, coeffs):
-        return 1 - coeffs[0] * (1 - mu**(1/2)) - coeffs[1] * (1 - mu) - coeffs[2] * (1 - mu**(3/2)) - coeffs[3] * (1 - mu**2)
-    
-    ## Define true NLLD curve
-    mu_vals = np.linspace(0, 1, 1000)
-    true_intensity_curve = nonlinear_LD(mu_vals, init_NLLD_coeffs)
-
-    ## Fit true NLLD curve with a PLD law of selected order
-    params = Parameters()
-    for i in range(PLD_order):
-        params.add(f'c{i+1}', value=np.random.uniform(-10, 10), min=-10, max=10)
-    def residual(params, mu, base_LD):
-        fit_LD = polynomial_LD(mu, [params[f'c{i+1}'].value for i in range(PLD_order)])
-        return fit_LD - base_LD
-    
-    ##Retrieve results
-    result = minimize(residual, params, args=(mu_vals, true_intensity_curve))
-    best_fit_LDCs = [result.params[f'c{i+1}'].value for i in range(PLD_order)]
-
+    best_fit_LDCs = nonlinear_4param_ld_law(u1=init_NLLD_coeffs[0], u2=init_NLLD_coeffs[1], u3=init_NLLD_coeffs[2], u4=init_NLLD_coeffs[3], order=PLD_order)
 
     #Update model variables
     for iLDC in range(1,PLD_order+1):
@@ -355,11 +333,9 @@ def create_jaxoplanet_model(x, p, fitting):
 
     #Apply limb-darkening
     if (not fitting) or ('PLD' in LDL):
-        print('1: HERE')
         max_coeff = len([param for param in p if 'LD' in param])
         ld_u_coeffs = jnp.array([p[f"LD_u{i}"] for i in range(1, max_coeff+1)])
     else:
-        print('1: OR HERE')
         ld_u_coeffs = nonlinear_4param_ld_law(u1 = p['LD_u1'], u2 = p['LD_u2'], u3 = p['LD_u3'], u4 = p['LD_u4'])
 
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
