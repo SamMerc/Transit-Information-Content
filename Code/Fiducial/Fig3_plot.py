@@ -224,8 +224,8 @@ logprob = jnp.load(seed_dir+"logprob.npy")
 #Finding the index of max log-probability
 max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
 
-# Figure 6
-print('STEP 1: FIGURE 6')
+# Figure 5
+print('STEP 1: FIGURE 5')
 
 n_params = len(fixed_args['var_param_list'])
 
@@ -421,7 +421,7 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
             ax.set_ylim([param1_vals[0], param1_vals[-1]])
 
 fig.tight_layout()
-fig.savefig(fixed_args['save_loc']+'Fig6.pdf')
+fig.savefig(fixed_args['save_loc']+'Fig5.pdf')
 plt.close(fig)
 
 # Figure 3
