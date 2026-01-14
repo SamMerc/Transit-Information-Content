@@ -73,6 +73,9 @@ init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.1, u2=0.2, u3=0.4, u4=0.3)
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
+#Get starting points for the LD coefficients
+init_LD_prop = nonlinear_4param_ld_law(u1=0.1, u2=0.2, u3=0.4, u4=0.3, order=3)
+
 #%%%% Calculate transit duration
 # Convert angles to radians
 # Impact parameter (eccentricity-corrected)
@@ -111,9 +114,9 @@ mod_prop = {
     'r'         : {'vary':True, 'guess':0.11, 'bounds':[0.07, 0.15]},
     'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(92.)]},
     'a'         : {'vary':True, 'guess':init_state_dic['a']-1, 'bounds':[init_state_dic['a']-2, init_state_dic['a']+2]},
-    'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.7]},
-    'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
-    'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
+    'LD_u1'     : {'vary':True, 'guess':init_LD_prop[0], 'bounds':[init_LD_prop[0] - 0.5, init_LD_prop[0] + 0.5]},
+    'LD_u2'     : {'vary':True, 'guess':init_LD_prop[1], 'bounds':[init_LD_prop[1] - 0.5, init_LD_prop[1] + 0.5]},
+    'LD_u3'     : {'vary':True, 'guess':init_LD_prop[2], 'bounds':[init_LD_prop[2] - 0.5, init_LD_prop[2] + 0.5]},
     'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]}, #Gaussian prior
     'sqrtecosw' : {'vary':True, 'guess':0.2, 'bounds':[0., 0.4]},
     'sqrtesinw' : {'vary':True, 'guess':0.1, 'bounds':[-0.1, 0.3]},
@@ -130,7 +133,7 @@ priors_dic = {
     'LD_u3'         : {'type':'uf', 'bounds':[-100, 100]},
     'sqrtecosw'     : {'type':'uf', 'bounds':[-1, 1]},   
     'sqrtesinw'     : {'type':'uf', 'bounds':[-1, 1]},   
-    'period'        : {'type':'gauss', 'val':1.0005, 's_val':0.005},
+    'period'        : {'type':'gauss', 'val':1.0000, 's_val':0.0005},
 }
 
 #%% Defining important lists
@@ -161,8 +164,8 @@ fixed_args['nthreads'] = jax.device_count()
 
 #%% MCMC specific settings
 fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 1000000
-fixed_args['nburn'] = 700000
+fixed_args['nsteps'] = 100000
+fixed_args['nburn'] = 70000
 fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
 #%% Numpyro specific - set to False for faster
 fixed_args['adapt_step_size'] = True
