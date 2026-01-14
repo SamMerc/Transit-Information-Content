@@ -164,8 +164,8 @@ fixed_args['nthreads'] = jax.device_count()
 
 #%% MCMC specific settings
 fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 100000
-fixed_args['nburn'] = 70000
+fixed_args['nsteps'] = 200000 
+fixed_args['nburn'] = 140000
 fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
 #%% Numpyro specific - set to False for faster
 fixed_args['adapt_step_size'] = True
@@ -185,6 +185,9 @@ else:
 #%% Model scatter and seed to use for the plot
 model_scatter =  16.68100537200059 
 seed = 80
+
+#%% Sigma clipping threshold for chi2-based walker exclusion
+fixed_args['sigma_clip'] = 10
 
 ##############################
 ##### Relevant functions #####
@@ -547,13 +550,37 @@ print('PLOTTING')
 
 # 0. Plotting the chi2 chains
 print('STEP 0: CHI2 CHAINS')
+#Identifying outliers
+del_walk = []
+for iwalk in range(fixed_args['nwalkers']):
+    if (jnp.abs(chi2_chain[iwalk, -1] - jnp.median(chi2_chain[:, fixed_args['nburn']:])) > fixed_args['sigma_clip']*jnp.std(chi2_chain[:, fixed_args['nburn']:])):del_walk.append(iwalk)
+del_walk = np.unique(del_walk)
+
 plt.figure(figsize=[12, 6])
 for iwalk in range(fixed_args['nwalkers']):
-    plt.loglog(jnp.arange(fixed_args['nsteps']), chi2_chain[iwalk, :])
+    if iwalk in del_walk:
+        plt.loglog(jnp.arange(fixed_args['nsteps']), chi2_chain[iwalk, :], color='red', alpha=0.5, lw=0.7, zorder=1)
+    else:
+        plt.loglog(jnp.arange(fixed_args['nburn']), chi2_chain[iwalk, :fixed_args['nburn']], color='red', alpha=0.5, lw=0.7, zorder=1)
+        plt.loglog(jnp.arange(fixed_args['nburn'], fixed_args['nsteps']), chi2_chain[iwalk, fixed_args['nburn']:], color='blue', alpha=0.5, lw=0.7, zorder=1)
 plt.xlabel('Steps')
 plt.ylabel('Chi-squared')
 plt.savefig(fixed_args['save_loc']+'chi2.pdf')
 plt.close()
+
+#Removing outliers
+print(f"Removing {len(del_walk)} walkers from the chain due to large deviations.")
+if len(del_walk)>0:
+    raw_chain = np.delete(raw_chain, del_walk, axis=0)
+
+    # Convert to ArviZ data structure
+    inf_data = az.from_dict(
+    posterior={
+        p: raw_chain[:, fixed_args['nburn']:, i]
+        for i, p in enumerate(fixed_args['var_param_list'])
+    },
+    log_likelihood={"log_like": logprob},
+    )
 
 # 1. Plotting the log probability
 print('STEP 1: LOG PROB')
