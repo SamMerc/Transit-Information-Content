@@ -73,25 +73,29 @@ raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig5_Storage/
 #%% Model parameters
 mod_prop = {
     'r'         : {'vary':True, 'guess':0.11, 'bounds':[0.07, 0.15]},
+    'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(92.)]},
     'a'         : {'vary':True, 'guess':init_state_dic['a']-1, 'bounds':[init_state_dic['a']-2, init_state_dic['a']+2]},
     'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]}, #Gaussian prior
-    'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(92.)]},
+    'sqrtecosw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
+    'sqrtesinw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
     't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
 }
 
 #%% Priors
 priors_dic = {
     'r'             : {'type':'uf', 'bounds':[0., 1.]},
+    'i'             : {'type':'uf', 'bounds':[jnp.deg2rad(70), jnp.deg2rad(110)]},
     'a'             : {'type':'uf', 'bounds':[0, 50]},
     'period'        : {'type':'gauss', 'val':1.0000, 's_val':0.0005},
-    'i'             : {'type':'uf', 'bounds':[jnp.deg2rad(70), jnp.deg2rad(110)]},
+    'sqrtecosw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
+    'sqrtesinw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
 }
 
 #%% Fitting mode
 fixed_args={}
 fixed_args['run_mode'] = 'use'
 fixed_args['nthreads'] = jax.device_count()
-fixed_args['labels'] = ["RpR$_*$", "aR$_*$", "P", 'i', 'u$_1$', 'u$_2$', 'u$_3$']
+fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", 'u$_1$', 'u$_2$', 'u$_3$']
 
 #%% MCMC specific settings
 fixed_args['nwalkers'] = 50
