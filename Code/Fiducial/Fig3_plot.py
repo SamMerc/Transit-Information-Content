@@ -125,7 +125,10 @@ fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i (rad)',r'$\rho_{\star}$ (g/cm$^
 fixed_args['sample_pts'] = 10
 
 #% Delat chi2 thresholds to include in heatmaps
-fixed_args['delta_chi2_thresh'] = 0.45
+fixed_args['delta_chi2_thresh'] = 1.0
+
+#% Contour levels 
+lvls = np.logspace(np.log10(1), np.log10(1000), base=10, num=20)
 
 #%% Number of burn-in steps used in MCMC
 fixed_args['nburn'] = 700000
@@ -306,16 +309,14 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
             chi2_grid = chi2_grid - np.min(chi2_grid)
 
             # Define three nicely spaced contour levels (multiples of the delta threshold)
-            lv1 = 1.0 * fixed_args['delta_chi2_thresh']
-            lv2 = 5.0 * fixed_args['delta_chi2_thresh']
-            lv3 = 10.0 * fixed_args['delta_chi2_thresh']
-            lv4 = 50.0 * fixed_args['delta_chi2_thresh']
-            lv5 = 100.0 * fixed_args['delta_chi2_thresh']
-            contour_levels = [lv1, lv2, lv3, lv4, lv5]
+            contour_levels = []
+            for lvl in lvls:
+                lv = lvl * fixed_args['delta_chi2_thresh']
+                contour_levels.append(lv)
 
-            # Filled contours: 3 regions (0..lv1, lv1..lv2, lv2..lv3) with different colors
-            fill_levels = [0.0, lv1, lv2, lv3, lv4, lv5]
-            fill_colors = plt.get_cmap('Greens')(jnp.linspace(0., 1, 5))  # light -> dark green
+            # Filled contours
+            fill_levels = [0.0] + list(lvls)
+            fill_colors = plt.get_cmap('Greens')(jnp.linspace(0., 1, len(lvls)))  # light -> dark green
             ax.contourf(A, B, chi2_grid, levels=fill_levels, colors=fill_colors, alpha=0.5, antialiased=True)
 
             # Outline the three contours with black lines
@@ -485,4 +486,4 @@ cbar.ax.tick_params(labelsize=18)
 
 # Title
 plt.savefig(fixed_args['save_loc']+'Fig3.pdf')
-plt.show()
+plt.close()
