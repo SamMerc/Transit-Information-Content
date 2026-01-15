@@ -164,8 +164,8 @@ fixed_args['nthreads'] = jax.device_count()
 
 #%% MCMC specific settings
 fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 200000 
-fixed_args['nburn'] = 140000
+fixed_args['nsteps'] = 1000000 
+fixed_args['nburn'] = 700000
 fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
 #%% Numpyro specific - set to False for faster
 fixed_args['adapt_step_size'] = True
@@ -185,9 +185,6 @@ else:
 #%% Model scatter and seed to use for the plot
 model_scatter =  16.68100537200059 
 seed = 80
-
-#%% Sigma clipping threshold for chi2-based walker exclusion
-fixed_args['sigma_clip'] = 10
 
 ##############################
 ##### Relevant functions #####
@@ -544,7 +541,7 @@ else:
 ##################
 if fixed_args['run_mode']=='use':
     elapsed = time.time() - st0
-    print(f'MCMC took {elapsed:.2f} seconds / {elapsed/60.:.2f} minutes.')
+    print(f'MCMC took {elapsed:.2f} seconds / {elapsed/60.:.2f} minutes / {elapsed/3600.:.2f} hours.')
 
 print('PLOTTING')
 
