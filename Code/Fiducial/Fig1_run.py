@@ -100,6 +100,8 @@ mod_prop = {
     'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(92.)]},
     'a'         : {'vary':True, 'guess':init_state_dic['a']-1, 'bounds':[init_state_dic['a']-2, init_state_dic['a']+2]},
     'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]}, #Gaussian prior
+    'sqrtecosw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
+    'sqrtesinw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
     't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
 }
 
@@ -109,6 +111,8 @@ priors_dic = {
     'i'             : {'type':'uf', 'bounds':[jnp.deg2rad(70), jnp.deg2rad(110)]},
     'a'             : {'type':'uf', 'bounds':[0, 50]},
     'period'        : {'type':'gauss', 'val':1.0000, 's_val':0.0005},
+    'sqrtecosw'     : {'type':'uf', 'bounds':[-1, 1]},
+    'sqrtesinw'     : {'type':'uf', 'bounds':[-1, 1]},
 }
 
 #%% Fitting mode
@@ -177,7 +181,7 @@ if PLD_order == 2:
     )
 
     #Define plotting labels
-    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "u$_1$", "u$_2$"]
+    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "", "u$_1$", "u$_2$"]
 
 elif PLD_order == 3:
     #Setting base LDCs
@@ -206,7 +210,7 @@ elif PLD_order == 3:
     )
 
     #Define plotting labels
-    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "u$_1$", "u$_2$", "u$_3$"]
+    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "", "u$_1$", "u$_2$", "u$_3$"]
 
 elif PLD_order == 4:
     #Setting base LDCs
@@ -237,7 +241,7 @@ elif PLD_order == 4:
     )
 
     #Define plotting labels
-    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "u$_1$", "u$_2$", "u$_3$", "u$_4$"]
+    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "", "u$_1$", "u$_2$", "u$_3$", "u$_4$"]
 
 else:
     raise KeyError('Wrong order of polynomial limb darkening law.')
