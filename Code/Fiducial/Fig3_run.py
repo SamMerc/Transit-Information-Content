@@ -27,6 +27,7 @@ from jaxoplanet.light_curves import limb_dark_light_curve
 from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import numpy as np
 import os
+import time
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -126,10 +127,11 @@ fixed_args={}
 fixed_args['var_param_list']=var_param_list
 fixed_args['fix_param_list']=fix_param_list
 fixed_args['fix_param_val']=fix_param_val
+fixed_args['all_param_list'] = var_param_list + fix_param_list
 fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)',r'u$_1$', r'u$_2$',r'u$_3$',r'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)']
 
 #% Define number of points to sample the parameter space with
-fixed_args['sample_pts'] = 10
+fixed_args['sample_pts'] = 33
 
 #%% Number of burn-in steps used in MCMC
 fixed_args['nburn'] = 700000
@@ -141,6 +143,7 @@ seed = 80
 ##############################
 ##### Relevant functions #####
 ##############################
+
 #Helper function to check the existence of directories
 def check_dir(dir_name):
     if not os.path.isdir(dir_name):os.makedirs(dir_name)
@@ -185,16 +188,6 @@ def create_jaxoplanet_model(x, p):
 
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
     return jaxo_lc.reshape((-1))
-
-def chi2_calc(x, p, y, yerr):
-
-    #Create the light curve with jaxoplanet function
-    y_pred = create_jaxoplanet_model(x, p)
-
-    #Calculate the chi-squared
-    chi2 = jnp.sum( (y_pred - y)**2/yerr**2 )
-
-    return chi2
 
 
 #############################################
@@ -263,42 +256,86 @@ for i, param in enumerate(fixed_args['var_param_list']):
 for idx, param in enumerate(fixed_args['fix_param_list']):
     best_params[param] = fixed_args['fix_param_val'][idx]
 
+#Generate bestfit vector 
+theta_best = jnp.array([best_params[p] for p in fixed_args['all_param_list']])
+
 #Calculate the bestfit LC to use for comparison
 bestfit_LC = create_jaxoplanet_model(init_state_dic['times'], best_params)
+
+
+
+#######################
+### More functions ####
+#######################
+
+#Helper function to unpack array into a dictionary
+def unpack_params(theta):
+    p = {}
+    for i, name in enumerate(fixed_args['all_param_list']):
+        p[name] = theta[i]
+    return p
+
+def chi2_from_theta(theta, x, y, yerr):
+    #Build dictionary from vector
+    p = unpack_params(theta)
+    #Create the light curve with jaxoplanet function
+    y_pred = create_jaxoplanet_model(x, p)
+    #Calculate chi2
+    return jnp.sum((y_pred - y)**2 / yerr**2)
+
+def chi2_1d(param_idx, param_vals):
+    
+    def eval_one(val):
+        theta = theta_best.at[param_idx].set(val)
+        return chi2_from_theta(theta, init_state_dic['times'], bestfit_LC, noisy_std)
+
+    return jax.vmap(eval_one)(param_vals)
+
+def chi2_2d(idx1, idx2, vals1, vals2):
+    V1, V2 = jnp.meshgrid(vals1, vals2, indexing="ij")
+    flat_v1 = V1.ravel()
+    flat_v2 = V2.ravel()
+
+    def eval_one(v1, v2):
+        theta = theta_best.at[idx1].set(v1)
+        theta = theta.at[idx2].set(v2)
+        return chi2_from_theta(theta, init_state_dic['times'], bestfit_LC, noisy_std)
+
+    chi2_flat = jax.vmap(eval_one)(flat_v1, flat_v2)
+    return chi2_flat.reshape((vals1.size, vals2.size))
 
 #######################################
 ##### Chi-squared map calculation #####
 #######################################
-    
-# Initialize dictionary to store information
-chi2_dic = {}
 
-# Loop over parameters
+# Replace the chi2_dic dictionary approach with individual file saves
 for i, param1 in enumerate(fixed_args['var_param_list']):
     for j, param2 in enumerate(fixed_args['var_param_list']):
         if j < i:
-            continue  # Avoid duplicate combinations (lower triangle only)
+            continue
 
         print(f'CHI2 RETRIEVAL: {param1} vs {param2}')
+        st0 = time.time()
 
-        # Self-pair case: plot 1D line
         if param1 == param2:
+            #Generate chi2 range
             param_vals = jnp.linspace(
                 raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn'], i]),
                 raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn'], i]),
                 fixed_args['sample_pts']
             )
-            chi2_vals = []
-
-            for val in param_vals:
-                temp_dic = best_params.copy()
-                temp_dic[param1] = val
-                chi2_vals.append(chi2_calc(init_state_dic['times'], temp_dic, bestfit_LC, noisy_std))
-
-            chi2_dic[f'{param1}_{param1}'] = chi2_vals - np.min(chi2_vals)
-
+            #Calculate chi2 values
+            chi2_vals = chi2_1d(i, param_vals)
+            chi2_vals -= jnp.min(chi2_vals)
+            
+            #Save values
+            jnp.save(fixed_args['save_loc'] + f"chi2_{param1}_{param1}.npy", chi2_vals)
+            
+            #Delete variables (frees memory)
+            del chi2_vals, param_vals
+            
         else:
-            # 2D map for param1 ≠ param2
+            #Generate 2D chi2 range
             param1_vals = jnp.linspace(
                 raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn'], i]),
                 raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn'], i]),
@@ -309,17 +346,15 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
                 raw_chain[max_walker, max_step, j] + jnp.std(raw_chain[:, fixed_args['nburn'], j]),
                 fixed_args['sample_pts']
             )
-
-            chi2_array = np.zeros((fixed_args['sample_pts'], fixed_args['sample_pts']), dtype=float)
-
-            for idx, val1 in enumerate(param1_vals):
-                for jdx, val2 in enumerate(param2_vals):
-                    temp_dic = best_params.copy()
-                    temp_dic[param1] = val1
-                    temp_dic[param2] = val2
-                    chi2_array[idx, jdx] = chi2_calc(init_state_dic['times'], temp_dic, bestfit_LC, noisy_std)
-
-            chi2_dic[f'{param1}_{param2}'] = chi2_array - np.min(chi2_array)
-
-#% Final storage
-jnp.save(fixed_args['save_loc']+"chi2_dict.npy", chi2_dic, allow_pickle=True)
+            #Calculate chi2 values
+            chi2_map = chi2_2d(i, j, param1_vals, param2_vals)
+            chi2_map -= jnp.min(chi2_map)
+            
+            #Save values
+            jnp.save(fixed_args['save_loc'] + f"chi2_{param1}_{param2}.npy", chi2_map)
+            
+            #Delete variables (frees memory)
+            del chi2_map, param1_vals, param2_vals
+        
+        elapsed = time.time() - st0
+        print(f'Chi-squared space evaluation took {elapsed:.2f} seconds / {elapsed/60.:.2f} minutes / {elapsed/3600.:.2f} hours.')
