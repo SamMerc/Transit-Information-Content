@@ -28,7 +28,7 @@ import corner
 import time
 import arviz as az
 import numpy as np
-import os, itertools, sys
+import os
 import numpyro
 from numpyro.distributions import Normal, Uniform
 from numpyro.infer import MCMC, NUTS, HMC, init_to_value
@@ -55,7 +55,7 @@ jaxnoise_key = jax.random.PRNGKey(0)
 G_solar_units = G.to(u.Rsun**3 / (u.Msun * u.day**2)).value
 G_cgday = G.to(u.cm**3 / (u.g * u.day**2)).value
 R_star = (1.0 * u.R_sun).value
-#%%%% Mock system - fiducial (+ some eccentricity and argument of periastron)
+#%%%% Mock system - fiducial
 init_state_dic = {}
 init_state_dic['period'] = 1.                                 #days
 a_meters = ( (G.value * (1.0 * u.M_sun).to(u.kg).value * (init_state_dic['period'] * 24 * 3600)**2)/(4 * jnp.pi**2) )**(1/3)  
