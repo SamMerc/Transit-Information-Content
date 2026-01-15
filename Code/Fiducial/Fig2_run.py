@@ -62,8 +62,8 @@ a_meters = ( (G.value * (1.0 * u.M_sun).to(u.kg).value * (init_state_dic['period
 init_state_dic['a'] = a_meters / (1.0 * u.R_sun).to(u.m).value  #stellar radius
 init_state_dic['r'] = 0.1                                     #stellar radius
 init_state_dic['i'] = jnp.deg2rad(90)                         #radians
-init_state_dic['omega'] = 0.5                                 #radians
-init_state_dic['e'] = 0.1                                     #unitless
+init_state_dic['omega'] = 0.0                                 #radians
+init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
@@ -118,8 +118,8 @@ mod_prop = {
     'LD_u2'     : {'vary':True, 'guess':init_LD_prop[1], 'bounds':[init_LD_prop[1] - 0.5, init_LD_prop[1] + 0.5]},
     'LD_u3'     : {'vary':True, 'guess':init_LD_prop[2], 'bounds':[init_LD_prop[2] - 0.5, init_LD_prop[2] + 0.5]},
     'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]}, #Gaussian prior
-    'sqrtecosw' : {'vary':True, 'guess':0.2, 'bounds':[0., 0.4]},
-    'sqrtesinw' : {'vary':True, 'guess':0.1, 'bounds':[-0.1, 0.3]},
+    'sqrtecosw' : {'vary':True, 'guess':0.1, 'bounds':[-0.2, 0.2]},
+    'sqrtesinw' : {'vary':True, 'guess':0.1, 'bounds':[-0.2, 0.2]},
     't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
 }
 
@@ -552,6 +552,8 @@ print('PLOTTING')
 print('STEP 0: CHI2 CHAINS')
 #Identifying outliers
 del_walk = []
+print('1:', jnp.median(chi2_chain[:, fixed_args['nburn']:]), jnp.std (chi2_chain[:, fixed_args['nburn']:]))
+for iwalk in range(fixed_args['nwalkers']):print('2:', chi2_chain[iwalk, -1])
 for iwalk in range(fixed_args['nwalkers']):
     if (jnp.abs(chi2_chain[iwalk, -1] - jnp.median(chi2_chain[:, fixed_args['nburn']:])) > fixed_args['sigma_clip']*jnp.std(chi2_chain[:, fixed_args['nburn']:])):del_walk.append(iwalk)
 del_walk = np.unique(del_walk)
