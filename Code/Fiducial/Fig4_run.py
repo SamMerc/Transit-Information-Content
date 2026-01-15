@@ -658,7 +658,7 @@ else:
 ##################
 if fixed_args['run_mode']=='use':
     elapsed = time.time() - st0
-    print(f'MCMC took {elapsed:.2f} seconds / {elapsed/60.:.2f} minutes.')
+    print(f'MCMC took {elapsed:.2f} seconds / {elapsed/60.:.2f} minutes / {elapsed/3600.:.2f} hours.')
 
 print('PLOTTING')
 
