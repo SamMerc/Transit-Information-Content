@@ -27,7 +27,6 @@ from jaxoplanet.light_curves import limb_dark_light_curve
 from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import numpy as np
 import os
-import time
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -315,7 +314,6 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
             continue
 
         print(f'CHI2 RETRIEVAL: {param1} vs {param2}')
-        st0 = time.time()
 
         if param1 == param2:
             #Generate chi2 range
@@ -356,5 +354,3 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
             #Delete variables (frees memory)
             del chi2_map, param1_vals, param2_vals
         
-        elapsed = time.time() - st0
-        print(f'Chi-squared space evaluation took {elapsed:.2f} seconds / {elapsed/60.:.2f} minutes / {elapsed/3600.:.2f} hours.')
