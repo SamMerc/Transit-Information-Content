@@ -260,10 +260,10 @@ for param, paramlabel, perturbation_sigma, color, shape in zip(
         
     #Plot the difference between nominal and perturbed model
     axes['A'].plot(plot_phase, (bestfit_lc - tr_perturbed_LC)*1e6, shape, color=color, markersize=marksize)
-    # axes['A'].set_xlim([-0.0107, -0.007])
+    axes['A'].set_xlim([-0.0425, -0.033])
     axes['C'].plot(plot_phase, (bestfit_lc - tr_perturbed_LC)*1e6, shape, color=color, label=paramlabel, markersize=marksize)
-    # axes['C'].set_xlim([-0.004, 0.004])
-    # axes['C'].set_ylim([-30, 80])
+    axes['C'].set_xlim([-0.02, 0.02])
+    axes['C'].set_ylim([-55, 40])
 
 #Plotting contours for stellar density vs i in top right panel 
 # Build flattened sample vectors (ensure 1D arrays) before feeding KDE
@@ -312,9 +312,9 @@ axes['A'].set_xlabel('Orbital Phase', fontsize=elem_size)
 axes['A'].tick_params(axis='x', labelsize=elem_size)
 axes['B'].tick_params(axis='both', labelsize=elem_size)
 axes['C'].tick_params(axis='both', labelsize=elem_size)
-axes['A'].set_xticks([-0.01, -0.009, -0.008], [-0.01, -0.009, -0.008])
-axes['C'].set_xticks([-0.003, -0.001, 0.001, 0.003], [-0.003, -0.001, 0.001, 0.003])
+axes['A'].set_xticks([-0.041, -0.038, -0.035], [-0.041, -0.038, -0.035])
+axes['C'].set_xticks([-0.015, -0.005, 0.005, 0.015], [-0.015, -0.005, 0.005, 0.015])
 axes['C'].legend(handletextpad=0.01, loc='lower center', frameon=True, ncol=4)
 for mosaic_elem in ['A','C']:axes[mosaic_elem].grid(True)
-plt.savefig(raw_save_dir+'/Fig2.pdf')
+plt.savefig(raw_save_dir+'/Fig2.pdf', bbox_inches="tight")
 plt.close()
