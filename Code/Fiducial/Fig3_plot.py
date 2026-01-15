@@ -122,7 +122,7 @@ fixed_args['var_param_list']=var_param_list
 fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)',r'u$_1$', r'u$_2$',r'u$_3$',r'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)']
 
 #% Define number of points to sample the parameter space with
-fixed_args['sample_pts'] = 10
+fixed_args['sample_pts'] = 33
 
 #% Delat chi2 thresholds to include in heatmaps
 fixed_args['delta_chi2_thresh'] = 1.0
@@ -216,8 +216,25 @@ seed_dir = input_dir+f'{jnp.floor(model_scatter)}ppm/Seed{seed}/'
 ##### Chi-squared map plotting #####
 ####################################
 
-#Load chi2 dictionary
-chi2_dic = jnp.load(fixed_args['save_loc']+"chi2_dict.npy", allow_pickle=True).item()
+def load_chi2_data(param1, param2, save_loc):
+    """
+    Load chi-squared data for a parameter pair from individual files.
+    Handles both same-parameter (1D) and different-parameter (2D) cases.
+    """
+    # Try both possible file name combinations
+    file1 = os.path.join(save_loc, f"chi2_{param1}_{param2}.npy")
+    file2 = os.path.join(save_loc, f"chi2_{param2}_{param1}.npy")
+    
+    if os.path.exists(file1):
+        return jnp.load(file1)
+    elif os.path.exists(file2):
+        data = jnp.load(file2)
+        # If it's a 2D array and params are different, transpose it
+        if param1 != param2 and data.ndim == 2:
+            return data.T
+        return data
+    else:
+        raise FileNotFoundError(f"Could not find chi2 file for {param1} vs {param2}")
 
 #Loading the MCMC results
 print(f'Retrieving MCMC')
@@ -254,12 +271,15 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
 
         # Diagonal: 1D chi2 line plot
         if i == j:
+
+            # Load chi2 data from file
+            chi2_vals = load_chi2_data(param1, param1, fixed_args['save_loc'])
+
             param_vals = jnp.linspace(
-                raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn'], i]),
-                raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn'], i]),
+                raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i]),
+                raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i]),
                 fixed_args['sample_pts']
             )
-            chi2_vals = chi2_dic[f'{param1}_{param1}']-np.min(chi2_dic[f'{param1}_{param1}'])
 
             ax.plot(param_vals, chi2_vals, color='black')
             ax.axvline(raw_chain[max_walker, max_step, i], color='red', linestyle='--', lw=1)
@@ -271,13 +291,13 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
         else:
             # Use param2 on x-axis, param1 on y-axis (lower triangle convention)
             param2_vals = jnp.linspace(
-                raw_chain[max_walker, max_step, j] - jnp.std(raw_chain[:, fixed_args['nburn'], j]),
-                raw_chain[max_walker, max_step, j] + jnp.std(raw_chain[:, fixed_args['nburn'], j]),
+                raw_chain[max_walker, max_step, j] - jnp.std(raw_chain[:, fixed_args['nburn']:, j]),
+                raw_chain[max_walker, max_step, j] + jnp.std(raw_chain[:, fixed_args['nburn']:, j]),
                 fixed_args['sample_pts']
             )
             param1_vals = jnp.linspace(
-                raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn'], i]),
-                raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn'], i]),
+                raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i]),
+                raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i]),
                 fixed_args['sample_pts']
             )
 
@@ -296,17 +316,11 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
             key1 = f'{param1}_{param2}'
             key2 = f'{param2}_{param1}'
 
-            if key1 in chi2_dic:
-                chi2_grid = chi2_dic[key1]
-            elif key2 in chi2_dic:
-                chi2_grid = chi2_dic[key2].T
-            else:
-                raise KeyError(f"Neither '{key1}' nor '{key2}' found in chi2_dic keys: {list(chi2_dic.keys())}")
+            # Load chi2 data from file
+            chi2_grid = load_chi2_data(param1, param2, fixed_args['save_loc'])
             
             A, B = np.meshgrid(param2_vals, param1_vals)  # (x=param2, y=param1)
             norm_A, norm_B = np.meshgrid(norm_param2_vals, norm_param1_vals)  # (x=param2, y=param1)
-
-            chi2_grid = chi2_grid - np.min(chi2_grid)
 
             # Define three nicely spaced contour levels (multiples of the delta threshold)
             contour_levels = []
