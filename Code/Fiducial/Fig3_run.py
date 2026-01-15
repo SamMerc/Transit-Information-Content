@@ -41,15 +41,15 @@ jax.config.update("jax_enable_x64", True)
 G_solar_units = G.to(u.Rsun**3 / (u.Msun * u.day**2)).value
 G_cgday = G.to(u.cm**3 / (u.g * u.day**2)).value
 R_star = (1.0 * u.R_sun).value
-#%%%% Mock system - fiducial (+ some eccentricity and argument of periastron)
+#%%%% Mock system - fiducial
 init_state_dic = {}
 init_state_dic['period'] = 1.                                 #days
 a_meters = ( (G.value * (1.0 * u.M_sun).to(u.kg).value * (init_state_dic['period'] * 24 * 3600)**2)/(4 * jnp.pi**2) )**(1/3)  
 init_state_dic['a'] = a_meters / (1.0 * u.R_sun).to(u.m).value  #stellar radius
 init_state_dic['r'] = 0.1                                     #stellar radius
 init_state_dic['i'] = jnp.deg2rad(90)                         #radians
-init_state_dic['omega'] = 0.5                                 #radians
-init_state_dic['e'] = 0.1                                     #unitless
+init_state_dic['omega'] = 0.0                                 #radians
+init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
@@ -129,10 +129,10 @@ fixed_args['fix_param_val']=fix_param_val
 fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)',r'u$_1$', r'u$_2$',r'u$_3$',r'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)']
 
 #% Define number of points to sample the parameter space with
-fixed_args['sample_pts'] = 5
+fixed_args['sample_pts'] = 10
 
 #%% Number of burn-in steps used in MCMC
-fixed_args['nburn'] = 7000
+fixed_args['nburn'] = 700000
 
 #%% Model scatter and seed to use for the plot
 model_scatter =  16.68100537200059 
