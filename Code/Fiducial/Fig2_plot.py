@@ -40,15 +40,15 @@ jaxnoise_key = jax.random.PRNGKey(0)
 G_solar_units = G.to(u.Rsun**3 / (u.Msun * u.day**2)).value
 G_cgday = G.to(u.cm**3 / (u.g * u.day**2)).value
 R_star = (1.0 * u.R_sun).value
-#%%%% Mock system - fiducial (+ some eccentricity and argument of periastron)
+#%%%% Mock system - fiducial
 init_state_dic = {}
 init_state_dic['period'] = 1.                                 #days
 a_meters = ( (G.value * (1.0 * u.M_sun).to(u.kg).value * (init_state_dic['period'] * 24 * 3600)**2)/(4 * jnp.pi**2) )**(1/3)  
 init_state_dic['a'] = a_meters / (1.0 * u.R_sun).to(u.m).value  #stellar radius
 init_state_dic['r'] = 0.1                                     #stellar radius
 init_state_dic['i'] = jnp.deg2rad(90)                         #radians
-init_state_dic['omega'] = 0.5                                 #radians
-init_state_dic['e'] = 0.1                                     #unitless
+init_state_dic['omega'] = 0.0                                 #radians
+init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
@@ -57,6 +57,9 @@ init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.1, u2=0.2, u3=0.4, u4=0.3)
 #Updating initial state dictionary
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
+
+#Get starting points for the LD coefficients
+init_LD_prop = nonlinear_4param_ld_law(u1=0.1, u2=0.2, u3=0.4, u4=0.3, order=3)
 
 #%%%% Calculate transit duration
 # Convert angles to radians
@@ -96,12 +99,12 @@ mod_prop = {
     'r'         : {'vary':True, 'guess':0.11, 'bounds':[0.07, 0.15]},
     'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(92.)]},
     'a'         : {'vary':True, 'guess':init_state_dic['a']-1, 'bounds':[init_state_dic['a']-2, init_state_dic['a']+2]},
-    'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.7]},
-    'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
-    'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
+    'LD_u1'     : {'vary':True, 'guess':init_LD_prop[0], 'bounds':[init_LD_prop[0] - 0.5, init_LD_prop[0] + 0.5]},
+    'LD_u2'     : {'vary':True, 'guess':init_LD_prop[1], 'bounds':[init_LD_prop[1] - 0.5, init_LD_prop[1] + 0.5]},
+    'LD_u3'     : {'vary':True, 'guess':init_LD_prop[2], 'bounds':[init_LD_prop[2] - 0.5, init_LD_prop[2] + 0.5]},
     'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]}, #Gaussian prior
-    'sqrtecosw' : {'vary':True, 'guess':0.2, 'bounds':[0., 0.4]},
-    'sqrtesinw' : {'vary':True, 'guess':0.1, 'bounds':[-0.1, 0.3]},
+    'sqrtecosw' : {'vary':True, 'guess':0.1, 'bounds':[-0.2, 0.2]},
+    'sqrtesinw' : {'vary':True, 'guess':0.1, 'bounds':[-0.2, 0.2]},
     't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
 }
 
@@ -123,7 +126,7 @@ fixed_args['fix_param_list']=fix_param_list
 fixed_args['fix_param_val']=fix_param_val
 
 #%% Number of burn-in steps
-fixed_args['nburn'] = 7000
+fixed_args['nburn'] = 700000
 
 #%% Model scatter and seed to use for the plot
 model_scatter =  16.68100537200059 
