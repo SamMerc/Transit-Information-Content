@@ -253,8 +253,8 @@ for PLD_order, fit_color in zip([PLD_orders, fit_colors]):
         for seed in seeds:
 
             #Load the MCMC results
-            raw_chain = jnp.load(raw_save_dir+f'{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
-            logprob = jnp.load(raw_save_dir+f'{jnp.floor(model_scatter)}ppm/Seed{seed}/logprob.npy')
+            raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
+            logprob = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/logprob.npy')
             max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
             
             #Retrieve the amplification factor from bestfit result
