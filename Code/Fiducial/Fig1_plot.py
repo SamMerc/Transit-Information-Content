@@ -91,6 +91,8 @@ mod_prop = {
     'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
     'LD_u4'     : {'vary':True, 'guess':0.2, 'bounds':[-0.2, 0.8]},
     'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]},
+    'sqrtecosw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
+    'sqrtesinw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
     't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
 }
 
