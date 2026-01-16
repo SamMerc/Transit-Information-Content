@@ -20,8 +20,6 @@ jobs:
         with:
           showyourwork-spec: git+https://github.com/showyourwork/showyourwork
         uses: showyourwork/showyourwork-action@v1
-        with:
-          showyourwork-spec: git+https://github.com/showyourwork/showyourwork
         env:
           SANDBOX_TOKEN: "${{ secrets.SANDBOX_TOKEN }}"
           OVERLEAF_TOKEN: "${{ secrets.OVERLEAF_TOKEN }}"
