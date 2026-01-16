@@ -122,8 +122,8 @@ fixed_args['nthreads'] = jax.device_count()
 
 #%% MCMC specific settings
 fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 1000
-fixed_args['nburn'] = 700
+fixed_args['nsteps'] = 100000
+fixed_args['nburn'] = 70000
 fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
 #%% Numpyro specific - set to False for faster
 fixed_args['adapt_step_size'] = True
@@ -181,7 +181,7 @@ if PLD_order == 2:
     )
 
     #Define plotting labels
-    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "", "u$_1$", "u$_2$"]
+    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "u$_1$", "u$_2$"]
 
 elif PLD_order == 3:
     #Setting base LDCs
@@ -210,7 +210,7 @@ elif PLD_order == 3:
     )
 
     #Define plotting labels
-    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "", "u$_1$", "u$_2$", "u$_3$"]
+    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "u$_1$", "u$_2$", "u$_3$"]
 
 elif PLD_order == 4:
     #Setting base LDCs
@@ -241,7 +241,7 @@ elif PLD_order == 4:
     )
 
     #Define plotting labels
-    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "", "u$_1$", "u$_2$", "u$_3$", "u$_4$"]
+    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "u$_1$", "u$_2$", "u$_3$", "u$_4$"]
 
 else:
     raise KeyError('Wrong order of polynomial limb darkening law.')
