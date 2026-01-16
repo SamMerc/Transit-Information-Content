@@ -122,13 +122,13 @@ fixed_args['var_param_list']=var_param_list
 fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)',r'u$_1$', r'u$_2$',r'u$_3$',r'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)']
 
 #% Define number of points to sample the parameter space with
-fixed_args['sample_pts'] = 33
+fixed_args['sample_pts'] = 100
 
 #% Delat chi2 thresholds to include in heatmaps
 fixed_args['delta_chi2_thresh'] = 1.0
 
 #% Contour levels 
-lvls = np.logspace(np.log10(1), np.log10(1000), base=10, num=20)
+lvls = np.logspace(np.log10(1), np.log10(1000), base=10, num=10)
 
 #%% Number of burn-in steps used in MCMC
 fixed_args['nburn'] = 700000
