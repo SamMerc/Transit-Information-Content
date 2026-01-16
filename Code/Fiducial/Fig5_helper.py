@@ -1,6 +1,23 @@
+#############################
+########## Purpose ##########
+#############################
+
+# In this file, we retrieve all planet-hosting stars from the NASA exoplanet archive.
+# From these, we build a histogram of Teff for all these stars and use this histogram 
+# to weight the array of Teff values tested in Fig5. The point of this is to have 
+# some inclusion of the distribution of stellar temperatures included in our grid of values tested. 
+
+######################################
+########## Import libraries ##########
+######################################
+
 import numpy as np
 import matplotlib.pyplot as plt
 from astroquery.ipac.nexsci.nasa_exoplanet_archive import NasaExoplanetArchive
+
+########################
+########## Code ########
+########################
 
 # Query the NASA Exoplanet Archive for confirmed planets
 print("Querying NASA Exoplanet Archive...")
