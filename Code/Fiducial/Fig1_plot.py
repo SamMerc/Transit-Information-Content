@@ -21,7 +21,6 @@ from astropy.constants import G
 from jaxoplanet.light_curves import limb_dark_light_curve
 import numpy as np
 import os, itertools, sys
-import numpyro
 from scipy.stats import norm
 from matplotlib.collections import LineCollection
 import matplotlib.colors as mcolors
