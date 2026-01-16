@@ -130,7 +130,7 @@ fixed_args['all_param_list'] = var_param_list + fix_param_list
 fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)',r'u$_1$', r'u$_2$',r'u$_3$',r'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)']
 
 #% Define number of points to sample the parameter space with
-fixed_args['sample_pts'] = 33
+fixed_args['sample_pts'] = 100
 
 #%% Number of burn-in steps used in MCMC
 fixed_args['nburn'] = 700000
