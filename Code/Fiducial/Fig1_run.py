@@ -476,8 +476,12 @@ def emcee_log_probability(p_step, x, y, yerr):
 #Check directory exists
 check_dir(raw_save_dir)
 
+#Check PLD order directory exists
+PLD_dir = check_dir(raw_save_dir+f'PLD_{PLD_order}/')
+print(f"PLD order = {PLD_order}")
+
 #Check model scatter directory exists
-scatter_dir = check_dir(raw_save_dir+f'{jnp.floor(model_scatter)}ppm/')
+scatter_dir = check_dir(PLD_dir+f'{jnp.floor(model_scatter)}ppm/')
 print(f"MODEL SCATTER = {model_scatter:.2f}")
 
 #Check seed directory exists
