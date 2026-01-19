@@ -249,7 +249,7 @@ for PLD_order, fit_color in zip([PLD_orders, fit_colors]):
         amp_factors = np.zeros(len(seeds), dtype=float)
 
         #Loop over seeds
-        for seed in seeds:
+        for iseed, seed in enumerate(seeds):
 
             #Load the MCMC results
             raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
@@ -262,7 +262,7 @@ for PLD_order, fit_color in zip([PLD_orders, fit_colors]):
             bestfit_r_error = 2*jnp.std(r_chain)*bestfit_r
             num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2) & (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
             scatter_in_bin = (model_scatter*1e-6)/jnp.sqrt(num_IT_pts)
-            amp_factor = bestfit_r_error/scatter_in_bin
+            amp_factors[iseed] = bestfit_r_error/scatter_in_bin
 
         
         #Make box-plot for this PLD-model scatter-seed combination
@@ -273,6 +273,9 @@ for PLD_order, fit_color in zip([PLD_orders, fit_colors]):
                    capprops=dict(color=fit_color, linewidth=1.5),
                    flierprops=dict(marker='o', color=fit_color, markersize=5, alpha=0.5),
                    showfliers=False)
+        
+        #Free up memory
+        del raw_chain, logprob, r_chain, amp_factors, bestfit_r, bestfit_r_error, num_IT_pts, scatter_in_bin, max_step, max_walker, iseed, seed
 
 # Styling
 ax_right.set_xscale('log')
