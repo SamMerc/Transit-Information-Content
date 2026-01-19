@@ -21,6 +21,10 @@ import matplotlib.pyplot as plt
 import jax
 import jax.numpy as jnp
 import exotic_ld as el
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+import seaborn as sns
 
 
 ######################################
@@ -30,7 +34,7 @@ import exotic_ld as el
 LD_data_path = '/Volumes/Pandora/Work/PhD/Research/TIC/LD simulation'
 save_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_helper_Storage/'
 
-models = ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
+models = ['phoenix']#,'kurucz', 'stagger', 'mps1', 'mps2']
 
 mu_values = np.linspace(0, 1, 1000)
 
@@ -60,7 +64,7 @@ metallicitys = {
 
 N = 60
 
-wavelength_range = 'JWST_NIRSpec_Prism'
+n_components = 5
 
 ################################
 ########## Code block ##########
@@ -73,9 +77,13 @@ intensity_profiles={model : np.zeros((N, N, N), dtype=object) for model in model
 for model in models:
     
     #Instantiate 
-    #Iterate over the three stellar parameters
+    #Iterate over the three stellar parameters and retrieve intensity profiles
+    
+    #Temperature
     for i, T in enumerate(jnp.linspace(Teffs[model][0], Teffs[model][1], N)):
+        #Surface gravity
         for j, g in enumerate(jnp.linspace(loggs[model][0], loggs[model][1], N)):
+            #Metallicity
             for k, m in enumerate(jnp.linspace(metallicitys[model][0], metallicitys[model][1], N)):
                 
                 #Calculate stellar spectrum - across wavelength and viewing angle
@@ -87,8 +95,81 @@ for model in models:
                 
                 # Integrate stellar spectrum over wavelength
                 intensity_profile = np.trapezoid(sld.stellar_intensities, sld.stellar_wavelengths, axis=0)
+
+                # Normalize
                 intensity_profile /= intensity_profile[0]
                 intensity_profiles[model][i, j, k] = intensity_profile
+
+    # Retrieve the grid of mu values
+    mus = jnp.copy(sld.mus)
+    rs = jnp.sqrt(1 - mus**2)
+
+    # Perform PCA analysis 
+    pca = PCA(n_components=n_components)
+    profiles_pca = pca.fit_transform(intensity_profiles[model])
+
+    # Extract eigen intensity profile
+    eigen_profiles = pca.components_  # Shape: (n_components, n_mu_points)
+
+    # Clustering in PCA space
+    n_clusters = 3
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    cluster_labels = kmeans.fit_predict(profiles_pca[:, :3])  # Use first 3 PCs
+
+    # Visualization
+    fig = plt.figure(figsize=(16, 12))
+
+    # Plot 1: All original intensity profiles
+    ax1 = plt.subplot(3, 3, 1)
+    for i in range(min(50, len(intensity_profiles[model]))):
+        ax1.plot(mu_values, intensity_profiles[model][i], alpha=0.3, color='gray', linewidth=0.5)
+    ax1.set_xlabel('μ = cos(θ)')
+    ax1.set_ylabel('Intensity')
+    ax1.set_title('Sample of Original Intensity Profiles')
+    ax1.grid(True, alpha=0.3)
+
+    # Plot 2: Scree plot (explained variance)
+    ax2 = plt.subplot(3, 3, 2)
+    ax2.plot(range(1, n_components + 1), pca.explained_variance_ratio_, 'bo-', linewidth=2)
+    ax2.set_xlabel('Principal Component')
+    ax2.set_ylabel('Explained Variance Ratio')
+    ax2.set_title('Scree Plot')
+    ax2.grid(True, alpha=0.3)
+
+    # Plot 3: Cumulative explained variance
+    ax3 = plt.subplot(3, 3, 3)
+    ax3.plot(range(1, n_components + 1), np.cumsum(pca.explained_variance_ratio_), 'ro-', linewidth=2)
+    ax3.axhline(y=0.95, color='g', linestyle='--', label='95% variance')
+    ax3.set_xlabel('Number of Components')
+    ax3.set_ylabel('Cumulative Explained Variance')
+    ax3.set_title('Cumulative Variance Explained')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+
+    # Plot 4-8: First 5 Eigen-intensity profiles
+    colors = ['blue', 'red', 'green', 'purple', 'orange']
+    for i in range(n_components):
+        ax = plt.subplot(3, 3, 4 + i)
+        ax.plot(mu_values, eigen_profiles[i], color=colors[i], linewidth=2)
+        ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+        ax.set_xlabel('μ = cos(θ)')
+        ax.set_ylabel('Component Value')
+        ax.set_title(f'Eigen-profile {i+1} ({pca.explained_variance_ratio_[i]*100:.1f}%)')
+        ax.grid(True, alpha=0.3)
+
+    # Plot 9: PCA space with clusters
+    ax9 = plt.subplot(3, 3, 9)
+    scatter = ax9.scatter(profiles_pca[:, 0], profiles_pca[:, 1], 
+                        c=cluster_labels, cmap='viridis', s=50, alpha=0.6)
+    ax9.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)')
+    ax9.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)')
+    ax9.set_title('Stellar Models in PCA Space')
+    plt.colorbar(scatter, ax=ax9, label='Cluster')
+    ax9.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    # plt.savefig('pca_intensity_analysis.png', dpi=150, bbox_inches='tight')
+    plt.show()
 
                 # # Retrieve r values
                 # r = jnp.sqrt(1 - sld.mus**2)
