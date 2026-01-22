@@ -62,7 +62,7 @@ metallicitys = {
     'mps2' : [-5.0, 1.5],
 }
 
-N = 60
+N = 10
 
 n_components = 5
 
