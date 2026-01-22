@@ -11,7 +11,6 @@
 ######################################
 ########## Import libraries ##########
 ######################################
-from jax import random
 import jax
 print(f"JAX devices: {jax.devices()}")
 print(f"Default backend: {jax.default_backend()}")
@@ -21,11 +20,23 @@ import astropy.units as u
 from astropy.constants import G
 import numpy as np
 import matplotlib.gridspec as gridspec
-
+import paths
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
 
+#####################################
+######## Add temp. plots ############
+#####################################
+# Generate some data
+random_numbers = np.random.randn(100, 10)
+
+# Plot and save
+fig = plt.figure(figsize=(7, 6))
+plt.plot(random_numbers)
+plt.xlabel("x")
+plt.ylabel("y")
+fig.savefig(paths.figures / "Fig4.pdf", bbox_inches="tight", dpi=300)
 
 #############################################
 ########## Define hyper-parameters ##########
