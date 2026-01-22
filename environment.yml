@@ -6,11 +6,11 @@ dependencies:
   - python
   - matplotlib
   - jax
-  - jaxoplanet
   - astropy
   - scipy
   - arviz
   - corner
   - pip:
+    - jaxoplanet
     - git+https://github.com/SamMerc/emcee-jax.git
 
