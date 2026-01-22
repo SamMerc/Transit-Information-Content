@@ -11,5 +11,6 @@ dependencies:
   - scipy
   - arviz
   - corner
-  - emcee_jax
+  - pip:
+    - git+https://github.com/SamMerc/emcee-jax.git
 
