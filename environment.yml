@@ -1,7 +1,15 @@
 channels:
   - conda-forge
 dependencies:
-  - numpy=2.2.6
-  - pip=25.1.1
-  - python=3.10
-  - matplotlib==3.10
+  - numpy
+  - pip
+  - python
+  - matplotlib
+  - jax
+  - jaxoplanet
+  - astropy
+  - scipy
+  - arviz
+  - corner
+  - emcee_jax
+
