@@ -19,3 +19,5 @@
 </p>
 
 An open source scientific article created using the [showyourwork](https://github.com/showyourwork/showyourwork) workflow.
+
+[Mural](https://app.mural.co/t/tic1659/m/tic1659/1768837859142/2fa4dbdcf77b864ea064c7bb18d45992222f1219) for the limb-darkening references and mindmap.
