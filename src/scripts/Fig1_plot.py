@@ -297,7 +297,7 @@ for PLD_order, fit_color in zip(PLD_orders, fit_colors):
                    showfliers=False)
         
         #Free up memory
-        del raw_chain, logprob, r_chain, amp_factors, bestfit_r, bestfit_r_error, num_IT_pts, scatter_in_bin, max_step, max_walker, iseed, seed
+        del raw_chain, logprob, r_chain, amp_factors, bestfit_r, bestfit_r_error, scatter_in_bin, max_step, max_walker, iseed, seed
 
 # Styling
 ax_right.set_xscale('log')
