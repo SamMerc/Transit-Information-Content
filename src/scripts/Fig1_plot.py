@@ -92,7 +92,7 @@ num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number 
 init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
 #%% Location of MCMC results and where plot will be output
-raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig1_Storage/'
+raw_save_dir = '/Volumes/Pandora/Work/PhD/Research/TIC/Gen_Storage/Fig1_Storage/'
 
 #%% Model parameters
 mod_prop = {
@@ -115,6 +115,7 @@ fixed_args={}
 #%% Number of burn-in steps
 fixed_args['nburn'] = 70000
 
+PLD_order = 3
 model_scatter = 599.4842503189409
 seed = 70
 
@@ -200,7 +201,7 @@ noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
 ##################
 
 #Loading MCMC results
-raw_chain = jnp.load(raw_save_dir+f'{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
+raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
 
 #Burning chains
 burnt_chains = jnp.copy(raw_chain[:, fixed_args['nburn']:, :])
@@ -214,6 +215,7 @@ ax_left = fig.add_subplot(gs[0, 0])      # top-left: time-series / sampled light
 ax_right = fig.add_subplot(gs[0, 1])     # right: full-height plot (spans both rows)
 
 # --- Left-hand plot ---
+print('LEFT-HAND PLOT')
 
 ax_left.errorbar(init_state_dic['times'][::3], noisy_LC[::3], yerr=noisy_std[::3], fmt='.', color='black', alpha=0.4, markersize=12, zorder=2)
 
@@ -244,6 +246,7 @@ ax_left.set_yticklabels([])
 
 
 # --- Right-hand plot ---
+print('RIGHT-HAND PLOT')
 model_scatters = [0.1, 1, 10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127,
                    129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0]
 seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
@@ -254,16 +257,19 @@ fit_labels = ['2nd order LD', '3rd order LD', '4th order LD']
 plt.rcParams["font.family"] = "Arial"
 
 #Loop over LD models
-for PLD_order, fit_color in zip([PLD_orders, fit_colors]):
-
+for PLD_order, fit_color in zip(PLD_orders, fit_colors):
+    print('    PROCESSING PLD ORDER:', PLD_order)
+   
     #Loop over model scatters
     for model_scatter in model_scatters:
+        print('        PROCESSING MODEL SCATTER:', model_scatter)
         
         #Initialize array to store amplification factors for all seeds
         amp_factors = np.zeros(len(seeds), dtype=float)
 
         #Loop over seeds
         for iseed, seed in enumerate(seeds):
+            print('            PROCESSING NOISE SEED:', seed)
 
             #Load the MCMC results
             raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
