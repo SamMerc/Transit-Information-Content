@@ -36,7 +36,7 @@ from lmfit import minimize, Parameters
 LD_data_path = '/Volumes/Pandora/Work/PhD/Research/TIC/LD simulation'
 orig_save_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_helper_Storage/'
 
-models = ['stagger']#,'kurucz', 'stagger', 'mps1', 'mps2']
+models = ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
 Teffs = {
     'phoenix' : [2300, 15000], 
@@ -77,6 +77,8 @@ n_components = 5
 
 n_clusters = 2
 
+mode = 'build' # 'build' or 'load'
+
 ################################
 ########## Code block ##########
 ################################
@@ -92,30 +94,42 @@ for model in models:
     save_data_path = orig_save_data_path + f'{model}/'
     if not os.path.exists(save_data_path):os.makedirs(save_data_path)
 
-    #Instantiate 
-    #Iterate over the three stellar parameters and retrieve intensity profiles
+    #Build intensity profiles grid
+    if mode == 'build':
+        #Iterate over the three stellar parameters and retrieve intensity profiles
+        #Temperature
+        for i, T in enumerate(jnp.linspace(Teffs[model][0], Teffs[model][1], N)):
+            #Surface gravity
+            for j, g in enumerate(jnp.linspace(loggs[model][0], loggs[model][1], N)):
+                #Metallicity
+                for k, m in enumerate(jnp.linspace(metallicitys[model][0], metallicitys[model][1], N)):
+                    
+                    #Calculate stellar spectrum - across wavelength and viewing angle
+                    print('GENERATING Teff =', T, 'logg =', g, 'metallicty =', m, 'for model', model)
+                    sld = el.StellarLimbDarkening(M_H=m, Teff=T, logg=g,
+                                ld_model=model,
+                                ld_data_path=LD_data_path,
+                                interpolate_type="nearest")
+                    
+                    # Integrate stellar spectrum over wavelength
+                    intensity_profile = jnp.trapezoid(sld.stellar_intensities, sld.stellar_wavelengths, axis=0)
+
+                    # Normalize
+                    intensity_profile /= intensity_profile[0]
+                    intensity_profiles[model][i, j, k] = intensity_profile
+
+        #Save intensity profiles
+        jnp.save(save_data_path + f'intensity_profiles.npy', intensity_profiles[model])
     
-    #Temperature
-    for i, T in enumerate(jnp.linspace(Teffs[model][0], Teffs[model][1], N)):
-        #Surface gravity
-        for j, g in enumerate(jnp.linspace(loggs[model][0], loggs[model][1], N)):
-            #Metallicity
-            for k, m in enumerate(jnp.linspace(metallicitys[model][0], metallicitys[model][1], N)):
-                
-                #Calculate stellar spectrum - across wavelength and viewing angle
-                print('GENERATING Teff =', T, 'logg =', g, 'metallicty =', m, 'for model', model)
-                sld = el.StellarLimbDarkening(M_H=m, Teff=T, logg=g,
-                            ld_model=model,
-                            ld_data_path=LD_data_path,
-                            interpolate_type="nearest")
-                
-                # Integrate stellar spectrum over wavelength
-                intensity_profile = jnp.trapezoid(sld.stellar_intensities, sld.stellar_wavelengths, axis=0)
+    #Load intensity profiles grid
+    elif mode == 'load':
+        intensity_profiles[model] = jnp.load(save_data_path + f'intensity_profiles.npy')
+    else:
+        raise KeyboardInterrupt('Mode not recognized.')
 
-                # Normalize
-                intensity_profile /= intensity_profile[0]
-                intensity_profiles[model][i, j, k] = intensity_profile
-
+    ##########################################
+    ########## PCA analysis ##################
+    ##########################################
     # Retrieve the grid of mu values
     mus = jnp.copy(sld.mus)
     rs = jnp.sqrt(1 - mus**2)

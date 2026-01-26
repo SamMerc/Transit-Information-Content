@@ -25,6 +25,7 @@ import os, itertools, sys
 from scipy.stats import norm
 from matplotlib.collections import LineCollection
 import matplotlib.colors as mcolors
+from multiprocessing import Pool
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -99,21 +100,20 @@ mod_prop = {
     'r'         : {'vary':True, 'guess':0.11, 'bounds':[0.07, 0.15]},
     'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(92.)]},
     'a'         : {'vary':True, 'guess':init_state_dic['a']-1, 'bounds':[init_state_dic['a']-2, init_state_dic['a']+2]},
-    'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.7]},
-    'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
-    'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
-    'LD_u4'     : {'vary':True, 'guess':0.2, 'bounds':[-0.2, 0.8]},
     'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]},
     'sqrtecosw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
     'sqrtesinw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
     't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
+    'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.7]},
+    'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
+    'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
 }
 
 #%% Fitting mode
 fixed_args={}
 
 #%% Number of burn-in steps
-fixed_args['nburn'] = 70000
+fixed_args['nburn'] = 400000
 
 PLD_order = 3
 model_scatter = 599.4842503189409
@@ -206,6 +206,9 @@ raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}pp
 #Burning chains
 burnt_chains = jnp.copy(raw_chain[:, fixed_args['nburn']:, :])
 
+#Calculate number of IT points
+num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2) & (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
+
 #Starting to plot
 fig = plt.figure(figsize=(17, 7))
 gs = fig.add_gridspec(nrows=1, ncols=2, width_ratios=[1, 2.2],
@@ -280,7 +283,6 @@ for PLD_order, fit_color in zip(PLD_orders, fit_colors):
             r_chain = raw_chain[:, fixed_args['nburn']:, 0]
             bestfit_r = raw_chain[max_walker, max_step, 0]
             bestfit_r_error = 2*jnp.std(r_chain)*bestfit_r
-            num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2) & (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
             scatter_in_bin = (model_scatter*1e-6)/jnp.sqrt(num_IT_pts)
             amp_factors[iseed] = bestfit_r_error/scatter_in_bin
 
