@@ -9,7 +9,7 @@
 ######################################
 ########## Import libraries ##########
 ######################################
-from jax import random
+from jax import random, jit, vmap
 import jax
 import paths
 print(f"JAX devices: {jax.devices()}")
@@ -21,7 +21,7 @@ import astropy.units as u
 from astropy.constants import G
 from jaxoplanet.light_curves import limb_dark_light_curve
 import numpy as np
-import os, itertools, sys
+import os
 from scipy.stats import norm
 from matplotlib.collections import LineCollection
 import matplotlib.colors as mcolors
@@ -29,6 +29,7 @@ import time
 from tqdm import tqdm
 import pickle
 from multiprocessing import Pool, cpu_count
+import gc
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -109,6 +110,10 @@ PLD_order = 3
 model_scatter = 599.4842503189409
 seed = 70
 
+# Optimization
+num_workers = int(0.8 * cpu_count())
+CHUNK_SIZE = 60  # Process 60 files at a time (tune based on your RAM)
+
 #%% Defining important lists
 var_param_list = []
 fix_param_list = []
@@ -168,43 +173,82 @@ def create_jaxoplanet_model(x, p):
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
     return jaxo_lc.reshape((-1))
 
-def load_single_result(args):
-
+def load_result(args):
+    """
+    Optimized file loading with memory mapping and selective loading
+    
+    Key optimizations:
+    1. Use mmap_mode='r' to memory-map files instead of loading into RAM
+    2. Only load the data we actually need (post burn-in, parameter 0)
+    3. Extract bestfit info without loading full chain
+    4. Return minimal data needed for computation
+    """
     raw_save_dir, PLD_order, model_scatter, seed = args
     try:
-        path_base = f'{raw_save_dir}PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/'
-        raw_chain = jnp.load(path_base + 'chains.npy')
-        logprob = jnp.load(path_base + 'logprob.npy')
-        return (PLD_order, model_scatter, seed, raw_chain, logprob)
+        path_base = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/'
+        
+        # CRITICAL: Use memory mapping instead of loading entire file
+        # This keeps data on disk and only loads what's needed
+        raw_chain = np.load(path_base + 'chains.npy', mmap_mode='r')
+        logprob = np.load(path_base + 'logprob.npy', mmap_mode='r')
+        
+        # Extract only what we need BEFORE returning
+        # This significantly reduces memory usage
+        max_walker, max_step = np.unravel_index(np.argmax(logprob), logprob.shape)
+        
+        # Only load post burn-in data for parameter 0
+        r_chain_post_burnin = np.array(raw_chain[:, fixed_args['nburn']:, 0])  # Force load only this slice
+        bestfit_r = float(raw_chain[max_walker, max_step, 0])
+        
+        # Return minimal data (not entire chains)
+        return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r)
     except Exception as e:
         print(f"Error loading PLD{PLD_order}, scatter{model_scatter}, seed{seed}: {e}")
         return None
-
-def load_single_file_numpy(args):
-    """
-    Load a single MCMC file using ONLY numpy (no JAX).
-    This is safe for multiprocessing.
-    """
-    raw_save_dir, PLD_order, model_scatter, seed = args
     
-    try:
-        path_base = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/'
-        # Use numpy to load instead of jax.numpy
-        raw_chain = np.load(path_base + 'chains.npy')
-        logprob = np.load(path_base + 'logprob.npy')
-        return (PLD_order, model_scatter, seed, raw_chain, logprob, True)
-    except Exception as e:
-        return None
-
-
-def compute_amplification_factor(raw_chain, logprob, nburn, num_IT_pts, model_scatter):
-
-    max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
-    r_chain = raw_chain[:, nburn:, 0]
-    bestfit_r = raw_chain[max_walker, max_step, 0]
-    bestfit_r_error = 2 * jnp.std(r_chain) * bestfit_r
+# OPTIMIZATION 2: JAX-optimized computation
+@jit
+def compute_amplification_factor_jax(r_chain_flat, bestfit_r, model_scatter, num_IT_pts):
+    """JIT-compiled amplification factor calculation"""
+    std_r = jnp.std(r_chain_flat)
+    bestfit_r_error = 2 * std_r * bestfit_r
     scatter_in_bin = (model_scatter * 1e-6) / jnp.sqrt(num_IT_pts)
     return bestfit_r_error / scatter_in_bin
+
+
+# OPTIMIZATION 3: Vectorized batch processing
+compute_amp_factors_batch = vmap(
+    compute_amplification_factor_jax, 
+    in_axes=(0, 0, None, None)
+)
+
+
+def batch_compute_amplification_factors(results_batch, num_IT_pts):
+    """
+    Process multiple results in batch using JAX vectorization
+    
+    This processes all chains for a given (PLD_order, model_scatter) at once
+    """
+    r_chains_flat = []
+    bestfit_rs = []
+    model_scatter = None
+    
+    for _, _, _, r_chain_post_burnin, bestfit_r in results_batch:
+        r_chains_flat.append(r_chain_post_burnin.flatten())
+        bestfit_rs.append(bestfit_r)
+    
+    # Get model_scatter from first result (all same in batch)
+    model_scatter = results_batch[0][1]
+    
+    # Convert to JAX arrays and compute
+    r_chains_jax = jnp.array(r_chains_flat)
+    bestfit_rs_jax = jnp.array(bestfit_rs)
+    
+    amp_factors = compute_amp_factors_batch(
+        r_chains_jax, bestfit_rs_jax, model_scatter, num_IT_pts
+    )
+    
+    return [float(x) for x in amp_factors]
 
 #############################################
 ################ Running code ###############
@@ -255,43 +299,88 @@ if __name__ == '__main__':
                 for seed in seeds:
                     loading_tasks.append((raw_save_dir, PLD_order, model_scatter, seed))
         
-        # Load all data in parallel
-        print(f"Loading {len(loading_tasks)} files ...")
-        num_workers = int(0.8 * cpu_count())
+        total_files = len(loading_tasks)
+        print(f"Loading {total_files} files ...")
+        
+        # Process in chunks to reduce memory pressure
+        num_chunks = (total_files + CHUNK_SIZE - 1) // CHUNK_SIZE
+
         print(f"Using {num_workers} CPU cores")
 
+        # Process all chunks
         results = []
-        with Pool(processes=num_workers) as pool:
-            # Use imap_unordered for better performance with progress bar
-            for result in tqdm(pool.imap_unordered(load_single_result, loading_tasks, chunksize=5), 
-                             total=len(loading_tasks),
-                             desc="Processing MCMC files",
-                             unit="file",
-                             ncols=100):
-                results.append(result)
+        for chunk_idx in range(num_chunks):
+            chunk_start = chunk_idx * CHUNK_SIZE
+            chunk_end = min((chunk_idx + 1) * CHUNK_SIZE, total_files)
+            chunk_tasks = loading_tasks[chunk_start:chunk_end]
+            
+            print(f"\nProcessing chunk {chunk_idx+1}/{num_chunks} ({len(chunk_tasks)} files)...")
+            chunk_start_time = time.time()
+            
+            # Load chunk with progress bar            
+            with Pool(processes=num_workers) as pool:
+                chunk_results = []
+                for result in tqdm(pool.imap_unordered(load_result, chunk_tasks),
+                                 total=len(chunk_tasks),
+                                 desc=f"  Loading files",
+                                 ncols=80,
+                                 unit="file"):
+                    if result is not None:
+                        chunk_results.append(result)
+            
+            results.extend(chunk_results)
+            
+            chunk_time = time.time() - chunk_start_time
+            files_per_sec = len(chunk_tasks) / chunk_time
+            print(f"  Chunk processed in {chunk_time:.1f}s ({files_per_sec:.1f} files/sec)")
+            
+            # Force garbage collection between chunks
+            gc.collect()
 
-        # Filter out failed loads
-        results = [r for r in results if r is not None]
-        print(f"Successfully loaded {len(results)} files in {time.time() - t_start:.2f} seconds/ {(time.time() - t_start)/60:.2f} minutes/ {(time.time() - t_start)/3600:.2f} hours")
+        loading_time = time.time() - t_start
+        print(f"\n{'='*70}")
+        print(f"All files loaded in {loading_time:.1f}s ({loading_time/60:.2f} min)")
+        print(f"Successfully loaded {len(results)}/{total_files} files")
+        print(f"{'='*70}\n")
         
-        # Organize and compute amplification factors
+        # Organize and compute amplification factors with JAX
+        print("Computing amplification factors with JAX vectorization...")
+        computation_start = time.time()
+
         cached_data = {}
         for PLD_order in PLD_orders:
             cached_data[PLD_order] = {}
+            print(f"\nProcessing PLD order {PLD_order}:")
             for model_scatter in model_scatters:
-                amp_factors = []
+                print(f"\nProcessing Model scatter {model_scatter:.0f}:")
+                batch_data = []
                 # Filter results for this specific PLD_order and model_scatter
                 for result in results:
-                    result_pld, result_scatter, _, raw_chain, logprob = result
+                    result_pld, result_scatter, seed, r_chain_post_burnin, bestfit_r = result
                     if result_pld == PLD_order and result_scatter == model_scatter:
-                        amp_factor = compute_amplification_factor(
-                            raw_chain, logprob, fixed_args['nburn'], num_IT_pts, model_scatter
-                        )
-                        amp_factors.append(amp_factor)
-                cached_data[PLD_order][model_scatter] = np.array(amp_factors)
+                        batch_data.append(result)
+
+                if len(batch_data) > 0:
+                    # Use batch processing with JAX
+                    amp_factors = batch_compute_amplification_factors(
+                        batch_data, num_IT_pts
+                    )
+                    cached_data[PLD_order][model_scatter] = np.array(amp_factors)
+                else:
+                    cached_data[PLD_order][model_scatter] = np.array([])
         
-        print(f"Data processing complete in {time.time() - t_start:.2f} seconds/ {(time.time() - t_start)/60:.2f} minutes/ {(time.time() - t_start)/3600:.2f} hours")
+        computation_time = time.time() - computation_start
+        total_time = time.time() - t_start
         
+        print(f"\n{'='*70}")
+        print("TIMING SUMMARY")
+        print(f"{'='*70}")
+        print(f"  Data loading:      {loading_time:8.1f}s ({loading_time/60:6.2f} min)")
+        print(f"  JAX computation:   {computation_time:8.1f}s ({computation_time/60:6.2f} min)")
+        print(f"  {'─'*68}")
+        print(f"  Total time:        {total_time:8.1f}s ({total_time/60:6.2f} min)")
+        print(f"{'='*70}")
+
         # Save cache for future runs
         print("Saving cache...")
         with open(cache_file, 'wb') as f:
