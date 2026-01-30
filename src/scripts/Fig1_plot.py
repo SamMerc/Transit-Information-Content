@@ -25,23 +25,13 @@ import os, itertools, sys
 from scipy.stats import norm
 from matplotlib.collections import LineCollection
 import matplotlib.colors as mcolors
+import time
+from tqdm import tqdm
+import pickle
 from multiprocessing import Pool
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
-
-#####################################
-######## Add temp. plots ############
-#####################################
-# Generate some data
-random_numbers = np.random.randn(100, 10)
-
-# Plot and save
-fig = plt.figure(figsize=(7, 6))
-plt.plot(random_numbers)
-plt.xlabel("x")
-plt.ylabel("y")
-fig.savefig(paths.figures / "Fig1.pdf", bbox_inches="tight", dpi=300)
 
 #############################################
 ########## Define hyper-parameters ##########
@@ -178,203 +168,269 @@ def create_jaxoplanet_model(x, p):
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
     return jaxo_lc.reshape((-1))
 
+def load_single_result(args):
+
+    raw_save_dir, PLD_order, model_scatter, seed = args
+    try:
+        path_base = f'{raw_save_dir}PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/'
+        raw_chain = jnp.load(path_base + 'chains.npy')
+        logprob = jnp.load(path_base + 'logprob.npy')
+        return (PLD_order, model_scatter, seed, raw_chain, logprob)
+    except Exception as e:
+        print(f"Error loading PLD{PLD_order}, scatter{model_scatter}, seed{seed}: {e}")
+        return None
+
+
+def compute_amplification_factor(raw_chain, logprob, nburn, num_IT_pts, model_scatter):
+
+    max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
+    r_chain = raw_chain[:, nburn:, 0]
+    bestfit_r = raw_chain[max_walker, max_step, 0]
+    bestfit_r_error = 2 * jnp.std(r_chain) * bestfit_r
+    scatter_in_bin = (model_scatter * 1e-6) / jnp.sqrt(num_IT_pts)
+    return bestfit_r_error / scatter_in_bin
 
 #############################################
 ################ Running code ###############
 #############################################
 
-#############################
-####### Generate data #######
-#############################
-print('GENERATING DATA')
+if __name__ == '__main__':
+    #############################
+    ####### Generate data #######
+    #############################
+    print('GENERATING DATA')
 
-#Pure data
-true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
+    #Pure data
+    true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
 
-#Build noisy data
-std = model_scatter * 1e-6
-noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
-noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
+    #Build noisy data
+    std = model_scatter * 1e-6
+    noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
+    noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
 
-##################
-#### Plotting ####
-##################
+    # Calculate IT points once
+    num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2) & 
+                            (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
 
-#Loading MCMC results
-raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
+    #####################
+    #### Optimization ###
+    #####################
+    model_scatters = [0.1, 1, 10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127,
+                    129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0]
+    seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
+    PLD_orders = [2, 3, 4]
 
-#Burning chains
-burnt_chains = jnp.copy(raw_chain[:, fixed_args['nburn']:, :])
+    #Create cache file to avoid reloading data
+    cache_file = raw_save_dir + 'processed_data_cache.pkl'
+    t_start = time.time()
 
-#Calculate number of IT points
-num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2) & (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
+    if os.path.exists(cache_file):
+        print("Loading cached processed data...")
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+        print(f"Cache loaded in {time.time() - t_start:.2f} seconds")
+    else:
+        print("No cache found. Loading and processing all data...")
+        
+        # Prepare all loading tasks
+        loading_tasks = []
+        for PLD_order in PLD_orders:
+            for model_scatter in model_scatters:
+                for seed in seeds:
+                    loading_tasks.append((raw_save_dir, PLD_order, model_scatter, seed))
+        
+        # Load all data in parallel
+        print(f"Loading {len(loading_tasks)} files ...")
+        results = []
+        for task in tqdm(loading_tasks, desc="Loading MCMC files"):
+            res = load_single_result(task)
+            if res is not None:
+                results.append(res)
 
-#Starting to plot
-fig = plt.figure(figsize=(17, 7))
-gs = fig.add_gridspec(nrows=1, ncols=2, width_ratios=[1, 2.2],
-                      wspace=0.1, hspace=0.2)
+        # Filter out failed loads
+        results = [r for r in results if r is not None]
+        print(f"Successfully loaded {len(results)} files in {time.time() - t_start:.2f} seconds/ {(time.time() - t_start)/60:.2f} minutes/ {(time.time() - t_start)/3600:.2f} hours")
+        
+        # Organize and compute amplification factors
+        cached_data = {}
+        for PLD_order in PLD_orders:
+            cached_data[PLD_order] = {}
+            for model_scatter in model_scatters:
+                amp_factors = []
+                # Filter results for this specific PLD_order and model_scatter
+                for result in results:
+                    result_pld, result_scatter, _, raw_chain, logprob = result
+                    if result_pld == PLD_order and result_scatter == model_scatter:
+                        amp_factor = compute_amplification_factor(
+                            raw_chain, logprob, fixed_args['nburn'], num_IT_pts, model_scatter
+                        )
+                        amp_factors.append(amp_factor)
+                cached_data[PLD_order][model_scatter] = np.array(amp_factors)
+        
+        print(f"Data processing complete in {time.time() - t_start:.2f} seconds/ {(time.time() - t_start)/60:.2f} minutes/ {(time.time() - t_start)/3600:.2f} hours")
+        
+        # Save cache for future runs
+        print("Saving cache...")
+        with open(cache_file, 'wb') as f:
+            pickle.dump(cached_data, f)
+        print("Cache saved!")
 
-ax_left = fig.add_subplot(gs[0, 0])      # top-left: time-series / sampled lightcurves
-ax_right = fig.add_subplot(gs[0, 1])     # right: full-height plot (spans both rows)
+    ##################
+    #### Plotting ####
+    ##################
+    t_plot_start = time.time()
 
-# --- Left-hand plot ---
-print('LEFT-HAND PLOT')
+    #Loading MCMC results
+    raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
 
-ax_left.errorbar(init_state_dic['times'][::3], noisy_LC[::3], yerr=noisy_std[::3], fmt='.', color='black', alpha=0.4, markersize=12, zorder=2)
+    #Burning chains
+    burnt_chains = jnp.copy(raw_chain[:, fixed_args['nburn']:, :])
 
-#Retrieving samples
-param_flatten_chain = np.reshape(burnt_chains, (burnt_chains.shape[0]*burnt_chains.shape[1], burnt_chains.shape[2]))
-n_total = param_flatten_chain.shape[0]
-chosen_indices = np.random.choice(n_total, size=25, replace=False)
-param_samples = param_flatten_chain[chosen_indices]
+    #Starting to plot
+    fig = plt.figure(figsize=(17, 7))
+    gs = fig.add_gridspec(nrows=1, ncols=2, width_ratios=[1, 2.2],
+                        wspace=0.1, hspace=0.2)
 
-#Calculating for each r sample a light curve and plotting it
-for param_sample in param_samples:
-    sample_dic={}
-    for param in fixed_args['var_param_list']:
-        sample_dic.update({param : param_sample[fixed_args['var_param_list'].index(param)]})
-    for ipar, param in enumerate(fixed_args['fix_param_list']):
-        sample_dic.update({param:fixed_args['fix_param_val'][ipar]})
+    ax_left = fig.add_subplot(gs[0, 0])      # top-left: time-series / sampled lightcurves
+    ax_right = fig.add_subplot(gs[0, 1])     # right: full-height plot (spans both rows)
+
+    # --- Left-hand plot ---
+    print('LEFT-HAND PLOT')
+
+    ax_left.errorbar(init_state_dic['times'][::52], noisy_LC[::52], yerr=noisy_std[::52], fmt='.', color='black', alpha=0.4, markersize=12, zorder=2)
+
+    #Retrieving samples
+    param_flatten_chain = np.reshape(burnt_chains, (burnt_chains.shape[0]*burnt_chains.shape[1], burnt_chains.shape[2]))
+    n_total = param_flatten_chain.shape[0]
+    chosen_indices = np.random.choice(n_total, size=25, replace=False)
+    param_samples = param_flatten_chain[chosen_indices]
+
+    #Calculating for each r sample a light curve and plotting it
+    for param_sample in param_samples:
+        sample_dic={}
+        for param in fixed_args['var_param_list']:
+            sample_dic.update({param : param_sample[fixed_args['var_param_list'].index(param)]})
+        for ipar, param in enumerate(fixed_args['fix_param_list']):
+            sample_dic.update({param:fixed_args['fix_param_val'][ipar]})
+        
+        sample_lc = create_jaxoplanet_model(init_state_dic['times'], sample_dic)
+
+        ax_left.plot(init_state_dic['times'], sample_lc, color='blue', linewidth=1, alpha=0.1, zorder=1)
+
+    ax_left.spines[['right', 'top', 'left', 'bottom']].set_visible(False)
+    ax_left.set_xticks([])
+    ax_left.set_yticks([])
+    ax_left.set_xticklabels([])
+    ax_left.set_yticklabels([])
+
+
+
+    # --- Right-hand plot ---
+    print('RIGHT-HAND PLOT')
+
+    fit_colors = ['blue', 'green', 'salmon']
+    fit_labels = ['2nd order LD', '3rd order LD', '4th order LD']
+
+    plt.rcParams["font.family"] = "Arial"
+
+    #Loop over LD models
+    for PLD_order, fit_color in zip(PLD_orders, fit_colors):
+        print('    PROCESSING PLD ORDER:', PLD_order)
     
-    sample_lc = create_jaxoplanet_model(init_state_dic['times'], sample_dic)
-
-    ax_left.plot(init_state_dic['times'], sample_lc, color='blue', linewidth=1, alpha=0.1, zorder=1)
-
-ax_left.spines[['right', 'top', 'left', 'bottom']].set_visible(False)
-ax_left.set_xticks([])
-ax_left.set_yticks([])
-ax_left.set_xticklabels([])
-ax_left.set_yticklabels([])
-
-
-
-# --- Right-hand plot ---
-print('RIGHT-HAND PLOT')
-model_scatters = [0.1, 1, 10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127,
-                   129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0]
-seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
-PLD_orders = [2, 3, 4]
-fit_colors = ['blue', 'green', 'salmon']
-fit_labels = ['2nd order LD', '3rd order LD', '4th order LD']
-
-plt.rcParams["font.family"] = "Arial"
-
-#Loop over LD models
-for PLD_order, fit_color in zip(PLD_orders, fit_colors):
-    print('    PROCESSING PLD ORDER:', PLD_order)
-   
-    #Loop over model scatters
-    for model_scatter in model_scatters:
-        print('        PROCESSING MODEL SCATTER:', model_scatter)
-        
-        #Initialize array to store amplification factors for all seeds
-        amp_factors = np.zeros(len(seeds), dtype=float)
-
-        #Loop over seeds
-        for iseed, seed in enumerate(seeds):
-            print('            PROCESSING NOISE SEED:', seed)
-
-            #Load the MCMC results
-            raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
-            logprob = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/logprob.npy')
-            max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
+        #Loop over model scatters
+        for model_scatter in model_scatters:
+            print('        PROCESSING MODEL SCATTER:', model_scatter)
             
-            #Retrieve the amplification factor from bestfit result
-            r_chain = raw_chain[:, fixed_args['nburn']:, 0]
-            bestfit_r = raw_chain[max_walker, max_step, 0]
-            bestfit_r_error = 2*jnp.std(r_chain)*bestfit_r
-            scatter_in_bin = (model_scatter*1e-6)/jnp.sqrt(num_IT_pts)
-            amp_factors[iseed] = bestfit_r_error/scatter_in_bin
+            #Initialize array to store amplification factors for all seeds
+            amp_factors = cached_data[PLD_order][model_scatter]
+            
+            #Make box-plot for this PLD-model scatter-seed combination
+            ax_right.boxplot(amp_factors, positions=[model_scatter], patch_artist=True,
+                    boxprops=dict(facecolor=f'light{fit_color}', color=fit_color), widths=[model_scatter * 0.15],
+                    medianprops=dict(color='black', linewidth=2),
+                    whiskerprops=dict(color=fit_color, linewidth=1.5),
+                    capprops=dict(color=fit_color, linewidth=1.5),
+                    flierprops=dict(marker='o', color=fit_color, markersize=5, alpha=0.5),
+                    showfliers=False)
+    # Styling
+    ax_right.set_xscale('log')
+    ax_right.set_yscale('log')
+    ax_right.set_xlabel(r'Baseline Scatter, $\sigma_{\rm OOT}$ (ppm)', fontsize=12)
+    ax_right.set_ylabel(r'Amplification Factor ($A$)', fontsize=12)
+    ax_right.tick_params(axis='x', labelsize=12)
+    ax_right.tick_params(axis='y', labelsize=12)
+    ax_right.set_xticks([0.1, 1, 10, 100, 1000, 10000], labels = [0.1, 1, 10, 100, 1000, 10000])
+    ax_right.set_xlim([0.08, 30000])
+    ax_right.set_yticks([1, 10], labels = [1, 10])
+    ax_right.grid(which='both', linestyle='--', alpha=0.5)
+    ax_right.set_ylim([0.85, 55])
 
-        
-        #Make box-plot for this PLD-model scatter-seed combination
-        ax_right.boxplot(amp_factors, positions=[model_scatter], patch_artist=True,
-                   boxprops=dict(facecolor=f'light{fit_color}', color=fit_color), widths=[model_scatter * 0.15],
-                   medianprops=dict(color='black', linewidth=2),
-                   whiskerprops=dict(color=fit_color, linewidth=1.5),
-                   capprops=dict(color=fit_color, linewidth=1.5),
-                   flierprops=dict(marker='o', color=fit_color, markersize=5, alpha=0.5),
-                   showfliers=False)
-        
-        #Free up memory
-        del raw_chain, logprob, r_chain, amp_factors, bestfit_r, bestfit_r_error, scatter_in_bin, max_step, max_walker, iseed, seed
+    # --- Gradient Transition Region with log-aware fading ---
+    x_min, x_max = 2, 10000
+    y_min, y_max = ax_right.get_ylim()
 
-# Styling
-ax_right.set_xscale('log')
-ax_right.set_yscale('log')
-ax_right.set_xlabel(r'Baseline Scatter, $\sigma_{\rm OOT}$ (ppm)', fontsize=12)
-ax_right.set_ylabel(r'Amplification Factor ($A$)', fontsize=12)
-ax_right.tick_params(axis='x', labelsize=12)
-ax_right.tick_params(axis='y', labelsize=12)
-ax_right.set_xticks([0.1, 1, 10, 100, 1000, 10000], labels = [0.1, 1, 10, 100, 1000, 10000])
-ax_right.set_xlim([0.08, 30000])
-ax_right.set_yticks([1, 10], labels = [1, 10])
-ax_right.grid(which='both', linestyle='--', alpha=0.5)
-ax_right.set_ylim([0.85, 55])
+    # resolution in x
+    n = 500
+    x_vals = np.logspace(np.log10(x_min), np.log10(x_max), n)
 
-# --- Gradient Transition Region with log-aware fading ---
-x_min, x_max = 2, 10000
-y_min, y_max = ax_right.get_ylim()
+    # Build horizontal gradient: fade from white at edges → gray at center
+    grad = np.ones((n, 1, 4))  # (n,1,RGBA)
+    x = np.linspace(-3, 3, n)  # -3σ to +3σ
+    alpha_profile = norm.pdf(x, 0, 1.4)  # Gaussian curve
+    alpha_profile /= alpha_profile.max()  # normalize to [0,1]
+    grad[:,0,0:3] = 0.2  # lightgray base color
+    grad[:,0,3] = alpha_profile * 0.9  # opacity max in middle
 
-# resolution in x
-n = 500
-x_vals = np.logspace(np.log10(x_min), np.log10(x_max), n)
+    # Plot as pcolormesh in log-space
+    X, Y = np.meshgrid(x_vals, [y_min, y_max])
+    # Broadcast alpha to shape (2, 500)
+    alpha_2d = np.vstack([grad[:,0,3], grad[:,0,3]])
+    ax_right.pcolormesh(X, Y, np.zeros_like(alpha_2d), color=(0.8,0.8,0.8,1),
+                shading='auto', cmap='Greys', alpha=alpha_2d, zorder=0)
 
-# Build horizontal gradient: fade from white at edges → gray at center
-grad = np.ones((n, 1, 4))  # (n,1,RGBA)
-x = np.linspace(-3, 3, n)  # -3σ to +3σ
-alpha_profile = norm.pdf(x, 0, 1.4)  # Gaussian curve
-alpha_profile /= alpha_profile.max()  # normalize to [0,1]
-grad[:,0,0:3] = 0.2  # lightgray base color
-grad[:,0,3] = alpha_profile * 0.9  # opacity max in middle
+    ax_right.axhline(np.sqrt(3), color='k', linestyle='dashed')
+    ax_right.text(0.13, np.sqrt(3) + 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
+    ax_right.text(30, 48 - 0.5, 'Transition region', fontsize=12, color='black')
+    ax_right.text(4400, 48 - 0.5, 'Noise limited', fontsize=12, color='black')
+    ax_right.text(0.13, 48 - 0.5, 'Model (i.e. degeneracy) limited', fontsize=12, color='black')
 
-# Plot as pcolormesh in log-space
-X, Y = np.meshgrid(x_vals, [y_min, y_max])
-# Broadcast alpha to shape (2, 500)
-alpha_2d = np.vstack([grad[:,0,3], grad[:,0,3]])
-ax_right.pcolormesh(X, Y, np.zeros_like(alpha_2d), color=(0.8,0.8,0.8,1),
-              shading='auto', cmap='Greys', alpha=alpha_2d, zorder=0)
+    # Add arrows from "Transition Region" to the other two regions
+    ax_right.annotate("",
+                xy=(3200, 49), xycoords="data",   # Noise Limited
+                xytext=(250, 49), textcoords="data",  # Transition Region
+                arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
-ax_right.axhline(np.sqrt(3), color='k', linestyle='dashed')
-ax_right.text(0.13, np.sqrt(3) + 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
-ax_right.text(30, 48 - 0.5, 'Transition region', fontsize=12, color='black')
-ax_right.text(4400, 48 - 0.5, 'Noise limited', fontsize=12, color='black')
-ax_right.text(0.13, 48 - 0.5, 'Model (i.e. degeneracy) limited', fontsize=12, color='black')
+    ax_right.annotate("",
+                xy=(5, 49), xycoords="data",   # Degeneracy Limited
+                xytext=(21, 49), textcoords="data",  # Transition Region
+                arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
-# Add arrows from "Transition Region" to the other two regions
-ax_right.annotate("",
-            xy=(3200, 49), xycoords="data",   # Noise Limited
-            xytext=(250, 49), textcoords="data",  # Transition Region
-            arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
+    # --- Asymptote lines with fading into transition region ---
+    for y_asym, bias_asym, x_fade_min, x_fade_max, asym_color in zip([3.4760264633464213, 10.614606725662671, 32.00651136170043], [10, 5, 1], [10, 1, 0.5], [130, 20, 8], fit_colors):
 
-ax_right.annotate("",
-            xy=(5, 49), xycoords="data",   # Degeneracy Limited
-            xytext=(21, 49), textcoords="data",  # Transition Region
-            arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
+        # log-spaced x for the line
+        x_line = np.logspace(np.log10(0.08), np.log10(x_fade_max), 500)
+        y_line = np.full_like(x_line, y_asym)
 
-# --- Asymptote lines with fading into transition region ---
-for y_asym, bias_asym, x_fade_min, x_fade_max, asym_color in zip([3.4760264633464213, 10.614606725662671, 32.00651136170043], [10, 5, 1], [10, 1, 0.5], [130, 20, 8], fit_colors):
+        # Compute alpha: 1 (solid) on left, fade to 0 in transition region
+        alphas = np.ones_like(x_line)
+        fade_mask = (x_line >= x_fade_min) & (x_line <= x_fade_max)
+        fade_x = x_line[fade_mask]
+        if fade_x.size > 0:
+            # Smooth fade: Gaussian or linear
+            fade_profile = np.linspace(1, 0, fade_x.size)
+            alphas[fade_mask] = fade_profile
 
-    # log-spaced x for the line
-    x_line = np.logspace(np.log10(0.08), np.log10(x_fade_max), 500)
-    y_line = np.full_like(x_line, y_asym)
+        # Build line segments with alpha fading
+        points = np.array([x_line, y_line]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        base_color = mcolors.to_rgba(asym_color)  # convert to RGBA
+        lc = LineCollection(segments, colors=[(base_color[0], base_color[1], base_color[2], a) for a in alphas[:-1]], linewidths=2, zorder=1)
+        ax_right.add_collection(lc)
+        ax_right.text(0.13, y_asym + (y_asym/6), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}', fontsize=12, color=asym_color)
 
-    # Compute alpha: 1 (solid) on left, fade to 0 in transition region
-    alphas = np.ones_like(x_line)
-    fade_mask = (x_line >= x_fade_min) & (x_line <= x_fade_max)
-    fade_x = x_line[fade_mask]
-    if fade_x.size > 0:
-        # Smooth fade: Gaussian or linear
-        fade_profile = np.linspace(1, 0, fade_x.size)
-        alphas[fade_mask] = fade_profile
+    print(f"\nPlotting complete in {time.time() - t_plot_start:.2f} seconds")
 
-    # Build line segments with alpha fading
-    points = np.array([x_line, y_line]).T.reshape(-1, 1, 2)
-    segments = np.concatenate([points[:-1], points[1:]], axis=1)
-    base_color = mcolors.to_rgba(asym_color)  # convert to RGBA
-    lc = LineCollection(segments, colors=[(base_color[0], base_color[1], base_color[2], a) for a in alphas[:-1]], linewidths=2, zorder=1)
-    ax_right.add_collection(lc)
-    ax_right.text(0.13, y_asym + (y_asym/6), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}', fontsize=12, color=asym_color)
-
-plt.savefig(raw_save_dir+'Fig1.pdf')
-plt.show()
+    plt.savefig(raw_save_dir+'Fig1_opt.pdf')
+    # fig.savefig(paths.figures / "Fig1.pdf", bbox_inches="tight", dpi=300)
+    plt.show()
