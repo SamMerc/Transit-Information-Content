@@ -28,7 +28,7 @@ import matplotlib.colors as mcolors
 import time
 from tqdm import tqdm
 import pickle
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -180,6 +180,22 @@ def load_single_result(args):
         print(f"Error loading PLD{PLD_order}, scatter{model_scatter}, seed{seed}: {e}")
         return None
 
+def load_single_file_numpy(args):
+    """
+    Load a single MCMC file using ONLY numpy (no JAX).
+    This is safe for multiprocessing.
+    """
+    raw_save_dir, PLD_order, model_scatter, seed = args
+    
+    try:
+        path_base = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/'
+        # Use numpy to load instead of jax.numpy
+        raw_chain = np.load(path_base + 'chains.npy')
+        logprob = np.load(path_base + 'logprob.npy')
+        return (PLD_order, model_scatter, seed, raw_chain, logprob, True)
+    except Exception as e:
+        return None
+
 
 def compute_amplification_factor(raw_chain, logprob, nburn, num_IT_pts, model_scatter):
 
@@ -241,11 +257,18 @@ if __name__ == '__main__':
         
         # Load all data in parallel
         print(f"Loading {len(loading_tasks)} files ...")
+        num_workers = int(0.8 * cpu_count())
+        print(f"Using {num_workers} CPU cores")
+
         results = []
-        for task in tqdm(loading_tasks, desc="Loading MCMC files"):
-            res = load_single_result(task)
-            if res is not None:
-                results.append(res)
+        with Pool(processes=num_workers) as pool:
+            # Use imap_unordered for better performance with progress bar
+            for result in tqdm(pool.imap_unordered(load_single_result, loading_tasks, chunksize=5), 
+                             total=len(loading_tasks),
+                             desc="Processing MCMC files",
+                             unit="file",
+                             ncols=100):
+                results.append(result)
 
         # Filter out failed loads
         results = [r for r in results if r is not None]
