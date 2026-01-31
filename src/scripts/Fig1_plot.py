@@ -111,8 +111,10 @@ model_scatter = 599.4842503189409
 seed = 70
 
 # Optimization
-num_workers = int(0.8 * cpu_count())
-CHUNK_SIZE = 60  # Process 60 files at a time (tune based on your RAM)
+# Set number of cpus to use
+num_workers = int(0.5 * cpu_count())
+# Number of files in each chunk
+CHUNK_SIZE = 60  
 
 #%% Defining important lists
 var_param_list = []
@@ -350,9 +352,9 @@ if __name__ == '__main__':
         cached_data = {}
         for PLD_order in PLD_orders:
             cached_data[PLD_order] = {}
-            print(f"\nProcessing PLD order {PLD_order}:")
+            print(f"\nProcessing PLD order {PLD_order}")
             for model_scatter in model_scatters:
-                print(f"\nProcessing Model scatter {model_scatter:.0f}:")
+                print(f"\nProcessing Model scatter {model_scatter:.0f}")
                 batch_data = []
                 # Filter results for this specific PLD_order and model_scatter
                 for result in results:
