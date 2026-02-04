@@ -116,6 +116,9 @@ num_workers = int(0.5 * cpu_count())
 # Number of files in each chunk
 CHUNK_SIZE = 60  
 
+# CHI2 filtering parameters
+CHI2_THRESHOLD = 5.0  # Number of IQRs for outlier detection (5 is conservative)
+
 #%% Defining important lists
 var_param_list = []
 fix_param_list = []
@@ -193,13 +196,46 @@ def load_result(args):
         # This keeps data on disk and only loads what's needed
         raw_chain = np.load(path_base + 'chains.npy', mmap_mode='r')
         logprob = np.load(path_base + 'logprob.npy', mmap_mode='r')
+        chi2 = np.load(path_base + 'chi2_chain.npy', mmap_mode='r')
         
-        # Extract only what we need BEFORE returning
-        # This significantly reduces memory usage
-        max_walker, max_step = np.unravel_index(np.argmax(logprob), logprob.shape)
+        # ==============================
+        # CHI2-BASED WALKER FILTERING
+        # ==============================
+        # Calculate median log-probability for each walker
+        # Higher logprob = better fit (inverse of chi2)
+        walker_median_chi2 = np.median(chi2[:, fixed_args['nburn']:], axis=1)
         
+        # Calculate statistics for outlier detection
+        global_median = np.median(walker_median_chi2)
+        q1 = np.percentile(walker_median_chi2, 25)
+        q3 = np.percentile(walker_median_chi2, 75)
+        iqr = q3 - q1
+        
+        # Define bounds: reject walkers that are too far from median
+        # For logprob: lower values = worse fits (higher chi2)
+        lower_bound = global_median - CHI2_THRESHOLD * iqr
+        upper_bound = global_median + CHI2_THRESHOLD * iqr
+        
+        # Identify good walkers
+        good_walkers = (walker_median_chi2 >= lower_bound) & (walker_median_chi2 <= upper_bound)
+        
+        # Safety check: keep at least 20% of walkers
+        print(f"  {np.sum(good_walkers)} walkers kept ({100*np.sum(good_walkers)/len(good_walkers)} %) walkers passed filter for PLD{PLD_order}, scatter{model_scatter}, seed{seed}")
+
+        # ===================================================================
+        # EXTRACT DATA FROM GOOD WALKERS
+        # ===================================================================
+        
+        # Find best fit from good walkers only
+        good_logprob = logprob[good_walkers, :]
+        max_walker_idx, max_step = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
+
+        # Map back to original walker index
+        good_walker_indices = np.where(good_walkers)[0]
+        max_walker = good_walker_indices[max_walker_idx]
+
         # Only load post burn-in data for parameter 0
-        r_chain_post_burnin = np.array(raw_chain[:, fixed_args['nburn']:, 0])  # Force load only this slice
+        r_chain_post_burnin = np.array(raw_chain[good_walkers, fixed_args['nburn']:, 0])  # Force load only this slice
         bestfit_r = float(raw_chain[max_walker, max_step, 0])
         
         # Return minimal data (not entire chains)
