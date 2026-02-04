@@ -23,6 +23,7 @@ matplotlib.use('TkAgg')  # or 'Qt5Agg' or 'MacOSX'
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
 import exotic_ld as el
+import pickle
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from scipy.interpolate import CubicSpline
@@ -36,7 +37,10 @@ from lmfit import minimize, Parameters
 LD_data_path = '/Volumes/Pandora/Work/PhD/Research/TIC/LD simulation'
 orig_save_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_helper_Storage/'
 
-models = ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
+models = ['mps1'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
+
+bs = jnp.linspace(0, 1, 10)
+ps = jnp.logspace(-3, -1, 10)
 
 Teffs = {
     'phoenix' : [2300, 15000], 
@@ -71,6 +75,14 @@ mu_resolution = {
     'mps2' : 24,
 }
 
+lambda_resolution = {
+    'phoenix' : 54500,
+    'kurucz' : 1221,
+    'stagger' : 105767,
+    'mps1' : 1221,
+    'mps2' : 1221,
+}
+
 N = 10
 
 n_components = 5
@@ -84,8 +96,12 @@ mode = 'build' # 'build' or 'load'
 ################################
 if not os.path.exists(orig_save_data_path):os.makedirs(orig_save_data_path)
 
-#Instantiate model to store intensity profiles
-intensity_profiles={model : np.zeros((N, N, N, mu_resolution[model]), dtype=float) for model in models}
+# Instantiate dictionary to store information 
+gen_dict = {}
+gen_dict['global_intensity_profiles']={model : np.zeros((N, N, N, mu_resolution[model]), dtype=float) for model in models}
+gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
+gen_dict['stellar_intensities']={model : np.zeros((N, N, N, lambda_resolution[model], mu_resolution[model]), dtype=float) for model in models}
+gen_dict['stellar_wavelengths']={model : np.zeros(lambda_resolution[model], dtype=float) for model in models}
 
 #Iterate over all the stellar models available 
 for model in models:
@@ -111,21 +127,105 @@ for model in models:
                                 ld_data_path=LD_data_path,
                                 interpolate_type="nearest")
                     
+                    #Store the stellar intensity spectrum
+                    gen_dict['stellar_intensities'][model][i, j, k] = jnp.copy(sld.stellar_intensities)
+                    
                     # Integrate stellar spectrum over wavelength
-                    intensity_profile = jnp.trapezoid(sld.stellar_intensities, sld.stellar_wavelengths, axis=0)
+                    global_intensity_profile = jnp.trapezoid(sld.stellar_intensities, sld.stellar_wavelengths, axis=0)
 
                     # Normalize
-                    intensity_profile /= intensity_profile[0]
-                    intensity_profiles[model][i, j, k] = intensity_profile
+                    global_intensity_profile /= global_intensity_profile[0]
+                    gen_dict['global_intensity_profiles'][model][i, j, k] = global_intensity_profile
 
-        #Save intensity profiles
-        jnp.save(save_data_path + f'intensity_profiles.npy', intensity_profiles[model])
+        #Store the wavelength and mu arrays
+        gen_dict['stellar_mus'][model] = jnp.copy(sld.mus)
+        gen_dict['stellar_wavelengths'][model] = jnp.copy(sld.stellar_wavelengths)
+
+        #Store the stellar spectrum
+        with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
     
     #Load intensity profiles grid
     elif mode == 'load':
-        intensity_profiles[model] = jnp.load(save_data_path + f'intensity_profiles.npy')
+        with open(save_data_path + 'data.pkl', 'rb') as f:gen_dict = pickle.load(f)
+    
     else:
         raise KeyboardInterrupt('Mode not recognized.')
+
+    ##############################################################################
+    ########## Extract intensity profile for each transit chord ##################
+    ##############################################################################
+
+    def chord_extracter(b, p, intensity_profiles, mus):
+        '''
+        Extract the intensity profile for a given chord size (p) and location (b).
+        
+        :param b: Inpact parameter of the transit chord.
+        :param p: Planet-to-star radius ratio.
+        :param intensity_profiles: 2D array of intensity spectra across wavelength and mu values (shape : n_wavelengths x n_mus) 
+        :mus: Array of mu values.
+        '''
+
+        # Define the grid of annuli on the stellar grid
+        rs = jnp.sqrt(1 - mus**2)
+
+        # Initialize an array to store the area ratio between area of annulus that is occulted and total annulus area
+        occulted_area = jnp.zeros(rs.shape, dtype=float)
+        
+        # Iterate over the annuli until the stellar edge        
+        for i, r in enumerate(rs):
+
+            # Annulus is interior to the transit chord
+            if r <= (b - p):
+                continue
+            
+            # Annulus edge is within the transit chord
+            elif ((r > (b-p)) and (r <= (b+p))):
+                theta = 2 * jnp.arccos(jnp.clip((b - p) / r, -1.0, 1.0))
+                occulted_area = occulted_area.at[i].set( 0.5*r**2 * (theta - jnp.sin(theta)) - jnp.sum(occulted_area) )
+
+            # Annulus edge is exterior to the transit chord
+            else:
+                theta_in = 2 * jnp.arccos(jnp.clip((b - p) / r, -1.0, 1.0))
+                theta_out = 2 * jnp.arccos(jnp.clip((b + p) / r, -1.0, 1.0))
+                occulted_area = occulted_area.at[i].set( ( 0.5*r**2 * (theta_in - jnp.sin(theta_in)) ) - ( 0.5*r**2 * (theta_out - jnp.sin(theta_out)) ) - jnp.sum(occulted_area) )
+
+        # Calculate the proportion of each intensity spectrum depending on the intersection area of corresponding annulus and transit chord
+        # Area of each annulus
+        annulus_area = jnp.insert(jnp.diff(jnp.pi * rs**2), 0, jnp.pi*rs[0]**2)
+        # Proportion
+        occulted_proportion = occulted_area / annulus_area
+
+        # Use calculated proportion to output a 3D array of intensity spectra weighted by the proportions
+        return intensity_profiles * occulted_proportion[jnp.newaxis, :]
+
+    #Define the annuli 
+    # The stellar intensity spectra are defined at specific mu values but I need to spread those out over annuli
+    annuli_mus = jnp.append(gen_dict['stellar_mus'][model][:-1] + jnp.diff(gen_dict['stellar_mus'][model])/2, gen_dict['stellar_mus'][model][-1] + (jnp.diff(gen_dict['stellar_mus'][model])[-1]/2))
+
+    for b in bs:
+        for p in ps:
+            result = chord_extracter(b, p, gen_dict['stellar_intensities'][model][i, j, k], annuli_mus)
+
+            print('-1:', gen_dict['stellar_mus'][model].shape, gen_dict['stellar_mus'][model],'\n')
+            print('0:', annuli_mus,'\n')
+            print('0.5:', jnp.sqrt(1-annuli_mus**2).shape, jnp.sqrt(1-annuli_mus**2),'\n')
+            print('1:', jnp.diff(jnp.pi * jnp.sqrt(1-annuli_mus**2)**2),'\n')
+            print('1.5:', jnp.pi * jnp.sqrt(1-annuli_mus**2)**2, '\n')
+            print('2:', result.shape, result[0].shape, result,'\n')
+            print('3:', gen_dict['stellar_intensities'][model][i, j, k])
+            raise KeyboardInterrupt('STOP')
+    raise KeyboardInterrupt('STOP')
+
+
+
+
+
+
+
+
+
+
+
 
     ##########################################
     ########## PCA analysis ##################
