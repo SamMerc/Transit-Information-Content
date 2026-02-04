@@ -127,18 +127,13 @@ def calculate_segment_area(r, y_interior, y_exterior):
 @jit
 def chord_extracter_single(b, p, intensity_profiles, mus):
     """
-    Vectorized version - Extract the intensity profile for a given chord size (p) and location (b).
+    Extract the effective intensity profile for a given chord size (p) and location (b).
     
-    :param b: Impact parameter of the transit chord.
-    :param p: Planet-to-star radius ratio.
-    :param intensity_profiles: 2D array of intensity spectra (shape: n_wavelengths x n_mus) 
-    :param mus: Array of mu values (outer edges of annuli).
+    Returns the intensity profile weighted by which parts of the star are actually
+    sampled during the transit, preserving the limb-darkening shape.
     """
     # Define the grid of radii on the stellar grid
     rs = jnp.sqrt(1 - mus**2)
-    
-    # Calculate the occulted area for each annulus using vectorized operations
-    # Each annulus i goes from r=0 (if i=0) or r=rs[i-1] to r=rs[i]
     
     # Chord edges
     y_interior = b - p
@@ -147,29 +142,26 @@ def chord_extracter_single(b, p, intensity_profiles, mus):
     # Calculate segment area up to each radius
     segment_areas = vmap(calculate_segment_area, in_axes=(0, None, None))(rs, y_interior, y_exterior)
     
-    # Calculate occulted area in each annulus by taking differences
-    # For annulus 0: full segment area at rs[0]
-    # For annulus i>0: segment_areas[i] - segment_areas[i-1]
+    # Calculate occulted area in each annulus
     occulted_area = jnp.concatenate([
-        segment_areas[0:1],  # First annulus
-        jnp.diff(segment_areas)  # Remaining annuli
+        segment_areas[0:1],
+        jnp.diff(segment_areas)
     ])
     
-    # Calculate the area of each annulus
-    annulus_area = jnp.concatenate([
-        jnp.pi * rs[0:1]**2,  # First annulus (disk)
-        jnp.diff(jnp.pi * rs**2)  # Remaining annuli (rings)
-    ])
+    # Total occulted area (for normalization)
+    total_occulted = jnp.sum(occulted_area)
     
-    # Calculate proportion (avoid division by zero)
-    occulted_proportion = jnp.where(
-        annulus_area > 0,
-        occulted_area / annulus_area,
-        0.0
+    # Weight by occulted area (not proportion!)
+    # This tells us: "how much does each annulus contribute to the total signal?"
+    area_weights = jnp.where(
+        total_occulted > 1e-10,
+        occulted_area / total_occulted,  # Normalize to sum to 1
+        1.0 / len(occulted_area)  # Uniform if no occultation
     )
-
-    # Weight intensity profiles
-    weighted = intensity_profiles * occulted_proportion[jnp.newaxis, :]
+    
+    # Apply weights to intensity profiles
+    # This gives the area-weighted average intensity
+    weighted = intensity_profiles * area_weights[jnp.newaxis, :]
     
     return weighted
 
@@ -224,7 +216,7 @@ for model in models:
 
                     #Store the global stellar intensity spectrum
                     global_stellar_intensities = jnp.copy(sld.stellar_intensities)
-                    
+                
                     # Integrate stellar spectrum over wavelength
                     global_intensity_profile = jnp.trapezoid(global_stellar_intensities, stellar_wavelengths, axis=0)
 
@@ -257,6 +249,16 @@ for model in models:
                     
                     #Normalize and store this local intensity profile
                     gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :] = local_intensity_profiles / global_intensity_profile[0]
+                    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+                    for i in range(len(gen_dict['stellar_mus'][model])):
+                        ax1.semilogx(stellar_wavelengths, local_stellar_intensities[0,0,:,i])
+                        ax2.semilogx(stellar_wavelengths, global_stellar_intensities[:,i])
+                    plt.show()
+                    test = jnp.trapezoid(local_stellar_intensities[0,0,:,:], stellar_wavelengths, axis=0)
+                    plt.plot(gen_dict['stellar_mus'][model], test)
+                    plt.show()
+                    raise KeyboardInterrupt('STOP')
+
 
         #Store the stellar spectrum
         with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
