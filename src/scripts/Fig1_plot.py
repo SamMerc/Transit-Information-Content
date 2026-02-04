@@ -220,7 +220,7 @@ def load_result(args):
         good_walkers = (walker_median_chi2 >= lower_bound) & (walker_median_chi2 <= upper_bound)
         
         # Safety check: keep at least 20% of walkers
-        print(f"  {np.sum(good_walkers)} walkers kept ({100*np.sum(good_walkers)/len(good_walkers)} %) walkers passed filter for PLD{PLD_order}, scatter{model_scatter}, seed{seed}")
+        print(f"  {np.sum(good_walkers)} walkers kept ({100*np.sum(good_walkers)/len(good_walkers)} %) walkers passed filter for PLD{PLD_order}, scatter{np.floor(model_scatter)}, seed{seed}")
 
         # ===================================================================
         # EXTRACT DATA FROM GOOD WALKERS
