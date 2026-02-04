@@ -256,7 +256,7 @@ for model in models:
                     )
                     
                     #Normalize and store this local intensity profile
-                    gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :] = local_intensity_profiles / local_intensity_profiles[:, :, 0:1]
+                    gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :] = local_intensity_profiles / global_intensity_profile[0]
 
         #Store the stellar spectrum
         with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -342,7 +342,6 @@ for model in models:
     ax9.grid(True, alpha=0.3)
 
     plt.savefig(save_data_path + 'PCA_Analysis.png', dpi=150, bbox_inches='tight')
-    plt.show()
 
     # Find the mode (median/typical) and outlier profiles
     # Calculate distances from the cluster centers
@@ -430,7 +429,6 @@ for model in models:
 
     plt.tight_layout()
     plt.savefig(save_data_path + 'Mode&Outliers.png', dpi=150, bbox_inches='tight')
-    plt.show()
 
     # Print summary statistics
     print(f"\n=== PCA Analysis Summary ===")
@@ -486,4 +484,3 @@ for model in models:
         ax1.grid(True, alpha=0.3)
         ax2.grid(True, alpha=0.3)
         plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j_fit==0 else f"outlier{j_fit}"}_{model}.png', dpi=150, bbox_inches='tight')
-        plt.show()
