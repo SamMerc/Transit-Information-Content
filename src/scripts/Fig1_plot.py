@@ -254,39 +254,31 @@ def compute_amplification_factor_jax(r_chain_flat, bestfit_r, model_scatter, num
     return bestfit_r_error / scatter_in_bin
 
 
-# OPTIMIZATION 3: Vectorized batch processing
-compute_amp_factors_batch = vmap(
-    compute_amplification_factor_jax, 
-    in_axes=(0, 0, None, None)
-)
-
-
 def batch_compute_amplification_factors(results_batch, num_IT_pts):
     """
     Process multiple results in batch using JAX vectorization
     
     This processes all chains for a given (PLD_order, model_scatter) at once
     """
-    r_chains_flat = []
-    bestfit_rs = []
-    model_scatter = None
+    amp_factors = []
     
     for _, _, _, r_chain_post_burnin, bestfit_r in results_batch:
-        r_chains_flat.append(r_chain_post_burnin.flatten())
-        bestfit_rs.append(bestfit_r)
     
-    # Get model_scatter from first result (all same in batch)
-    model_scatter = results_batch[0][1]
+        # Get model_scatter from first result
+        model_scatter = results_batch[0][1]
     
-    # Convert to JAX arrays and compute
-    r_chains_jax = jnp.array(r_chains_flat)
-    bestfit_rs_jax = jnp.array(bestfit_rs)
-    
-    amp_factors = compute_amp_factors_batch(
-        r_chains_jax, bestfit_rs_jax, model_scatter, num_IT_pts
-    )
-    
-    return [float(x) for x in amp_factors]
+        # Flatten the entire filtered chain for this seed
+        # r_chain_post_burnin shape: (n_good_walkers, n_steps_post_burnin)
+        r_chain_flat = r_chain_post_burnin.flatten()
+
+        # Convert to JAX arrays and compute
+        r_chain_jax = jnp.array(r_chain_flat)
+        amp_factor = compute_amplification_factor_jax(
+            r_chain_jax, bestfit_r, model_scatter, num_IT_pts
+        )
+        amp_factors.append(amp_factor)
+
+    return amp_factors
 
 #############################################
 ################ Running code ###############
