@@ -188,7 +188,6 @@ if not os.path.exists(orig_save_data_path):os.makedirs(orig_save_data_path)
 gen_dict = {}
 
 gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
-gen_dict['stellar_wavelengths']={model : np.zeros(lambda_resolution[model], dtype=float) for model in models}
 
 gen_dict['global_intensity_profiles']={model : np.zeros((N, N, N, mu_resolution[model]), dtype=float) for model in models}
 
@@ -221,13 +220,13 @@ for model in models:
                     #Store the wavelength and mu arrays
                     if (i == 0) and (j == 0) and (k == 0):
                         gen_dict['stellar_mus'][model] = jnp.copy(sld.mus)
-                        gen_dict['stellar_wavelengths'][model] = jnp.copy(sld.stellar_wavelengths)
+                        stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
 
                     #Store the global stellar intensity spectrum
                     global_stellar_intensities = jnp.copy(sld.stellar_intensities)
                     
                     # Integrate stellar spectrum over wavelength
-                    global_intensity_profile = jnp.trapezoid(global_stellar_intensities, gen_dict['stellar_wavelengths'][model], axis=0)
+                    global_intensity_profile = jnp.trapezoid(global_stellar_intensities, stellar_wavelengths, axis=0)
 
                     # Normalize and store the global intensity profile
                     gen_dict['global_intensity_profiles'][model][i, j, k] = global_intensity_profile/global_intensity_profile[0]
@@ -252,7 +251,7 @@ for model in models:
                     # Compute for all (b, p) combinations the integral of the local stellar intensity spectrum over wavelength 
                     local_intensity_profiles = jnp.trapezoid(
                         local_stellar_intensities, 
-                        gen_dict['stellar_wavelengths'][model], 
+                        stellar_wavelengths, 
                         axis=2
                     )
                     
