@@ -22,6 +22,7 @@ import os
 matplotlib.use('TkAgg')  # or 'Qt5Agg' or 'MacOSX'
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
+from jax import jit, vmap
 import exotic_ld as el
 import pickle
 from sklearn.decomposition import PCA
@@ -38,9 +39,6 @@ LD_data_path = '/Volumes/Pandora/Work/PhD/Research/TIC/LD simulation'
 orig_save_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_helper_Storage/'
 
 models = ['mps1'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
-
-bs = jnp.linspace(0, 1, 10)
-ps = jnp.logspace(-3, -1, 10)
 
 Teffs = {
     'phoenix' : [2300, 15000], 
@@ -85,12 +83,102 @@ lambda_resolution = {
 
 N = 10
 
+bs = jnp.linspace(0, 1, N)
+ps = jnp.logspace(-3, -1, N)
+
 n_components = 5
 
 n_clusters = 2
 
 mode = 'build' # 'build' or 'load'
 
+############################
+###### Function block ######
+############################
+@jit
+def calculate_segment_area(r, y_interior, y_exterior):
+    """
+    Calculate occulted area within circle of radius r,
+    between horizontal lines at y_interior and y_exterior.
+    
+    Cases:
+    1. Both edges outside circle: area = 0
+    2. Only interior edge intersects: area = interior_segment
+    3. Both edges intersect: area = interior_segment - exterior_segment
+    """
+    
+    # Clip ratios for arccos
+    ratio_interior = jnp.clip((y_interior) / r, -1.0, 1.0)
+    ratio_exterior = jnp.clip((y_exterior) / r, -1.0, 1.0)
+    
+    # Calculate segment areas
+    # Segment = area between chord and circle edge
+    theta_interior = 2 * jnp.arccos(ratio_interior)
+    theta_exterior = 2 * jnp.arccos(ratio_exterior)
+    
+    segment_interior = 0.5 * r**2 * (theta_interior - jnp.sin(theta_interior))
+    segment_exterior = 0.5 * r**2 * (theta_exterior - jnp.sin(theta_exterior))
+    
+    # Band area (area between two chords)
+    band_area = segment_interior - segment_exterior
+    
+    return band_area
+
+@jit
+def chord_extracter_single(b, p, intensity_profiles, mus):
+    """
+    Vectorized version - Extract the intensity profile for a given chord size (p) and location (b).
+    
+    :param b: Impact parameter of the transit chord.
+    :param p: Planet-to-star radius ratio.
+    :param intensity_profiles: 2D array of intensity spectra (shape: n_wavelengths x n_mus) 
+    :param mus: Array of mu values (outer edges of annuli).
+    """
+    # Define the grid of radii on the stellar grid
+    rs = jnp.sqrt(1 - mus**2)
+    
+    # Calculate the occulted area for each annulus using vectorized operations
+    # Each annulus i goes from r=0 (if i=0) or r=rs[i-1] to r=rs[i]
+    
+    # Chord edges
+    y_interior = b - p
+    y_exterior = b + p
+    
+    # Calculate segment area up to each radius
+    segment_areas = vmap(calculate_segment_area, in_axes=(0, None, None))(rs, y_interior, y_exterior)
+    
+    # Calculate occulted area in each annulus by taking differences
+    # For annulus 0: full segment area at rs[0]
+    # For annulus i>0: segment_areas[i] - segment_areas[i-1]
+    occulted_area = jnp.concatenate([
+        segment_areas[0:1],  # First annulus
+        jnp.diff(segment_areas)  # Remaining annuli
+    ])
+    
+    # Calculate the area of each annulus
+    annulus_area = jnp.concatenate([
+        jnp.pi * rs[0:1]**2,  # First annulus (disk)
+        jnp.diff(jnp.pi * rs**2)  # Remaining annuli (rings)
+    ])
+    
+    # Calculate proportion (avoid division by zero)
+    occulted_proportion = jnp.where(
+        annulus_area > 0,
+        occulted_area / annulus_area,
+        0.0
+    )
+
+    # Weight intensity profiles
+    weighted = intensity_profiles * occulted_proportion[jnp.newaxis, :]
+    
+    return weighted
+
+# Vectorize over both b and p
+chord_extracter_vectorized = jit(vmap(
+    vmap(chord_extracter_single, in_axes=(None, 0, None, None)),  # vmap over p
+    in_axes=(0, None, None, None)  # vmap over b
+))
+    
 ################################
 ########## Code block ##########
 ################################
@@ -98,10 +186,13 @@ if not os.path.exists(orig_save_data_path):os.makedirs(orig_save_data_path)
 
 # Instantiate dictionary to store information 
 gen_dict = {}
-gen_dict['global_intensity_profiles']={model : np.zeros((N, N, N, mu_resolution[model]), dtype=float) for model in models}
+
 gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
-gen_dict['stellar_intensities']={model : np.zeros((N, N, N, lambda_resolution[model], mu_resolution[model]), dtype=float) for model in models}
 gen_dict['stellar_wavelengths']={model : np.zeros(lambda_resolution[model], dtype=float) for model in models}
+
+gen_dict['global_intensity_profiles']={model : np.zeros((N, N, N, mu_resolution[model]), dtype=float) for model in models}
+
+gen_dict['local_intensity_profiles']={model : np.zeros((N, N, N, N, N, mu_resolution[model]), dtype=float) for model in models}
 
 #Iterate over all the stellar models available 
 for model in models:
@@ -127,19 +218,46 @@ for model in models:
                                 ld_data_path=LD_data_path,
                                 interpolate_type="nearest")
                     
-                    #Store the stellar intensity spectrum
-                    gen_dict['stellar_intensities'][model][i, j, k] = jnp.copy(sld.stellar_intensities)
+                    #Store the wavelength and mu arrays
+                    if (i == 0) and (j == 0) and (k == 0):
+                        gen_dict['stellar_mus'][model] = jnp.copy(sld.mus)
+                        gen_dict['stellar_wavelengths'][model] = jnp.copy(sld.stellar_wavelengths)
+
+                    #Store the global stellar intensity spectrum
+                    global_stellar_intensities = jnp.copy(sld.stellar_intensities)
                     
                     # Integrate stellar spectrum over wavelength
-                    global_intensity_profile = jnp.trapezoid(sld.stellar_intensities, sld.stellar_wavelengths, axis=0)
+                    global_intensity_profile = jnp.trapezoid(global_stellar_intensities, gen_dict['stellar_wavelengths'][model], axis=0)
 
-                    # Normalize
-                    global_intensity_profile /= global_intensity_profile[0]
-                    gen_dict['global_intensity_profiles'][model][i, j, k] = global_intensity_profile
+                    # Normalize and store the global intensity profile
+                    gen_dict['global_intensity_profiles'][model][i, j, k] = global_intensity_profile/global_intensity_profile[0]
 
-        #Store the wavelength and mu arrays
-        gen_dict['stellar_mus'][model] = jnp.copy(sld.mus)
-        gen_dict['stellar_wavelengths'][model] = jnp.copy(sld.stellar_wavelengths)
+                    ##############################################################################
+                    ########## Extract intensity profile for each transit chord ##################
+                    ##############################################################################
+
+                    # Define the annuli edges
+                    annuli_mus = jnp.append(
+                        gen_dict['stellar_mus'][model][:-1] + jnp.diff(gen_dict['stellar_mus'][model])/2, 
+                        gen_dict['stellar_mus'][model][-1] + (jnp.diff(gen_dict['stellar_mus'][model])[-1]/2)
+                    )
+                    
+                    # Compute for all (b, p) combinations at once
+                    local_stellar_intensities = chord_extracter_vectorized(
+                        bs, ps, 
+                        global_stellar_intensities, 
+                        annuli_mus
+                    )
+
+                    # Compute for all (b, p) combinations the integral of the local stellar intensity spectrum over wavelength 
+                    local_intensity_profiles = jnp.trapezoid(
+                        local_stellar_intensities, 
+                        gen_dict['stellar_wavelengths'][model], 
+                        axis=2
+                    )
+                    
+                    #Normalize and store this local intensity profile
+                    gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :] = local_intensity_profiles / local_intensity_profiles[:, :, 0:1]
 
         #Store the stellar spectrum
         with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -151,91 +269,16 @@ for model in models:
     else:
         raise KeyboardInterrupt('Mode not recognized.')
 
-    ##############################################################################
-    ########## Extract intensity profile for each transit chord ##################
-    ##############################################################################
-
-    def chord_extracter(b, p, intensity_profiles, mus):
-        '''
-        Extract the intensity profile for a given chord size (p) and location (b).
-        
-        :param b: Inpact parameter of the transit chord.
-        :param p: Planet-to-star radius ratio.
-        :param intensity_profiles: 2D array of intensity spectra across wavelength and mu values (shape : n_wavelengths x n_mus) 
-        :mus: Array of mu values.
-        '''
-
-        # Define the grid of annuli on the stellar grid
-        rs = jnp.sqrt(1 - mus**2)
-
-        # Initialize an array to store the area ratio between area of annulus that is occulted and total annulus area
-        occulted_area = jnp.zeros(rs.shape, dtype=float)
-        
-        # Iterate over the annuli until the stellar edge        
-        for i, r in enumerate(rs):
-
-            # Annulus is interior to the transit chord
-            if r <= (b - p):
-                continue
-            
-            # Annulus edge is within the transit chord
-            elif ((r > (b-p)) and (r <= (b+p))):
-                theta = 2 * jnp.arccos(jnp.clip((b - p) / r, -1.0, 1.0))
-                occulted_area = occulted_area.at[i].set( 0.5*r**2 * (theta - jnp.sin(theta)) - jnp.sum(occulted_area) )
-
-            # Annulus edge is exterior to the transit chord
-            else:
-                theta_in = 2 * jnp.arccos(jnp.clip((b - p) / r, -1.0, 1.0))
-                theta_out = 2 * jnp.arccos(jnp.clip((b + p) / r, -1.0, 1.0))
-                occulted_area = occulted_area.at[i].set( ( 0.5*r**2 * (theta_in - jnp.sin(theta_in)) ) - ( 0.5*r**2 * (theta_out - jnp.sin(theta_out)) ) - jnp.sum(occulted_area) )
-
-        # Calculate the proportion of each intensity spectrum depending on the intersection area of corresponding annulus and transit chord
-        # Area of each annulus
-        annulus_area = jnp.insert(jnp.diff(jnp.pi * rs**2), 0, jnp.pi*rs[0]**2)
-        # Proportion
-        occulted_proportion = occulted_area / annulus_area
-
-        # Use calculated proportion to output a 3D array of intensity spectra weighted by the proportions
-        return intensity_profiles * occulted_proportion[jnp.newaxis, :]
-
-    #Define the annuli 
-    # The stellar intensity spectra are defined at specific mu values but I need to spread those out over annuli
-    annuli_mus = jnp.append(gen_dict['stellar_mus'][model][:-1] + jnp.diff(gen_dict['stellar_mus'][model])/2, gen_dict['stellar_mus'][model][-1] + (jnp.diff(gen_dict['stellar_mus'][model])[-1]/2))
-
-    for b in bs:
-        for p in ps:
-            result = chord_extracter(b, p, gen_dict['stellar_intensities'][model][i, j, k], annuli_mus)
-
-            print('-1:', gen_dict['stellar_mus'][model].shape, gen_dict['stellar_mus'][model],'\n')
-            print('0:', annuli_mus,'\n')
-            print('0.5:', jnp.sqrt(1-annuli_mus**2).shape, jnp.sqrt(1-annuli_mus**2),'\n')
-            print('1:', jnp.diff(jnp.pi * jnp.sqrt(1-annuli_mus**2)**2),'\n')
-            print('1.5:', jnp.pi * jnp.sqrt(1-annuli_mus**2)**2, '\n')
-            print('2:', result.shape, result[0].shape, result,'\n')
-            print('3:', gen_dict['stellar_intensities'][model][i, j, k])
-            raise KeyboardInterrupt('STOP')
-    raise KeyboardInterrupt('STOP')
-
-
-
-
-
-
-
-
-
-
-
-
     ##########################################
     ########## PCA analysis ##################
     ##########################################
     # Retrieve the grid of mu values
-    mus = jnp.copy(sld.mus)
+    mus = jnp.copy(gen_dict['stellar_mus'][model])
     rs = jnp.sqrt(1 - mus**2)
 
     # Reshaping intensity profiles for PCA
-    pca_int_profile = intensity_profiles[model].reshape((N*N*N, mu_resolution[model]))
+    intensity_profiles = gen_dict['local_intensity_profiles']
+    pca_int_profile = intensity_profiles[model].reshape((N*N*N*N*N, mu_resolution[model]))
 
     # Perform PCA analysis 
     pca = PCA(n_components=n_components)
@@ -280,13 +323,13 @@ for model in models:
 
     # Plot 4-8: First 5 Eigen-intensity profiles
     colors = ['blue', 'red', 'green', 'purple', 'orange']
-    for i in range(n_components):
-        ax = plt.subplot(3, 3, 4 + i)
-        ax.plot(mus, eigen_profiles[i], color=colors[i], linewidth=2)
+    for i_plot in range(n_components):
+        ax = plt.subplot(3, 3, 4 + i_plot)
+        ax.plot(mus, eigen_profiles[i_plot], color=colors[i_plot], linewidth=2)
         ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
         ax.set_xlabel('μ = cos(θ)')
         ax.set_ylabel('Component Value')
-        ax.set_title(f'Eigen-profile {i+1} ({pca.explained_variance_ratio_[i]*100:.1f}%)')
+        ax.set_title(f'Eigen-profile {i_plot+1} ({pca.explained_variance_ratio_[i_plot]*100:.1f}%)')
         ax.grid(True, alpha=0.3)
 
     # Plot 9: PCA space with clusters
@@ -340,15 +383,15 @@ for model in models:
     ax.grid(True, alpha=0.3)
 
     # Plot outlier profiles
-    for i, outlier_idx in enumerate(outlier_indices):
-        ax = fig2.add_subplot(gs[0, i+1])
+    for i_plot, outlier_idx in enumerate(outlier_indices):
+        ax = fig2.add_subplot(gs[0, i_plot+1])
         for prof in pca_int_profile:
             ax.plot(mus, prof, alpha=0.3, color='gray', linewidth=0.5)
         ax.plot(mus, pca_int_profile[outlier_idx], 'r-', linewidth=2, 
-                label=f'Outlier {i+1}', zorder=10)
+                label=f'Outlier {i_plot+1}', zorder=10)
         ax.set_xlabel('μ = cos(θ)')
         ax.set_ylabel('Normalized Intensity')
-        ax.set_title(f'Outlier Profile {i+1}')
+        ax.set_title(f'Outlier Profile {i_plot+1}')
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -399,8 +442,8 @@ for model in models:
 
     # Save the profiles for use in your transit simulations
     np.save(save_data_path + f'mode_intensity_profile_{model}.npy', typical_profile)
-    for i, outlier_idx in enumerate(outlier_indices):
-        np.save(save_data_path + f'outlier{i+1}_intensity_profile_{model}.npy', 
+    for i_save, outlier_idx in enumerate(outlier_indices):
+        np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy', 
                 pca_int_profile[outlier_idx])
     np.save(save_data_path + f'mu_values_{model}.npy', mus)
 
@@ -408,7 +451,7 @@ for model in models:
 
 
     #Fitting the mode and outlier profiles with a 4-th order non-linear limb-darkening law
-    for j, special_profile in enumerate([typical_profile] + [pca_int_profile[idx] for idx in outlier_indices]):
+    for j_fit, special_profile in enumerate([typical_profile] + [pca_int_profile[idx] for idx in outlier_indices]):
         
         #Interpolate intensity profile from its grid to a grid of 100 mu values going from 0.01 to 1.0 with increments of 0.01 with cubic spline (Claret & Bloemen 2011)
         new_mus = jnp.linspace(0.01, 1.0, 100)
@@ -420,28 +463,28 @@ for model in models:
         
         #Define residual function to minimize
         def residual(params, x, base_prof):
-            return fourNLLD(x, [params[f'c{i+1}'].value for i in range(4)]) - base_prof
+            return fourNLLD(x, [params[f'c{i_coeff+1}'].value for i_coeff in range(4)]) - base_prof
     
         #Define lmfit parameters
         params = Parameters()
-        for i in range(4):
-            params.add(f'c{i+1}', value=np.random.uniform(0, 1))
+        for i_param in range(4):
+            params.add(f'c{i_param+1}', value=np.random.uniform(0, 1))
 
         #Perform the minimization
         result = minimize(residual, params, args=(new_mus, inter_special_profile))
 
-        #Plot base profile, inteporlated profile, and best-fit profile
+        #Plot base profile, interpolated profile, and best-fit profile
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
         ax1.plot(mus, special_profile, 'bo', label='Original Profile', alpha=0.5)
         ax1.plot(new_mus, inter_special_profile, 'g-', label='Interpolated Profile', alpha=0.7)
-        ax1.plot(new_mus, fourNLLD(new_mus, [result.params[f'c{i+1}'].value for i in range(4)]), 'r--', label='Best-fit 4th Order NLLD', linewidth=2)
-        ax2.plot(new_mus, 100 * (inter_special_profile - fourNLLD(new_mus, [result.params[f'c{i+1}'].value for i in range(4)]))/inter_special_profile, 'r--', linewidth=2)
+        ax1.plot(new_mus, fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]), 'r--', label='Best-fit 4th Order NLLD', linewidth=2)
+        ax2.plot(new_mus, 100 * (inter_special_profile - fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]))/inter_special_profile, 'r--', linewidth=2)
         ax2.set_xlabel('μ = cos(θ)')
         ax1.set_ylabel('Normalized Intensity')
         ax2.set_ylabel('Relative Difference (%)')
-        ax1.set_title('4th Order Non-Linear Limb-Darkening Fit - ' + ('Typical Profile' if j==0 else f'Outlier Profile {j}'))
+        ax1.set_title('4th Order Non-Linear Limb-Darkening Fit - ' + ('Typical Profile' if j_fit==0 else f'Outlier Profile {j_fit}'))
         ax1.legend()
         ax1.grid(True, alpha=0.3)
         ax2.grid(True, alpha=0.3)
-        plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j==0 else f"outlier{j}"}_{model}.png', dpi=150, bbox_inches='tight')
+        plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j_fit==0 else f"outlier{j_fit}"}_{model}.png', dpi=150, bbox_inches='tight')
         plt.show()
