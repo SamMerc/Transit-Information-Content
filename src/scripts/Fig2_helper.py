@@ -127,13 +127,18 @@ def calculate_segment_area(r, y_interior, y_exterior):
 @jit
 def chord_extracter_single(b, p, intensity_profiles, mus):
     """
-    Extract the effective intensity profile for a given chord size (p) and location (b).
+    Vectorized version - Extract the intensity profile for a given chord size (p) and location (b).
     
-    Returns the intensity profile weighted by which parts of the star are actually
-    sampled during the transit, preserving the limb-darkening shape.
+    :param b: Impact parameter of the transit chord.
+    :param p: Planet-to-star radius ratio.
+    :param intensity_profiles: 2D array of intensity spectra (shape: n_wavelengths x n_mus) 
+    :param mus: Array of mu values (outer edges of annuli).
     """
     # Define the grid of radii on the stellar grid
     rs = jnp.sqrt(1 - mus**2)
+    
+    # Calculate the occulted area for each annulus using vectorized operations
+    # Each annulus i goes from r=0 (if i=0) or r=rs[i-1] to r=rs[i]
     
     # Chord edges
     y_interior = b - p
@@ -142,26 +147,29 @@ def chord_extracter_single(b, p, intensity_profiles, mus):
     # Calculate segment area up to each radius
     segment_areas = vmap(calculate_segment_area, in_axes=(0, None, None))(rs, y_interior, y_exterior)
     
-    # Calculate occulted area in each annulus
+    # Calculate occulted area in each annulus by taking differences
+    # For annulus 0: full segment area at rs[0]
+    # For annulus i>0: segment_areas[i] - segment_areas[i-1]
     occulted_area = jnp.concatenate([
-        segment_areas[0:1],
-        jnp.diff(segment_areas)
+        segment_areas[0:1],  # First annulus
+        jnp.diff(segment_areas)  # Remaining annuli
     ])
     
-    # Total occulted area (for normalization)
-    total_occulted = jnp.sum(occulted_area)
+    # Calculate the area of each annulus
+    annulus_area = jnp.concatenate([
+        jnp.pi * rs[0:1]**2,  # First annulus (disk)
+        jnp.diff(jnp.pi * rs**2)  # Remaining annuli (rings)
+    ])
     
-    # Weight by occulted area (not proportion!)
-    # This tells us: "how much does each annulus contribute to the total signal?"
-    area_weights = jnp.where(
-        total_occulted > 1e-10,
-        occulted_area / total_occulted,  # Normalize to sum to 1
-        1.0 / len(occulted_area)  # Uniform if no occultation
+    # Calculate proportion (avoid division by zero)
+    occulted_proportion = jnp.where(
+        annulus_area > 0,
+        occulted_area / annulus_area,
+        0.0
     )
-    
-    # Apply weights to intensity profiles
-    # This gives the area-weighted average intensity
-    weighted = intensity_profiles * area_weights[jnp.newaxis, :]
+
+    # Weight intensity profiles
+    weighted = intensity_profiles * occulted_proportion[jnp.newaxis, :]
     
     return weighted
 
