@@ -30,6 +30,7 @@ from tqdm import tqdm
 import pickle
 from multiprocessing import Pool, cpu_count
 import gc
+import corner
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -115,6 +116,10 @@ CHUNK_SIZE = 60
 # CHI2 filtering parameters
 CHI2_THRESHOLD = 5.0  # Number of IQRs for outlier detection (5 is conservative)
 
+# Diagnostic plotting parameters
+ENABLE_DIAGNOSTICS = True  # Set to False to skip diagnostic plots
+DIAGNOSTIC_INTERVAL = 1  # Plot diagnostics every N chunks (1 = every chunk)
+
 #%% Defining important lists
 var_param_list = []
 fix_param_list = []
@@ -174,7 +179,7 @@ def create_jaxoplanet_model(x, p):
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
     return jaxo_lc.reshape((-1))
 
-def load_result(args):
+def load_full_result(args):
     """
     Optimized file loading with memory mapping and selective loading
     
@@ -184,7 +189,7 @@ def load_result(args):
     3. Extract bestfit info without loading full chain
     4. Return minimal data needed for computation
     """
-    raw_save_dir, PLD_order, model_scatter, seed = args
+    raw_save_dir, PLD_order, model_scatter, seed, return_full = args
     try:
         path_base = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/'
         
@@ -234,12 +239,121 @@ def load_result(args):
         r_chain_post_burnin = np.array(raw_chain[good_walkers, fixed_args['nburn']:, 0])  # Force load only this slice
         bestfit_r = float(raw_chain[max_walker, max_step, 0])
         
-        # Return minimal data (not entire chains)
-        return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r)
+        if return_full:
+            full_chain = np.array(raw_chain)  # All parameters
+            full_logprob = np.array(logprob)
+            full_chi2 = np.array(chi2)
+            
+            return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r, 
+                   True, full_chain, full_logprob, full_chi2, good_walkers)
+        else:
+            return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r, 
+                   False, None, None, None)
+    
     except Exception as e:
         print(f"Error loading PLD{PLD_order}, scatter{model_scatter}, seed{seed}: {e}")
         return None
+
+def load_result(args):
+    """Standard loader (backward compatibility)"""
+    return load_full_result((*args, False))
+
+
+def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers, 
+                     PLD_order, model_scatter, seed, chunk_idx, save_dir):
+    """
+    Create comprehensive diagnostic plots after each chunk
     
+    Plots:
+    1. Trace plots (all parameters)
+    2. Chi2 evolution
+    3. Logprob evolution
+    4. Corner plot (post burn-in)
+    5. Best-fit light curve
+    """
+    n_walkers, n_steps, n_params = full_chain.shape
+    nburn = fixed_args['nburn']
+    
+    # Create output directory for diagnostics
+    diag_dir = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/diagnostics/'
+    os.makedirs(diag_dir, exist_ok=True)
+    
+    print(f"    Generating diagnostics for PLD{PLD_order}, scatter{model_scatter}, seed{seed}")
+    
+    # =========================================================================
+    # PLOT 1: Trace plots for all parameters
+    # =========================================================================
+    param_names = fixed_args['var_param_list']
+    n_params_vary = len(param_names)
+    
+    fig_trace, axes = plt.subplots(n_params_vary, 1, figsize=(12, 2*n_params_vary), 
+                                   sharex=True)
+    if n_params_vary == 1:
+        axes = [axes]
+    
+    for i, (ax, param_name) in enumerate(zip(axes, param_names)):
+        for walker in range(n_walkers):
+            if walker in good_walkers:
+                ax.plot(full_chain[walker, :nburn, i], color='red', alpha=0.3, linewidth=0.5)
+                ax.plot(full_chain[walker, nburn:, i], color='blue', alpha=0.3, linewidth=0.5)
+            else:
+                ax.plot(full_chain[walker, :, i], color='red', alpha=0.3, linewidth=0.5)
+        ax.set_ylabel(param_name, fontsize=10)
+        ax.grid(True, alpha=0.3)
+        if i == 0:
+            ax.legend(loc='upper right')
+    
+    axes[-1].set_xlabel('Step', fontsize=10)
+    fig_trace.suptitle(f'Trace Plots - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
+                      fontsize=12)
+    plt.tight_layout()
+    plt.savefig(os.path.join(diag_dir, f'trace.pdf'), 
+               dpi=150, bbox_inches='tight')
+    plt.close(fig_trace)
+    
+    # =========================================================================
+    # PLOT 2: Chi2 evolution
+    # =========================================================================
+    fig_chi2, ax_chi2 = plt.subplots(1, 1, figsize=(12, 4))
+    
+    for walker in range(n_walkers):
+        if walker in good_walkers:
+            ax_chi2.plot(full_chi2[walker, :nburn], color='red', alpha=0.3, linewidth=0.5)
+            ax_chi2.plot(full_chi2[walker, nburn:], color='blue', alpha=0.3, linewidth=0.5)
+        else:
+            ax_chi2.plot(full_chi2[walker, :], color='red', alpha=0.3, linewidth=0.5)
+    ax_chi2.axvline(nburn, color='red', linestyle='--', linewidth=2, label='Burn-in')
+    ax_chi2.set_xlabel('Step', fontsize=10)
+    ax_chi2.set_ylabel('Chi-squared', fontsize=10)
+    ax_chi2.set_yscale('log')
+    ax_chi2.grid(True, alpha=0.3)
+    ax_chi2.legend()
+    ax_chi2.set_title(f'Chi2 Evolution - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
+                     fontsize=12)
+    plt.tight_layout()
+    plt.savefig(os.path.join(diag_dir, f'chi2.pdf'), 
+               dpi=150, bbox_inches='tight')
+    plt.close(fig_chi2)
+    
+    # =========================================================================
+    # PLOT 3: Corner plot (post burn-in)
+    # =========================================================================
+    # Flatten post-burnin chains
+    samples_post_burnin = full_chain[:, nburn:, :].reshape(-1, n_params)
+    
+    fig_corner = corner.corner(samples_post_burnin, 
+                               labels=param_names,
+                               quantiles=[0.16, 0.5, 0.84],
+                               show_titles=True,
+                               title_fmt='.4f',
+                               title_kwargs={"fontsize": 10})
+    
+    fig_corner.suptitle(f'Corner Plot - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
+                       fontsize=12, y=1.02)
+    plt.savefig(os.path.join(diag_dir, f'corner.pdf'), 
+               dpi=150, bbox_inches='tight')
+    plt.close(fig_corner)
+
 # OPTIMIZATION 2: JAX-optimized computation
 @jit
 def compute_amplification_factor_jax(r_chain_flat, bestfit_r, model_scatter, num_IT_pts):
@@ -328,13 +442,21 @@ if __name__ == '__main__':
             chunk_end = min((chunk_idx + 1) * CHUNK_SIZE, total_files)
             chunk_tasks = loading_tasks[chunk_start:chunk_end]
             
+            # Mark first file in chunk for full data extraction (for diagnostics)
+            if ENABLE_DIAGNOSTICS and (chunk_idx % DIAGNOSTIC_INTERVAL == 0):
+                chunk_tasks_enhanced = [
+                    (*chunk_tasks[0], True)  # First file gets full data
+                ] + [(*task, False) for task in chunk_tasks[1:]]
+            else:
+                chunk_tasks_enhanced = [(*task, False) for task in chunk_tasks]
+
             print(f"\nProcessing chunk {chunk_idx+1}/{num_chunks} ({len(chunk_tasks)} files)...")
             chunk_start_time = time.time()
             
             # Load chunk with progress bar            
             with Pool(processes=num_workers) as pool:
                 chunk_results = []
-                for result in tqdm(pool.imap_unordered(load_result, chunk_tasks),
+                for result in tqdm(pool.imap_unordered(load_result, chunk_tasks_enhanced),
                                  total=len(chunk_tasks),
                                  desc=f"  Loading files",
                                  ncols=80,
@@ -348,6 +470,17 @@ if __name__ == '__main__':
             files_per_sec = len(chunk_tasks) / chunk_time
             print(f"  Chunk processed in {chunk_time:.1f}s ({files_per_sec:.1f} files/sec)")
             
+            # Generate diagnostic plots for first file in chunk
+            if ENABLE_DIAGNOSTICS and (chunk_idx % DIAGNOSTIC_INTERVAL == 0):
+                diagnostic_result = [r for r in chunk_results if r[5]][0]  # Find the one with full data
+                PLD, scatter, sd, _, _, _, full_chain, full_logp, full_chi2, good_walkers = diagnostic_result
+                
+                try:
+                    plot_diagnostics(full_chain, full_logp, full_chi2, good_walkers,
+                                   PLD, scatter, sd, chunk_idx, raw_save_dir)
+                except Exception as e:
+                    print(f"    Warning: Diagnostic plotting failed: {e}")
+
             # Force garbage collection between chunks
             gc.collect()
 
