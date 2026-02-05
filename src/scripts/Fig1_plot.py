@@ -84,6 +84,11 @@ exposure_time = 5                                                       #seconds
 num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number of points
 init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
+
+# Calculate IT points once
+num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2) & 
+                        (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
+
 #%% Location of MCMC results and where plot will be output
 raw_save_dir = '/Volumes/Pandora/Work/PhD/Research/TIC/Gen_Storage/Fig1_Storage/'
 
@@ -111,7 +116,7 @@ fixed_args['nburn'] = 400000
 # Set number of cpus to use
 num_workers = int(0.5 * cpu_count())
 # Number of files in each chunk
-CHUNK_SIZE = 60  
+CHUNK_SIZE = 60
 
 # CHI2 filtering parameters
 CHI2_THRESHOLD = 5.0  # Number of IQRs for outlier detection (5 is conservative)
@@ -179,7 +184,7 @@ def create_jaxoplanet_model(x, p):
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
     return jaxo_lc.reshape((-1))
 
-def load_full_result(args):
+def load_result(args):
     """
     Optimized file loading with memory mapping and selective loading
     
@@ -254,22 +259,28 @@ def load_full_result(args):
         print(f"Error loading PLD{PLD_order}, scatter{model_scatter}, seed{seed}: {e}")
         return None
 
-def load_result(args):
-    """Standard loader (backward compatibility)"""
-    return load_full_result((*args, False))
-
 
 def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers, 
-                     PLD_order, model_scatter, seed, chunk_idx, save_dir):
+                     PLD_order, model_scatter, seed):
     """
     Create comprehensive diagnostic plots after each chunk
     
     Plots:
-    1. Trace plots (all parameters)
-    2. Chi2 evolution
-    3. Logprob evolution
-    4. Corner plot (post burn-in)
-    5. Best-fit light curve
+    1. Trace plots (all parameters) - pre-filtering in red, post-filtering in blue
+    2. Chi2 evolution - pre-filtering in red, post-filtering in blue
+    3. Corner plot (post burn-in) - BLACK: pre-filtering, RED: post-filtering
+       with amplification factors displayed
+    
+    Parameters:
+    -----------
+    full_chain : ndarray
+        Full MCMC chains (all walkers, all steps, all params)
+    full_logprob : ndarray
+        Log probability for all walkers
+    full_chi2 : ndarray
+        Chi-squared for all walkers
+    good_walkers : ndarray of bool or indices
+        Walkers that passed filtering
     """
     n_walkers, n_steps, n_params = full_chain.shape
     nburn = fixed_args['nburn']
@@ -280,10 +291,22 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     
     print(f"    Generating diagnostics for PLD{PLD_order}, scatter{model_scatter}, seed{seed}")
     
+    # Convert good_walkers to boolean array if needed
+    if good_walkers.dtype == bool:
+        good_walkers_bool = good_walkers
+        good_walker_indices = np.where(good_walkers)[0]
+    else:
+        good_walker_indices = good_walkers
+        good_walkers_bool = np.zeros(n_walkers, dtype=bool)
+        good_walkers_bool[good_walker_indices] = True
+    
+    n_good = np.sum(good_walkers_bool)
+    n_bad = n_walkers - n_good
+    
     # =========================================================================
     # PLOT 1: Trace plots for all parameters
     # =========================================================================
-    param_names = fixed_args['var_param_list']
+    param_names = ['r', 'i', 'a', 'period', 'sqrtecosw', 'sqrtesinw'] + [f'LD_u{i}' for i in range(1, PLD_order+1)]
     n_params_vary = len(param_names)
     
     fig_trace, axes = plt.subplots(n_params_vary, 1, figsize=(12, 2*n_params_vary), 
@@ -292,16 +315,31 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
         axes = [axes]
     
     for i, (ax, param_name) in enumerate(zip(axes, param_names)):
+        # Plot filtered-out walkers in red (full trace)
         for walker in range(n_walkers):
-            if walker in good_walkers:
-                ax.plot(full_chain[walker, :nburn, i], color='red', alpha=0.3, linewidth=0.5)
-                ax.plot(full_chain[walker, nburn:, i], color='blue', alpha=0.3, linewidth=0.5)
-            else:
-                ax.plot(full_chain[walker, :, i], color='red', alpha=0.3, linewidth=0.5)
+            if not good_walkers_bool[walker]:
+                ax.plot(full_chain[walker, :, i], color='red', alpha=0.5, linewidth=0.8)
+        
+        # Plot good walkers: burn-in in orange, post-burn-in in blue
+        for walker in good_walker_indices:
+            ax.plot(np.arange(nburn), full_chain[walker, :nburn, i], 
+                   color='red', alpha=0.3, linewidth=0.5)
+            ax.plot(np.arange(nburn, n_steps), full_chain[walker, nburn:, i], 
+                   color='blue', alpha=0.3, linewidth=0.5)
+        
+        ax.axvline(nburn, color='black', linestyle='--', linewidth=2, alpha=0.5)
         ax.set_ylabel(param_name, fontsize=10)
         ax.grid(True, alpha=0.3)
+        
         if i == 0:
-            ax.legend(loc='upper right')
+            # Create legend
+            from matplotlib.lines import Line2D
+            legend_elements = [
+                Line2D([0], [0], color='red', linewidth=2, label=f'Burn-in {n_good} & Filtered({n_bad})'),
+                Line2D([0], [0], color='blue', linewidth=2, label=f'Post burn-in ({n_good})'),
+                Line2D([0], [0], color='black', linewidth=2, linestyle='--', label='Burn-in cutoff')
+            ]
+            ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
     
     axes[-1].set_xlabel('Step', fontsize=10)
     fig_trace.suptitle(f'Trace Plots - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
@@ -316,13 +354,19 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     # =========================================================================
     fig_chi2, ax_chi2 = plt.subplots(1, 1, figsize=(12, 4))
     
+    # Plot filtered-out walkers in red
     for walker in range(n_walkers):
-        if walker in good_walkers:
-            ax_chi2.plot(full_chi2[walker, :nburn], color='red', alpha=0.3, linewidth=0.5)
-            ax_chi2.plot(full_chi2[walker, nburn:], color='blue', alpha=0.3, linewidth=0.5)
-        else:
-            ax_chi2.plot(full_chi2[walker, :], color='red', alpha=0.3, linewidth=0.5)
-    ax_chi2.axvline(nburn, color='red', linestyle='--', linewidth=2, label='Burn-in')
+        if not good_walkers_bool[walker]:
+            ax_chi2.loglog(full_chi2[walker, :], color='red', alpha=0.5, linewidth=0.8)
+    
+    # Plot good walkers: burn-in in orange, post-burn-in in blue
+    for walker in good_walker_indices:
+        ax_chi2.loglog(np.arange(nburn), full_chi2[walker, :nburn], 
+                    color='red', alpha=0.3, linewidth=0.5)
+        ax_chi2.loglog(np.arange(nburn, n_steps), full_chi2[walker, nburn:], 
+                    color='blue', alpha=0.3, linewidth=0.5)
+    
+    ax_chi2.axvline(nburn, color='black', linestyle='--', linewidth=2, alpha=0.5, label='Burn-in')
     ax_chi2.set_xlabel('Step', fontsize=10)
     ax_chi2.set_ylabel('Chi-squared', fontsize=10)
     ax_chi2.set_yscale('log')
@@ -336,20 +380,86 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     plt.close(fig_chi2)
     
     # =========================================================================
-    # PLOT 3: Corner plot (post burn-in)
+    # PLOT 3: Corner plot with pre/post filtering comparison
     # =========================================================================
-    # Flatten post-burnin chains
-    samples_post_burnin = full_chain[:, nburn:, :].reshape(-1, n_params)
     
-    fig_corner = corner.corner(samples_post_burnin, 
-                               labels=param_names,
-                               quantiles=[0.16, 0.5, 0.84],
-                               show_titles=True,
-                               title_fmt='.4f',
-                               title_kwargs={"fontsize": 10})
+    # Calculate amplification factors for both cases
     
-    fig_corner.suptitle(f'Corner Plot - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
-                       fontsize=12, y=1.02)
+    # PRE-FILTERING: Use all walkers
+    all_chains_post_burnin = full_chain[:, nburn:, :]
+    samples_pre_filter = all_chains_post_burnin.reshape(-1, n_params)
+    
+    # Calculate pre-filtering amplification factor
+    # Extract r parameter (assumed to be index 0)
+    r_chain_pre = all_chains_post_burnin[:, :, 0].flatten()
+    bestfit_r_pre = np.max(full_logprob)  # Find best fit
+    max_idx_pre = np.unravel_index(np.argmax(full_logprob), full_logprob.shape)
+    bestfit_r_pre = full_chain[max_idx_pre[0], max_idx_pre[1], 0]
+    
+    std_r_pre = np.std(r_chain_pre)
+    bestfit_r_error_pre = 2 * std_r_pre * bestfit_r_pre
+    scatter_in_bin = (model_scatter * 1e-6) / np.sqrt(num_IT_pts)
+    amp_factor_pre = bestfit_r_error_pre / scatter_in_bin
+    
+    # POST-FILTERING: Use only good walkers
+    good_chains_post_burnin = full_chain[good_walker_indices, nburn:, :]
+    samples_post_filter = good_chains_post_burnin.reshape(-1, n_params)
+    
+    # Calculate post-filtering amplification factor
+    r_chain_post = good_chains_post_burnin[:, :, 0].flatten()
+    good_logprob = full_logprob[good_walker_indices, :]
+    max_idx_post = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
+    bestfit_r_post = good_chains_post_burnin[max_idx_post[0], max_idx_post[1], 0]
+    
+    std_r_post = np.std(r_chain_post)
+    bestfit_r_error_post = 2 * std_r_post * bestfit_r_post
+    amp_factor_post = bestfit_r_error_post / scatter_in_bin
+    
+    # Create corner plot with both distributions
+    fig_corner = corner.corner(
+        samples_pre_filter, 
+        labels=param_names,
+        color='black',
+        quantiles=[0.16, 0.5, 0.84],
+        show_titles=False,
+        plot_datapoints=False,
+        plot_density=True,
+        hist_kwargs={'alpha': 0.6, 'linewidth': 2},
+        contour_kwargs={'linewidths': 1.5, 'alpha': 0.6}
+    )
+    
+    # Overlay post-filtering distribution in red
+    corner.corner(
+        samples_post_filter,
+        fig=fig_corner,
+        labels=param_names,
+        color='red',
+        quantiles=[0.16, 0.5, 0.84],
+        show_titles=False,
+        plot_datapoints=False,
+        plot_density=True,
+        hist_kwargs={'alpha': 0.8, 'linewidth': 2},
+        contour_kwargs={'linewidths': 2, 'alpha': 0.8}
+    )
+    
+    # Add title with amplification factors
+    title_text = (
+        f'Corner Plot - PLD{PLD_order}, scatter={model_scatter:.1f} ppm, seed={seed}\n'
+        f'BLACK: Pre-filtering (all {n_walkers} walkers) - A = {amp_factor_pre:.2f}\n'
+        f'RED: Post-filtering ({n_good} walkers) - A = {amp_factor_post:.2f}\n'
+        f'Improvement: {((amp_factor_pre - amp_factor_post)/amp_factor_pre * 100):.1f}% reduction in A'
+    )
+    fig_corner.suptitle(title_text, fontsize=11, y=1.0)
+    
+    # Add custom legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='black', alpha=0.6, label=f'Pre-filter: A={amp_factor_pre:.2f}'),
+        Patch(facecolor='red', alpha=0.8, label=f'Post-filter: A={amp_factor_post:.2f}')
+    ]
+    fig_corner.legend(handles=legend_elements, loc='upper right', fontsize=10, 
+                     bbox_to_anchor=(0.95, 0.95))
+    
     plt.savefig(os.path.join(diag_dir, f'corner.pdf'), 
                dpi=150, bbox_inches='tight')
     plt.close(fig_corner)
@@ -395,10 +505,6 @@ def batch_compute_amplification_factors(results_batch, num_IT_pts):
 #############################################
 
 if __name__ == '__main__':
-
-    # Calculate IT points once
-    num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2) & 
-                            (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
 
     #####################
     #### Optimization ###
@@ -475,11 +581,8 @@ if __name__ == '__main__':
                 diagnostic_result = [r for r in chunk_results if r[5]][0]  # Find the one with full data
                 PLD, scatter, sd, _, _, _, full_chain, full_logp, full_chi2, good_walkers = diagnostic_result
                 
-                try:
-                    plot_diagnostics(full_chain, full_logp, full_chi2, good_walkers,
-                                   PLD, scatter, sd, chunk_idx, raw_save_dir)
-                except Exception as e:
-                    print(f"    Warning: Diagnostic plotting failed: {e}")
+                plot_diagnostics(full_chain, full_logp, full_chi2, good_walkers,
+                                   PLD, scatter, sd)
 
             # Force garbage collection between chunks
             gc.collect()
@@ -620,7 +723,6 @@ if __name__ == '__main__':
             
             #Initialize array to store amplification factors for all seeds
             amp_factors = cached_data[PLD_order][model_scatter]
-            print('1:', amp_factors)
             
             #Make box-plot for this PLD-model scatter-seed combination
             ax_right.boxplot(amp_factors, positions=[model_scatter], patch_artist=True,
