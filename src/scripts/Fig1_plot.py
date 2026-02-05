@@ -106,10 +106,6 @@ fixed_args={}
 #%% Number of burn-in steps
 fixed_args['nburn'] = 400000
 
-PLD_order = 3
-model_scatter = 599.4842503189409
-seed = 70
-
 # Optimization
 # Set number of cpus to use
 num_workers = int(0.5 * cpu_count())
@@ -285,18 +281,6 @@ def batch_compute_amplification_factors(results_batch, num_IT_pts):
 #############################################
 
 if __name__ == '__main__':
-    #############################
-    ####### Generate data #######
-    #############################
-    print('GENERATING DATA')
-
-    #Pure data
-    true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
-
-    #Build noisy data
-    std = model_scatter * 1e-6
-    noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
-    noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
 
     # Calculate IT points once
     num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2) & 
@@ -422,6 +406,24 @@ if __name__ == '__main__':
     ##################
     t_plot_start = time.time()
 
+    PLD_order = 3
+    model_scatter = 359.38136638046257
+    seed = 100
+    #Setting base LDCs
+    init_PLD_coeffs = [0.1, 0.2, 0.4]
+
+    #Updating initial state dictionary
+    for iLD, LD_coeff in enumerate(init_PLD_coeffs):
+        init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
+        
+    #Pure data
+    true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
+
+    #Build noisy data
+    std = model_scatter * 1e-6
+    noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
+    noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
+
     #Loading MCMC results
     raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
 
@@ -485,6 +487,7 @@ if __name__ == '__main__':
             
             #Initialize array to store amplification factors for all seeds
             amp_factors = cached_data[PLD_order][model_scatter]
+            print('1:', amp_factors)
             
             #Make box-plot for this PLD-model scatter-seed combination
             ax_right.boxplot(amp_factors, positions=[model_scatter], patch_artist=True,
