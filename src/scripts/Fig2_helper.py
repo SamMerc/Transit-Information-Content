@@ -73,15 +73,9 @@ mu_resolution = {
     'mps2' : 24,
 }
 
-lambda_resolution = {
-    'phoenix' : 54500,
-    'kurucz' : 1221,
-    'stagger' : 105767,
-    'mps1' : 1221,
-    'mps2' : 1221,
-}
-
 N = 10
+
+N_chords = 1000
 
 bs = jnp.linspace(0, 1, N)
 ps = jnp.logspace(-3, -1, N)
@@ -95,39 +89,111 @@ mode = 'build' # 'build' or 'load'
 ############################
 ###### Function block ######
 ############################
+@jit
+def calculate_annulus_overlap(r_planet, p, r_inner, r_outer):
+    """
+    JAX-optimized annulus overlap calculation.
+    """
+    overlap_outer = calculate_circle_overlap(r_planet, p, r_outer)
+    overlap_inner = calculate_circle_overlap(r_planet, p, r_inner)
+    return overlap_outer - overlap_inner
 
-def chord_intensity(b, p, intensity_spectra, stellar_mus, N_chords):
-    '''
-    Docstring for chord_intensity
+
+@jit
+def calculate_circle_overlap(d, r1, r2):
+    """
+    JAX-optimized circle overlap calculation.
+    Handles arrays efficiently.
+    """
+    # No overlap cases
+    no_overlap = d >= r1 + r2
     
+    # Complete overlap cases
+    complete_overlap = d <= jnp.abs(r2 - r1)
+    
+    # Partial overlap - use lens formula
+    d2 = d * d
+    r1_2 = r1 * r1
+    r2_2 = r2 * r2
+    
+    # Safe division - avoid division by zero
+    denom = 2 * d * r1
+    safe_denom = jnp.where(denom == 0, 1.0, denom)
+    alpha_arg = (d2 + r1_2 - r2_2) / safe_denom
+    alpha_arg = jnp.clip(alpha_arg, -1.0, 1.0)
+    alpha = jnp.arccos(alpha_arg)
+    
+    denom2 = 2 * d * r2
+    safe_denom2 = jnp.where(denom2 == 0, 1.0, denom2)
+    beta_arg = (d2 + r2_2 - r1_2) / safe_denom2
+    beta_arg = jnp.clip(beta_arg, -1.0, 1.0)
+    beta = jnp.arccos(beta_arg)
+    
+    partial_area = r1_2 * alpha + r2_2 * beta - 0.5 * (r1_2 * jnp.sin(2 * alpha) + r2_2 * jnp.sin(2 * beta))
+    
+    # Combine all cases
+    area = jnp.where(no_overlap, 0.0,
+                     jnp.where(complete_overlap, jnp.pi * jnp.minimum(r1, r2)**2,
+                              partial_area))
+    
+    return area
+    
+@jit
+def chord_intensity(b, p, intensity_spectra, stellar_radii):
+    '''
+    JAX-optimized version for a single (b, p) pair.
     :param b: Transit chord impact parameter.
     :param p: Planet-to-star radius ratio.
     :param intensity_spectra: 2D array of intensity spectra (shape : n_wavelengths x n_stellar_mus).
-    :param stellar_mus: Array of mu values for the outer edges of the annuli discretizing the stellar disk.
+    :param stellar_radii: Array of r values for the edges of the annuli discretizing the stellar disk.
     :param N_chords: Number of points discretizing the transit chord.
     '''
     # Calculate the possible positions of the planet along the (half) transit chord based on the impact parameter
     # We only need half of the transit chord to trace out the intensity profile needed.
-    x_min = 0
-    x_max = np.sqrt(1 - b**2) 
-    r_ps = np.sqrt(b**2 + np.linspace(x_min, x_max, N_chords)
-    planet_mus = np.sqrt(1 - r_ps**2)
-
-    # Instantiate array to trach the occulted intensity spectrum at each point along the transit chord
-    occulted_intensity_spectra = np.zeros((intensity_spectra.shape[0], N_chords), dtype=float)
-
-    # Iterate over the positions of the planet along the chord
-    for imu, planet_mu in enumerate(planet_mus):
-
-        # For each position calculate the area of overlap between the planet and each annulus discretizing the stellar disk
-        overlap_areas = #TODO (should be a list with >=1 element)
-
-        # Calculate the occulted intensity spectrum by doing a weighted sum over the occulted annuli and the weights are the % of planet-occulted area covered by each annulus
-        occulted_intensity_spectra[:, imu] = #TODO (should be a spectrum of n_wavelengths shape)
-
-    # Output this occulted intensity spectrum over all the mu values sampled by the planet over its chord.
-    return occulted_intensity_spectra
+    x_min = 0.0
+    x_max = jnp.sqrt(1 - b**2)
+    x_vals = jnp.linspace(x_min, x_max, N_chords)
+    r_ps = jnp.sqrt(b**2 + x_vals**2)  # Shape: (N_chords,)
     
+    # Get inner and outer radii for each annulus
+    r_inner = stellar_radii[:-1]  # Shape: (n_stellar_mus-1,)
+    r_outer = stellar_radii[1:]  # Shape: (n_stellar_mus-1,)
+
+    # Vectorize over chord positions and annuli
+    # Create meshgrid: r_ps[:, None] broadcasts to (N_chords, 1)
+    # r_inner[None, :] and r_outer[None, :] broadcast to (1, n_annuli)
+    r_ps_grid = r_ps[:, None]  # Shape: (N_chords, 1)
+    r_inner_grid = r_inner[None, :]  # Shape: (1, n_annuli)
+    r_outer_grid = r_outer[None, :]  # Shape: (1, n_annuli)
+
+    # Calculate all overlaps at once
+    overlap_areas = calculate_annulus_overlap(
+        r_ps_grid, p, r_inner_grid, r_outer_grid
+    )  # Shape: (N_chords, n_annuli)
+        
+    # Calculate the occulted intensity spectrum by doing a weighted sum over the occulted annuli 
+    # and the weights are the % of planet-occulted area covered by each annulus
+    total_planet_area = jnp.pi * p**2
+    weights = overlap_areas / total_planet_area  # Shape: (N_chords, n_annuli)
+    
+    # We need intensities for each annulus, which are between consecutive mu values
+    # Average the intensities at the boundaries of each annulus
+    annulus_intensities = 0.5 * (intensity_spectra[:, :-1] + intensity_spectra[:, 1:])
+    # Shape: (n_wavelengths, n_annuli)
+
+    # Weighted sum: weights.T @ annulus_intensities.T -> (n_annuli, N_chords) @ (n_annuli, n_wavelengths)
+    # We want (n_wavelengths, N_chords)
+    occulted_intensity_spectra = annulus_intensities @ weights.T
+    # Shape: (n_wavelengths, N_chords)
+        
+    return occulted_intensity_spectra
+
+# Vectorize over b and p
+chord_intensity_vectorized = jit(vmap(
+    vmap(chord_intensity, in_axes=(None, 0, None, None)),
+    in_axes=(0, None, None, None)
+))
+
 ################################
 ########## Code block ##########
 ################################
@@ -189,14 +255,16 @@ for model in models:
                         gen_dict['stellar_mus'][model][:-1] + jnp.diff(gen_dict['stellar_mus'][model])/2, 
                         gen_dict['stellar_mus'][model][-1] + (jnp.diff(gen_dict['stellar_mus'][model])[-1]/2)
                     )
-                    
+
                     # Compute for all (b, p) combinations at once
-                    local_stellar_intensities = chord_extracter_vectorized(
-                        bs, ps, 
-                        global_stellar_intensities, 
-                        annuli_mus
+                    local_stellar_intensities = chord_intensity_vectorized(
+                        bs, ps, global_stellar_intensities, jnp.sqrt(1 - annuli_mus**2)
                     )
 
+                    print('1:',local_stellar_intensities.shape)
+                    plt.plot(local_stellar_intensities[0,0,600,:])
+                    plt.show()
+                    raise KeyboardInterrupt('STOP')
                     # Compute for all (b, p) combinations the integral of the local stellar intensity spectrum over wavelength 
                     local_intensity_profiles = jnp.trapezoid(
                         local_stellar_intensities, 

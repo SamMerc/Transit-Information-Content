@@ -116,10 +116,10 @@ fixed_args['nburn'] = 400000
 # Set number of cpus to use
 num_workers = int(0.5 * cpu_count())
 # Number of files in each chunk
-CHUNK_SIZE = 60
+CHUNK_SIZE = 2
 
 # CHI2 filtering parameters
-CHI2_THRESHOLD = 5.0  # Number of IQRs for outlier detection (5 is conservative)
+CHI2_THRESHOLD = 4.0  # Number of IQRs for outlier detection (5 is conservative)
 
 # Diagnostic plotting parameters
 ENABLE_DIAGNOSTICS = True  # Set to False to skip diagnostic plots
@@ -252,7 +252,7 @@ def load_result(args):
                    True, full_chain, full_logprob, full_chi2, good_walkers)
         else:
             return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r, 
-                   False, None, None, None)
+                   False, None, None, None, None)
     
     except Exception as e:
         print(f"Error loading PLD{PLD_order}, scatter{model_scatter}, seed{seed}: {e}")
@@ -303,32 +303,34 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     n_bad = n_walkers - n_good
     
     # =========================================================================
-    # PLOT 1: Trace plots for all parameters
+    # PLOT 1: Trace plots for all parameters with histograms
     # =========================================================================
     param_names = ['r', 'i', 'a', 'period', 'sqrtecosw', 'sqrtesinw'] + [f'LD_u{i}' for i in range(1, PLD_order+1)]
     n_params_vary = len(param_names)
-    
-    fig_trace, axes = plt.subplots(n_params_vary, 1, figsize=(12, 2*n_params_vary), 
-                                   sharex=True)
-    if n_params_vary == 1:
-        axes = [axes]
-    
-    for i, (ax, param_name) in enumerate(zip(axes, param_names)):
+
+    # Create figure with 2 columns: traces and histograms
+    fig_trace = plt.figure(figsize=(16, 2*n_params_vary))
+    gs = fig_trace.add_gridspec(n_params_vary, 2, width_ratios=[3, 1], hspace=0.05, wspace=0.05)
+
+    for i, param_name in enumerate(param_names):
+        # Left column: Trace plot
+        ax_trace = fig_trace.add_subplot(gs[i, 0])
+        
         # Plot filtered-out walkers in red (full trace)
         for walker in range(n_walkers):
             if not good_walkers_bool[walker]:
-                ax.plot(full_chain[walker, :, i], color='red', alpha=0.5, linewidth=0.8)
+                ax_trace.plot(full_chain[walker, :, i], color='red', alpha=0.5, linewidth=0.8)
         
         # Plot good walkers: burn-in in orange, post-burn-in in blue
         for walker in good_walker_indices:
-            ax.plot(np.arange(nburn), full_chain[walker, :nburn, i], 
-                   color='red', alpha=0.3, linewidth=0.5)
-            ax.plot(np.arange(nburn, n_steps), full_chain[walker, nburn:, i], 
-                   color='blue', alpha=0.3, linewidth=0.5)
+            ax_trace.plot(np.arange(nburn), full_chain[walker, :nburn, i], 
+                        color='red', alpha=0.3, linewidth=0.5)
+            ax_trace.plot(np.arange(nburn, n_steps), full_chain[walker, nburn:, i], 
+                        color='blue', alpha=0.3, linewidth=0.5)
         
-        ax.axvline(nburn, color='black', linestyle='--', linewidth=2, alpha=0.5)
-        ax.set_ylabel(param_name, fontsize=10)
-        ax.grid(True, alpha=0.3)
+        ax_trace.axvline(nburn, color='black', linestyle='--', linewidth=2, alpha=0.5)
+        ax_trace.set_ylabel(param_name, fontsize=10)
+        ax_trace.grid(True, alpha=0.3)
         
         if i == 0:
             # Create legend
@@ -338,14 +340,32 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
                 Line2D([0], [0], color='blue', linewidth=2, label=f'Post burn-in ({n_good})'),
                 Line2D([0], [0], color='black', linewidth=2, linestyle='--', label='Burn-in cutoff')
             ]
-            ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
-    
-    axes[-1].set_xlabel('Step', fontsize=10)
+            ax_trace.legend(handles=legend_elements, loc='upper right', fontsize=8)
+        
+        if i < n_params_vary - 1:
+            ax_trace.set_xticklabels([])
+        else:
+            ax_trace.set_xlabel('Step', fontsize=10)
+        
+        # Right column: Horizontal histogram
+        ax_hist = fig_trace.add_subplot(gs[i, 1])
+        
+        # Collect post-burn-in samples from good walkers only
+        post_burnin_samples = []
+        for walker in good_walker_indices:
+            post_burnin_samples.extend(full_chain[walker, nburn:, i])
+        
+        # Plot horizontal histogram
+        ax_hist.hist(post_burnin_samples, bins=30, orientation='horizontal', 
+                    color='blue', alpha=0.6, edgecolor='black', linewidth=0.5)
+        ax_hist.set_xlabel('Count', fontsize=8)
+        ax_hist.tick_params(axis='y', labelleft=False)
+        ax_hist.grid(True, alpha=0.3, axis='x')
+
     fig_trace.suptitle(f'Trace Plots - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
-                      fontsize=12)
-    plt.tight_layout()
+                    fontsize=12)
     plt.savefig(os.path.join(diag_dir, f'trace.pdf'), 
-               dpi=150, bbox_inches='tight')
+                dpi=150, bbox_inches='tight')
     plt.close(fig_trace)
     
     # =========================================================================
@@ -408,7 +428,7 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     r_chain_post = good_chains_post_burnin[:, :, 0].flatten()
     good_logprob = full_logprob[good_walker_indices, :]
     max_idx_post = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
-    bestfit_r_post = good_chains_post_burnin[max_idx_post[0], max_idx_post[1], 0]
+    bestfit_r_post = full_chain[good_walker_indices, :, :][max_idx_post[0], max_idx_post[1], 0]
     
     std_r_post = np.std(r_chain_post)
     bestfit_r_error_post = 2 * std_r_post * bestfit_r_post
@@ -438,7 +458,8 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
         plot_datapoints=False,
         plot_density=True,
         hist_kwargs={'alpha': 0.8, 'linewidth': 2},
-        contour_kwargs={'linewidths': 2, 'alpha': 0.8}
+        contour_kwargs={'linewidths': 2, 'alpha': 0.8},
+        reverse=True
     )
     
     # Add title with amplification factors
@@ -547,13 +568,8 @@ if __name__ == '__main__':
             chunk_end = min((chunk_idx + 1) * CHUNK_SIZE, total_files)
             chunk_tasks = loading_tasks[chunk_start:chunk_end]
             
-            # Mark first file in chunk for full data extraction (for diagnostics)
-            if ENABLE_DIAGNOSTICS:
-                chunk_tasks_enhanced = [
-                    (*chunk_tasks[0], True)  # First file gets full data
-                ] + [(*task, False) for task in chunk_tasks[1:]]
-            else:
-                chunk_tasks_enhanced = [(*task, False) for task in chunk_tasks]
+            # Do full data extraction for diagnostics
+            chunk_tasks_enhanced = [(*task, ENABLE_DIAGNOSTICS) for task in chunk_tasks]
 
             print(f"\nProcessing chunk {chunk_idx+1}/{num_chunks} ({len(chunk_tasks)} files)...")
             chunk_start_time = time.time()
@@ -577,11 +593,11 @@ if __name__ == '__main__':
             
             # Generate diagnostic plots for first file in chunk
             if ENABLE_DIAGNOSTICS:
-                diagnostic_result = [r for r in chunk_results if r[5]][0]  # Find the one with full data
-                PLD, scatter, sd, _, _, _, full_chain, full_logp, full_chi2, good_walkers = diagnostic_result
-                
-                plot_diagnostics(full_chain, full_logp, full_chi2, good_walkers,
-                                   PLD, scatter, sd)
+                for r in chunk_results:
+                    PLD, scatter, sd, _, _, _, full_chain, full_logp, full_chi2, good_walkers = r
+                    
+                    plot_diagnostics(full_chain, full_logp, full_chi2, good_walkers,
+                                    PLD, scatter, sd)
 
             # Force garbage collection between chunks
             gc.collect()
