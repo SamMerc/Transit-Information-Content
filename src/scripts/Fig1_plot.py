@@ -118,8 +118,8 @@ num_workers = int(0.5 * cpu_count())
 # Number of files in each chunk
 CHUNK_SIZE = 2
 
-# CHI2 filtering parameters
-CHI2_THRESHOLD = 4.0  # Number of IQRs for outlier detection (5 is conservative)
+# Filtering parameters
+THRESHOLD = 2.0  # Number of IQRs for outlier detection (5 is conservative)
 
 # Diagnostic plotting parameters
 ENABLE_DIAGNOSTICS = True  # Set to False to skip diagnostic plots
@@ -202,7 +202,11 @@ def load_result(args):
         raw_chain = np.load(path_base + 'chains.npy', mmap_mode='r')
         logprob = np.load(path_base + 'logprob.npy', mmap_mode='r')
         chi2 = np.load(path_base + 'chi2_chain.npy', mmap_mode='r')
-        
+        n_walkers, _, n_params = raw_chain.shape
+
+        #Initializeb boolean tracker of good walkers
+        good_walkers = np.ones(n_walkers, dtype=bool)
+
         # ==============================
         # CHI2-BASED WALKER FILTERING
         # ==============================
@@ -211,21 +215,42 @@ def load_result(args):
         walker_median_chi2 = np.median(chi2[:, fixed_args['nburn']:], axis=1)
         
         # Calculate statistics for outlier detection
-        global_median = np.median(walker_median_chi2)
-        q1 = np.percentile(walker_median_chi2, 25)
-        q3 = np.percentile(walker_median_chi2, 75)
-        iqr = q3 - q1
+        quartiles = np.percentile(walker_median_chi2, [25, 50, 75])
+        mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
         
         # Define bounds: reject walkers that are too far from median
         # For logprob: lower values = worse fits (higher chi2)
-        lower_bound = global_median - CHI2_THRESHOLD * iqr
-        upper_bound = global_median + CHI2_THRESHOLD * iqr
+        lower_bound = mu - THRESHOLD * sig
+        upper_bound = mu + THRESHOLD * sig
         
         # Identify good walkers
-        good_walkers = (walker_median_chi2 >= lower_bound) & (walker_median_chi2 <= upper_bound)
+        good_walkers &= (walker_median_chi2 >= lower_bound) & (walker_median_chi2 <= upper_bound)
         
-        # Safety check: keep at least 20% of walkers
-        print(f"  {np.sum(good_walkers)} walkers kept ({100*np.sum(good_walkers)/len(good_walkers)} %) walkers passed filter for PLD{PLD_order}, scatter{np.floor(model_scatter)}, seed{seed}")
+        print(f"  {np.sum(good_walkers)} walkers kept ({100*np.sum(good_walkers)/len(good_walkers)} %) after chi2 filtering")
+
+        # ======================================================================
+        # FILTER 2: PARAMETER SPACE FILTERING
+        # ======================================================================
+        # For each parameter, calculate median value for each walker (post burn-in)
+        post_burnin_samples = raw_chain[:, fixed_args['nburn']:, :]
+        walker_param_medians = np.median(post_burnin_samples, axis=1)  # (n_walkers, n_params)
+        
+        # Check each parameter independently
+        for param_idx in range(n_params):
+            param_values = walker_param_medians[:, param_idx]
+
+            # Calculate IQR for this parameter
+            quartiles = np.percentile(param_values, [25, 50, 75])
+            mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
+            
+            # Define bounds
+            lower_bound_param = mu - THRESHOLD * sig
+            upper_bound_param = mu + THRESHOLD * sig
+            
+            # Flag walkers that are outliers in this parameter
+            good_walkers &= (param_values >= lower_bound_param) & (param_values <= upper_bound_param)
+
+            print(f"  {np.sum(good_walkers)} walkers kept ({100*np.sum(good_walkers)/len(good_walkers)} %) after {fixed_args['var_param_list'][param_idx]} filtering")
 
         # ===================================================================
         # EXTRACT DATA FROM GOOD WALKERS
@@ -233,11 +258,7 @@ def load_result(args):
         
         # Find best fit from good walkers only
         good_logprob = logprob[good_walkers, :]
-        max_walker_idx, max_step = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
-
-        # Map back to original walker index
-        good_walker_indices = np.where(good_walkers)[0]
-        max_walker = good_walker_indices[max_walker_idx]
+        max_walker, max_step = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
 
         # Only load post burn-in data for parameter 0
         r_chain_post_burnin = np.array(raw_chain[good_walkers, fixed_args['nburn']:, 0])  # Force load only this slice
@@ -290,76 +311,79 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     
     print(f"    Generating diagnostics for PLD{PLD_order}, scatter{model_scatter}, seed{seed}")
     
-    # Convert good_walkers to boolean array if needed
-    if good_walkers.dtype == bool:
-        good_walkers_bool = good_walkers
-        good_walker_indices = np.where(good_walkers)[0]
-    else:
-        good_walker_indices = good_walkers
-        good_walkers_bool = np.zeros(n_walkers, dtype=bool)
-        good_walkers_bool[good_walker_indices] = True
-    
-    n_good = np.sum(good_walkers_bool)
+    n_good = np.sum(good_walkers)
     n_bad = n_walkers - n_good
-    
+
     # =========================================================================
     # PLOT 1: Trace plots for all parameters with histograms
     # =========================================================================
     param_names = ['r', 'i', 'a', 'period', 'sqrtecosw', 'sqrtesinw'] + [f'LD_u{i}' for i in range(1, PLD_order+1)]
-    n_params_vary = len(param_names)
 
     # Create figure with 2 columns: traces and histograms
-    fig_trace = plt.figure(figsize=(16, 2*n_params_vary))
-    gs = fig_trace.add_gridspec(n_params_vary, 2, width_ratios=[3, 1], hspace=0.05, wspace=0.05)
+    fig_trace = plt.figure(figsize=(16, 2*n_params))
+    gs = fig_trace.add_gridspec(n_params, 3, width_ratios=[1,1,1], hspace=0.05, wspace=0.05)
+
+    walker_param_medians = np.median(full_chain[:, nburn:, :], axis=1)
 
     for i, param_name in enumerate(param_names):
         # Left column: Trace plot
         ax_trace = fig_trace.add_subplot(gs[i, 0])
         
-        # Plot filtered-out walkers in red (full trace)
-        for walker in range(n_walkers):
-            if not good_walkers_bool[walker]:
-                ax_trace.plot(full_chain[walker, :, i], color='red', alpha=0.5, linewidth=0.8)
-        
         # Plot good walkers: burn-in in orange, post-burn-in in blue
-        for walker in good_walker_indices:
-            ax_trace.plot(np.arange(nburn), full_chain[walker, :nburn, i], 
-                        color='red', alpha=0.3, linewidth=0.5)
-            ax_trace.plot(np.arange(nburn, n_steps), full_chain[walker, nburn:, i], 
-                        color='blue', alpha=0.3, linewidth=0.5)
+        for walker in range(n_walkers):
+            if not good_walkers[walker]:
+                ax_trace.plot(full_chain[walker, :, i], color='red', alpha=0.2, linewidth=0.2)
+            else:
+                ax_trace.plot(np.arange(nburn), full_chain[walker, :nburn, i], 
+                            color='red', alpha=0.2, linewidth=0.2, label=f'Burn-in {n_good} & Filtered({n_bad})' if i==0 else '')
+                ax_trace.plot(np.arange(nburn, n_steps), full_chain[walker, nburn:, i], 
+                            color='blue', alpha=0.2, linewidth=0.2, label=f'Post burn-in ({n_good})')
         
-        ax_trace.axvline(nburn, color='black', linestyle='--', linewidth=2, alpha=0.5)
+        ax_trace.axvline(nburn, color='black', linestyle='--', linewidth=0.2, alpha=0.2, label='Burn-in cutoff' if i==0 else '')
         ax_trace.set_ylabel(param_name, fontsize=10)
         ax_trace.grid(True, alpha=0.3)
         
-        if i == 0:
-            # Create legend
-            from matplotlib.lines import Line2D
-            legend_elements = [
-                Line2D([0], [0], color='red', linewidth=2, label=f'Burn-in {n_good} & Filtered({n_bad})'),
-                Line2D([0], [0], color='blue', linewidth=2, label=f'Post burn-in ({n_good})'),
-                Line2D([0], [0], color='black', linewidth=2, linestyle='--', label='Burn-in cutoff')
-            ]
-            ax_trace.legend(handles=legend_elements, loc='upper right', fontsize=8)
-        
-        if i < n_params_vary - 1:
+        if i == 0:ax_trace.legend(loc='upper right', fontsize=8)
+        if i < n_params - 1:
             ax_trace.set_xticklabels([])
         else:
             ax_trace.set_xlabel('Step', fontsize=10)
         
-        # Right column: Horizontal histogram
-        ax_hist = fig_trace.add_subplot(gs[i, 1])
+        # Middle column: Trace plot (post-burn)
+        ax_burn = fig_trace.add_subplot(gs[i, 1])
         
-        # Collect post-burn-in samples from good walkers only
-        post_burnin_samples = []
-        for walker in good_walker_indices:
-            post_burnin_samples.extend(full_chain[walker, nburn:, i])
+        # Plot walkers
+        for walker in range(n_walkers):
+            if not good_walkers[walker]:
+                ax_burn.axhline(full_chain[walker, nburn:, i], color='red', alpha=0.2)
+            else:
+                ax_burn.axhline(full_chain[walker, nburn:, i], color='blue', alpha=0.2)
+        
+        quartiles = np.percentile(walker_param_medians[:, i], [25, 50, 75])
+        mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
+        ax_burn.axhline(mu, color='black', linestyle='dotted')
+        ax_burn.axhline(mu + THRESHOLD * sig, color='red', linestyle='dashed')
+        ax_burn.axhline(mu - THRESHOLD * sig, color='red', linestyle='dashed')
+
+        # ax_burn.tick_params(axis='y', labelleft=False)
+        ax_burn.set_ylabel(param_name, fontsize=10)
+        ax_burn.grid(True, alpha=0.3)
+
+        # Right column: Horizontal histogram
+        ax_hist = fig_trace.add_subplot(gs[i, 2], sharey=ax_burn)
         
         # Plot horizontal histogram
-        ax_hist.hist(post_burnin_samples, bins=30, orientation='horizontal', 
-                    color='blue', alpha=0.6, edgecolor='black', linewidth=0.5)
+        ax_hist.hist(full_chain[:, nburn:, i].flatten(), bins=30, orientation='horizontal', 
+                    density=True, histtype='stepfilled', color='red', alpha=0.5, edgecolor='red', linewidth=0.5)
+        ax_hist.hist(full_chain[good_walkers, nburn:, i].flatten(), bins=30, orientation='horizontal', 
+                    density=True, histtype='stepfilled', color='blue', alpha=0.5, edgecolor='blue', linewidth=0.5)
+        
+        ax_hist.axhline(mu, color='black', linestyle='dotted')
+        ax_hist.axhline(mu + THRESHOLD * sig, color='red', linestyle='dashed')
+        ax_hist.axhline(mu - THRESHOLD * sig, color='red', linestyle='dashed')
+
         ax_hist.set_xlabel('Count', fontsize=8)
-        ax_hist.tick_params(axis='y', labelleft=False)
+        # ax_hist.tick_params(axis='y', labelleft=False)
         ax_hist.grid(True, alpha=0.3, axis='x')
 
     fig_trace.suptitle(f'Trace Plots - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
@@ -375,15 +399,13 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     
     # Plot filtered-out walkers in red
     for walker in range(n_walkers):
-        if not good_walkers_bool[walker]:
+        if not good_walkers[walker]:
             ax_chi2.loglog(full_chi2[walker, :], color='red', alpha=0.5, linewidth=0.8)
-    
-    # Plot good walkers: burn-in in orange, post-burn-in in blue
-    for walker in good_walker_indices:
-        ax_chi2.loglog(np.arange(nburn), full_chi2[walker, :nburn], 
-                    color='red', alpha=0.3, linewidth=0.5)
-        ax_chi2.loglog(np.arange(nburn, n_steps), full_chi2[walker, nburn:], 
-                    color='blue', alpha=0.3, linewidth=0.5)
+        else:
+            ax_chi2.loglog(np.arange(nburn), full_chi2[walker, :nburn], 
+                        color='red', alpha=0.3, linewidth=0.5)
+            ax_chi2.loglog(np.arange(nburn, n_steps), full_chi2[walker, nburn:], 
+                        color='blue', alpha=0.3, linewidth=0.5)
     
     ax_chi2.axvline(nburn, color='black', linestyle='--', linewidth=2, alpha=0.5, label='Burn-in')
     ax_chi2.set_xlabel('Step', fontsize=10)
@@ -410,8 +432,7 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     
     # Calculate pre-filtering amplification factor
     # Extract r parameter (assumed to be index 0)
-    r_chain_pre = all_chains_post_burnin[:, :, 0].flatten()
-    bestfit_r_pre = np.max(full_logprob)  # Find best fit
+    r_chain_pre = full_chain[:, nburn:, 0].flatten()
     max_idx_pre = np.unravel_index(np.argmax(full_logprob), full_logprob.shape)
     bestfit_r_pre = full_chain[max_idx_pre[0], max_idx_pre[1], 0]
     
@@ -421,14 +442,14 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     amp_factor_pre = bestfit_r_error_pre / scatter_in_bin
     
     # POST-FILTERING: Use only good walkers
-    good_chains_post_burnin = full_chain[good_walker_indices, nburn:, :]
+    good_chains_post_burnin = full_chain[good_walkers, nburn:, :]
     samples_post_filter = good_chains_post_burnin.reshape(-1, n_params)
     
     # Calculate post-filtering amplification factor
-    r_chain_post = good_chains_post_burnin[:, :, 0].flatten()
-    good_logprob = full_logprob[good_walker_indices, :]
+    r_chain_post = full_chain[good_walkers, nburn:, 0].flatten()
+    good_logprob = full_logprob[good_walkers, :]
     max_idx_post = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
-    bestfit_r_post = full_chain[good_walker_indices, :, :][max_idx_post[0], max_idx_post[1], 0]
+    bestfit_r_post = full_chain[good_walkers, :, :][max_idx_post[0], max_idx_post[1], 0]
     
     std_r_post = np.std(r_chain_post)
     bestfit_r_error_post = 2 * std_r_post * bestfit_r_post
