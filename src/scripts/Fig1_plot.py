@@ -123,7 +123,6 @@ CHI2_THRESHOLD = 5.0  # Number of IQRs for outlier detection (5 is conservative)
 
 # Diagnostic plotting parameters
 ENABLE_DIAGNOSTICS = True  # Set to False to skip diagnostic plots
-DIAGNOSTIC_INTERVAL = 1  # Plot diagnostics every N chunks (1 = every chunk)
 
 #%% Defining important lists
 var_param_list = []
@@ -371,7 +370,7 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
     ax_chi2.set_ylabel('Chi-squared', fontsize=10)
     ax_chi2.set_yscale('log')
     ax_chi2.grid(True, alpha=0.3)
-    ax_chi2.legend()
+    ax_chi2.legend(loc='upper right')
     ax_chi2.set_title(f'Chi2 Evolution - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
                      fontsize=12)
     plt.tight_layout()
@@ -549,7 +548,7 @@ if __name__ == '__main__':
             chunk_tasks = loading_tasks[chunk_start:chunk_end]
             
             # Mark first file in chunk for full data extraction (for diagnostics)
-            if ENABLE_DIAGNOSTICS and (chunk_idx % DIAGNOSTIC_INTERVAL == 0):
+            if ENABLE_DIAGNOSTICS:
                 chunk_tasks_enhanced = [
                     (*chunk_tasks[0], True)  # First file gets full data
                 ] + [(*task, False) for task in chunk_tasks[1:]]
@@ -577,7 +576,7 @@ if __name__ == '__main__':
             print(f"  Chunk processed in {chunk_time:.1f}s ({files_per_sec:.1f} files/sec)")
             
             # Generate diagnostic plots for first file in chunk
-            if ENABLE_DIAGNOSTICS and (chunk_idx % DIAGNOSTIC_INTERVAL == 0):
+            if ENABLE_DIAGNOSTICS:
                 diagnostic_result = [r for r in chunk_results if r[5]][0]  # Find the one with full data
                 PLD, scatter, sd, _, _, _, full_chain, full_logp, full_chi2, good_walkers = diagnostic_result
                 

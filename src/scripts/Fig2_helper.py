@@ -95,89 +95,38 @@ mode = 'build' # 'build' or 'load'
 ############################
 ###### Function block ######
 ############################
-@jit
-def calculate_segment_area(r, y_interior, y_exterior):
-    """
-    Calculate occulted area within circle of radius r,
-    between horizontal lines at y_interior and y_exterior.
-    
-    Cases:
-    1. Both edges outside circle: area = 0
-    2. Only interior edge intersects: area = interior_segment
-    3. Both edges intersect: area = interior_segment - exterior_segment
-    """
-    
-    # Clip ratios for arccos
-    ratio_interior = jnp.clip((y_interior) / r, -1.0, 1.0)
-    ratio_exterior = jnp.clip((y_exterior) / r, -1.0, 1.0)
-    
-    # Calculate segment areas
-    # Segment = area between chord and circle edge
-    theta_interior = 2 * jnp.arccos(ratio_interior)
-    theta_exterior = 2 * jnp.arccos(ratio_exterior)
-    
-    segment_interior = 0.5 * r**2 * (theta_interior - jnp.sin(theta_interior))
-    segment_exterior = 0.5 * r**2 * (theta_exterior - jnp.sin(theta_exterior))
-    
-    # Band area (area between two chords)
-    band_area = segment_interior - segment_exterior
-    
-    return band_area
 
-@jit
-def chord_extracter_single(b, p, intensity_profiles, mus):
-    """
-    Vectorized version - Extract the intensity profile for a given chord size (p) and location (b).
+def chord_intensity(b, p, intensity_spectra, stellar_mus, N_chords):
+    '''
+    Docstring for chord_intensity
     
-    :param b: Impact parameter of the transit chord.
+    :param b: Transit chord impact parameter.
     :param p: Planet-to-star radius ratio.
-    :param intensity_profiles: 2D array of intensity spectra (shape: n_wavelengths x n_mus) 
-    :param mus: Array of mu values (outer edges of annuli).
-    """
-    # Define the grid of radii on the stellar grid
-    rs = jnp.sqrt(1 - mus**2)
-    
-    # Calculate the occulted area for each annulus using vectorized operations
-    # Each annulus i goes from r=0 (if i=0) or r=rs[i-1] to r=rs[i]
-    
-    # Chord edges
-    y_interior = b - p
-    y_exterior = b + p
-    
-    # Calculate segment area up to each radius
-    segment_areas = vmap(calculate_segment_area, in_axes=(0, None, None))(rs, y_interior, y_exterior)
-    
-    # Calculate occulted area in each annulus by taking differences
-    # For annulus 0: full segment area at rs[0]
-    # For annulus i>0: segment_areas[i] - segment_areas[i-1]
-    occulted_area = jnp.concatenate([
-        segment_areas[0:1],  # First annulus
-        jnp.diff(segment_areas)  # Remaining annuli
-    ])
-    
-    # Calculate the area of each annulus
-    annulus_area = jnp.concatenate([
-        jnp.pi * rs[0:1]**2,  # First annulus (disk)
-        jnp.diff(jnp.pi * rs**2)  # Remaining annuli (rings)
-    ])
-    
-    # Calculate proportion (avoid division by zero)
-    occulted_proportion = jnp.where(
-        annulus_area > 0,
-        occulted_area / annulus_area,
-        0.0
-    )
+    :param intensity_spectra: 2D array of intensity spectra (shape : n_wavelengths x n_stellar_mus).
+    :param stellar_mus: Array of mu values for the outer edges of the annuli discretizing the stellar disk.
+    :param N_chords: Number of points discretizing the transit chord.
+    '''
+    # Calculate the possible positions of the planet along the (half) transit chord based on the impact parameter
+    # We only need half of the transit chord to trace out the intensity profile needed.
+    x_min = 0
+    x_max = np.sqrt(1 - b**2) 
+    r_ps = np.sqrt(b**2 + np.linspace(x_min, x_max, N_chords)
+    planet_mus = np.sqrt(1 - r_ps**2)
 
-    # Weight intensity profiles
-    weighted = intensity_profiles * occulted_proportion[jnp.newaxis, :]
-    
-    return weighted
+    # Instantiate array to trach the occulted intensity spectrum at each point along the transit chord
+    occulted_intensity_spectra = np.zeros((intensity_spectra.shape[0], N_chords), dtype=float)
 
-# Vectorize over both b and p
-chord_extracter_vectorized = jit(vmap(
-    vmap(chord_extracter_single, in_axes=(None, 0, None, None)),  # vmap over p
-    in_axes=(0, None, None, None)  # vmap over b
-))
+    # Iterate over the positions of the planet along the chord
+    for imu, planet_mu in enumerate(planet_mus):
+
+        # For each position calculate the area of overlap between the planet and each annulus discretizing the stellar disk
+        overlap_areas = #TODO (should be a list with >=1 element)
+
+        # Calculate the occulted intensity spectrum by doing a weighted sum over the occulted annuli and the weights are the % of planet-occulted area covered by each annulus
+        occulted_intensity_spectra[:, imu] = #TODO (should be a spectrum of n_wavelengths shape)
+
+    # Output this occulted intensity spectrum over all the mu values sampled by the planet over its chord.
+    return occulted_intensity_spectra
     
 ################################
 ########## Code block ##########
@@ -257,15 +206,6 @@ for model in models:
                     
                     #Normalize and store this local intensity profile
                     gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :] = local_intensity_profiles / global_intensity_profile[0]
-                    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
-                    for i in range(len(gen_dict['stellar_mus'][model])):
-                        ax1.semilogx(stellar_wavelengths, local_stellar_intensities[0,0,:,i])
-                        ax2.semilogx(stellar_wavelengths, global_stellar_intensities[:,i])
-                    plt.show()
-                    test = jnp.trapezoid(local_stellar_intensities[0,0,:,:], stellar_wavelengths, axis=0)
-                    plt.plot(gen_dict['stellar_mus'][model], test)
-                    plt.show()
-                    raise KeyboardInterrupt('STOP')
 
 
         #Store the stellar spectrum
