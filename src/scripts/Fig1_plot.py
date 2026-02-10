@@ -119,7 +119,9 @@ num_workers = int(0.5 * cpu_count())
 CHUNK_SIZE = 2
 
 # Filtering parameters
-THRESHOLD = 2.0  # Number of IQRs for outlier detection (5 is conservative)
+THRESHOLD = 4.0  # Number of IQRs for outlier detection (5 is conservative)
+step_threshold = 0.1
+ROUNDS = 3
 
 # Diagnostic plotting parameters
 ENABLE_DIAGNOSTICS = True  # Set to False to skip diagnostic plots
@@ -185,98 +187,148 @@ def create_jaxoplanet_model(x, p):
 
 def load_result(args):
     """
-    Optimized file loading with memory mapping and selective loading
+    Optimized file loading with step-by-step sigma clipping
     
-    Key optimizations:
-    1. Use mmap_mode='r' to memory-map files instead of loading into RAM
-    2. Only load the data we actually need (post burn-in, parameter 0)
-    3. Extract bestfit info without loading full chain
-    4. Return minimal data needed for computation
+    NEW FILTERING STRATEGY:
+    - At EACH step, calculate median and sigma across all walkers
+    - Flag walkers that are outliers at that step
+    
+    This catches walkers that diverge at any point, not just those with
+    different overall medians.
     """
     raw_save_dir, PLD_order, model_scatter, seed, return_full = args
+    print(f"  Processing PLD{PLD_order}, scatter{np.floor(model_scatter)}, seed{seed}...")
     try:
         path_base = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/'
         
         # CRITICAL: Use memory mapping instead of loading entire file
-        # This keeps data on disk and only loads what's needed
         raw_chain = np.load(path_base + 'chains.npy', mmap_mode='r')
         logprob = np.load(path_base + 'logprob.npy', mmap_mode='r')
         chi2 = np.load(path_base + 'chi2_chain.npy', mmap_mode='r')
-        n_walkers, _, n_params = raw_chain.shape
+        n_walkers, n_steps, n_params = raw_chain.shape
+        n_steps_post = n_steps - fixed_args['nburn']
 
-        #Initializeb boolean tracker of good walkers
-        good_walkers = np.ones(n_walkers, dtype=bool)
+        # Initialize: START tracking which ORIGINAL walkers are good
+        good_walker_mask = np.ones(n_walkers, dtype=bool)
 
-        # ==============================
-        # CHI2-BASED WALKER FILTERING
-        # ==============================
-        # Calculate median log-probability for each walker
-        # Higher logprob = better fit (inverse of chi2)
-        walker_median_chi2 = np.median(chi2[:, fixed_args['nburn']:], axis=1)
-        
-        # Calculate statistics for outlier detection
-        quartiles = np.percentile(walker_median_chi2, [25, 50, 75])
-        mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
-        
-        # Define bounds: reject walkers that are too far from median
-        # For logprob: lower values = worse fits (higher chi2)
-        lower_bound = mu - THRESHOLD * sig
-        upper_bound = mu + THRESHOLD * sig
-        
-        # Identify good walkers
-        good_walkers &= (walker_median_chi2 >= lower_bound) & (walker_median_chi2 <= upper_bound)
-        
-        print(f"  {np.sum(good_walkers)} walkers kept ({100*np.sum(good_walkers)/len(good_walkers)} %) after chi2 filtering")
-
-        # ======================================================================
-        # FILTER 2: PARAMETER SPACE FILTERING
-        # ======================================================================
-        # For each parameter, calculate median value for each walker (post burn-in)
-        post_burnin_samples = raw_chain[:, fixed_args['nburn']:, :]
-        walker_param_medians = np.median(post_burnin_samples, axis=1)  # (n_walkers, n_params)
-        
-        # Check each parameter independently
-        for param_idx in range(n_params):
-            param_values = walker_param_medians[:, param_idx]
-
-            # Calculate IQR for this parameter
-            quartiles = np.percentile(param_values, [25, 50, 75])
-            mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
+        # Iterate over the number of sigma clipping rounds desired:
+        for round in range(ROUNDS):
             
-            # Define bounds
-            lower_bound_param = mu - THRESHOLD * sig
-            upper_bound_param = mu + THRESHOLD * sig
+            print(f'ROUND {round+1}')
+            round_chi2 = chi2[good_walker_mask, :]
+            round_raw_chain = raw_chain[good_walker_mask, :, :]
             
-            # Flag walkers that are outliers in this parameter
-            good_walkers &= (param_values >= lower_bound_param) & (param_values <= upper_bound_param)
+            # Get the number of good walkers in THIS round
+            n_round_walkers = round_chi2.shape[0]
 
-            print(f"  {np.sum(good_walkers)} walkers kept ({100*np.sum(good_walkers)/len(good_walkers)} %) after {fixed_args['var_param_list'][param_idx]} filtering")
+            # ======================================================================
+            # FILTER 1: CHI2-BASED STEP-BY-STEP SIGMA CLIPPING
+            # ======================================================================            
+            # Process post-burn-in steps only
+            chi2_post_burnin = round_chi2[:, fixed_args['nburn']:]
+            
+            # For each step, identify outliers
+            chi2_step_outlier_mask = np.zeros((n_round_walkers, n_steps_post), dtype=bool)
+            
+            for step_idx in range(n_steps_post):
+                chi2_at_step = chi2_post_burnin[:, step_idx]  # (round_walkers,)
+                
+                # Calculate median and sigma at this step
+                quartiles = np.percentile(chi2_at_step, [25, 50, 75])
+                mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
+                
+                # Identify outliers at this step
+                lower_bound = mu - THRESHOLD * sig
+                upper_bound = mu + THRESHOLD * sig
+                
+                chi2_step_outlier_mask[:, step_idx] |= ((chi2_at_step < lower_bound) | (chi2_at_step > upper_bound))
+
+            # Only keep the masked steps if more than X% of the steps are bad. X is set by the step threshold
+            chi2_outlier_mask = np.sum(chi2_step_outlier_mask, axis=1) > (step_threshold * n_steps_post)
+
+            print(f"    Chi2 filter: removed {np.sum(chi2_outlier_mask)} walker(s) ({100*(np.sum(chi2_outlier_mask)/n_round_walkers):.1f}%)")
+
+            # ======================================================================
+            # FILTER 2: PARAMETER SPACE STEP-BY-STEP SIGMA CLIPPING
+            # ======================================================================
+            print(f"  Processing parameters...")
+            
+            # Load post-burn-in samples
+            post_burnin_samples = np.array(round_raw_chain[:, fixed_args['nburn']:, :])
+            
+            # Check each parameter independently
+            for param_idx in range(n_params):
+                param_chain = post_burnin_samples[:, :, param_idx]  # (round_walkers, n_steps_post)
+                
+                # For each step, identify outliers
+                param_step_outlier_mask = np.zeros((n_round_walkers, n_steps_post), dtype=bool)
+                
+                for step_idx in range(n_steps_post):
+                    param_at_step = param_chain[:, step_idx]  # (round_walkers,)
+                    
+                    # Calculate median and sigma at this step
+                    quartiles = np.percentile(param_at_step, [25, 50, 75])
+                    mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
+                    
+                    # Identify outliers at this step
+                    lower_bound = mu - THRESHOLD * sig
+                    upper_bound = mu + THRESHOLD * sig
+                    
+                    param_step_outlier_mask[:, step_idx] |= (param_at_step < lower_bound) | (param_at_step > upper_bound)
+                
+                # Only keep the masked steps if more than X% of the steps are bad. X is set by the step threshold
+                param_outlier_mask = np.sum(param_step_outlier_mask, axis=1) > (step_threshold * n_steps_post)
+
+                print(f"    {fixed_args['var_param_list'][param_idx]} filter: removed {np.sum(param_outlier_mask)} walker(s) ({100*(np.sum(param_outlier_mask)/n_round_walkers):.1f}%)")
+
+            # ======================================================================
+            # BUILD GOOD WALKERS - MAINTAIN ORIGINAL WALKER INDICES
+            # ======================================================================
+            round_bad_walkers = (param_outlier_mask | chi2_outlier_mask)
+            round_good_indices = np.where(~round_bad_walkers)[0]
+            
+            # Get the ORIGINAL indices of good walkers
+            original_good_indices = np.where(good_walker_mask)[0]
+            original_good_indices_to_keep = original_good_indices[round_good_indices]
+            
+            # Update good_walker_mask with only the walkers that passed this round
+            good_walker_mask = np.zeros(n_walkers, dtype=bool)
+            good_walker_mask[original_good_indices_to_keep] = True
+            
+            print(f"    Total filter: removed {np.sum(round_bad_walkers)} walker(s) ({100*(np.sum(round_bad_walkers)/n_round_walkers):.1f}%)")
 
         # ===================================================================
         # EXTRACT DATA FROM GOOD WALKERS
         # ===================================================================
         
         # Find best fit from good walkers only
-        good_logprob = logprob[good_walkers, :]
-        max_walker, max_step = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
+        good_logprob = logprob[good_walker_mask, :]
+            
+        max_walker_idx, max_step = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
+
+        # Map back to original walker index
+        good_walker_indices = np.where(good_walker_mask)[0]
+        max_walker = good_walker_indices[max_walker_idx]
 
         # Only load post burn-in data for parameter 0
-        r_chain_post_burnin = np.array(raw_chain[good_walkers, fixed_args['nburn']:, 0])  # Force load only this slice
+        r_chain_post_burnin = np.array(raw_chain[good_walker_mask, fixed_args['nburn']:, 0])
         bestfit_r = float(raw_chain[max_walker, max_step, 0])
         
         if return_full:
-            full_chain = np.array(raw_chain)  # All parameters
+            full_chain = np.array(raw_chain)
             full_logprob = np.array(logprob)
             full_chi2 = np.array(chi2)
             
             return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r, 
-                   True, full_chain, full_logprob, full_chi2, good_walkers)
+                   True, full_chain, full_logprob, full_chi2, good_walker_mask)
         else:
             return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r, 
                    False, None, None, None, None)
     
     except Exception as e:
         print(f"Error loading PLD{PLD_order}, scatter{model_scatter}, seed{seed}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -355,15 +407,9 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
         # Plot walkers
         for walker in range(n_walkers):
             if not good_walkers[walker]:
-                ax_burn.axhline(full_chain[walker, nburn:, i], color='red', alpha=0.2)
+                ax_burn.plot(full_chain[walker, nburn:, i], color='red', alpha=0.2)
             else:
-                ax_burn.axhline(full_chain[walker, nburn:, i], color='blue', alpha=0.2)
-        
-        quartiles = np.percentile(walker_param_medians[:, i], [25, 50, 75])
-        mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
-        ax_burn.axhline(mu, color='black', linestyle='dotted')
-        ax_burn.axhline(mu + THRESHOLD * sig, color='red', linestyle='dashed')
-        ax_burn.axhline(mu - THRESHOLD * sig, color='red', linestyle='dashed')
+                ax_burn.plot(full_chain[walker, nburn:, i], color='blue', alpha=0.2)
 
         # ax_burn.tick_params(axis='y', labelleft=False)
         ax_burn.set_ylabel(param_name, fontsize=10)
@@ -377,10 +423,6 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers,
                     density=True, histtype='stepfilled', color='red', alpha=0.5, edgecolor='red', linewidth=0.5)
         ax_hist.hist(full_chain[good_walkers, nburn:, i].flatten(), bins=30, orientation='horizontal', 
                     density=True, histtype='stepfilled', color='blue', alpha=0.5, edgecolor='blue', linewidth=0.5)
-        
-        ax_hist.axhline(mu, color='black', linestyle='dotted')
-        ax_hist.axhline(mu + THRESHOLD * sig, color='red', linestyle='dashed')
-        ax_hist.axhline(mu - THRESHOLD * sig, color='red', linestyle='dashed')
 
         ax_hist.set_xlabel('Count', fontsize=8)
         # ax_hist.tick_params(axis='y', labelleft=False)
