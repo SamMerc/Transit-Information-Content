@@ -97,7 +97,7 @@ model_scatter = 16.68100537200059
 # Define the fit parameters
 LDLs = ['PLD_2','PLD_3','PLD_4','PLD_5','PLD_6','PLD_9','4NLLD']
 prior_strengths = ['uniform', 'gauss_20', 'gauss_10', 'gauss_5', 'gauss_1']
-prior_strengths_labels = ['Uniform', '20\% Gaussian','10\% Gaussian', '5\% Gaussian', '1\% Gaussian']
+prior_strengths_labels = ['Uniform', r'20\% Gaussian',r'10\% Gaussian', r'5\% Gaussian', r'1\% Gaussian']
 seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 
 #%% Number of burn-in steps
