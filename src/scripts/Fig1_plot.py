@@ -118,15 +118,15 @@ fixed_args['nburn'] = 400000
 # Set number of cpus to use
 num_workers = int(0.5 * cpu_count())
 # Number of files in each chunk
-CHUNK_SIZE = 1
+CHUNK_SIZE = 60
 
 # Filtering parameters
 THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
 ROUNDS = 3
 
 # Diagnostic plotting parameters
-ENABLE_DIAGNOSTICS = True  # Set to False to skip diagnostic plots
-verbose = True
+ENABLE_DIAGNOSTICS = False  # Set to False to skip diagnostic plots
+verbose = False
 
 #%% Defining important lists
 var_param_list = []
@@ -296,8 +296,7 @@ def load_result(args):
             full_chi2    = np.array(chi2)
 
             return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r,
-                    True, full_chain, full_logprob, full_chi2,
-                    good_steps_mask)    # (n_walkers, n_steps_post)
+                    True, full_chain, full_logprob, full_chi2, good_steps_mask) 
         else:
             return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r,
                     False, None, None, None, None)
@@ -623,7 +622,7 @@ if __name__ == '__main__':
     #####################
     model_scatters = [0.1, 1, 10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127,
                     129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0]
-    seeds = [50]#[40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
+    seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
     PLD_orders = [2, 3, 4]
 
     #Create cache file to avoid reloading data
@@ -713,7 +712,7 @@ if __name__ == '__main__':
                 batch_data = []
                 # Filter results for this specific PLD_order and model_scatter
                 for result in results:
-                    result_pld, result_scatter, seed, r_chain_post_burnin, bestfit_r = result
+                    result_pld, result_scatter, seed, r_chain_post_burnin, bestfit_r, _, _, _, _, _ = result
                     if result_pld == PLD_order and result_scatter == model_scatter:
                         batch_data.append(result)
 
