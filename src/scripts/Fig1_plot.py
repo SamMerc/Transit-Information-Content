@@ -30,9 +30,9 @@ from tqdm import tqdm
 import pickle
 from multiprocessing import Pool, cpu_count
 import gc
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 import corner
+from matplotlib.patches import Patch
+
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -121,11 +121,12 @@ num_workers = int(0.5 * cpu_count())
 CHUNK_SIZE = 1
 
 # Filtering parameters
-THRESHOLDS = [5, 4, 3, 3, 3]  # Number of IQRs for outlier detection (5 is conservative)
-ROUNDS = 5
+THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
+ROUNDS = 3
 
 # Diagnostic plotting parameters
 ENABLE_DIAGNOSTICS = True  # Set to False to skip diagnostic plots
+verbose = True
 
 #%% Defining important lists
 var_param_list = []
@@ -186,182 +187,121 @@ def create_jaxoplanet_model(x, p):
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
     return jaxo_lc.reshape((-1))
 
-def isolate_dominant_mode_fullparam(chi2, full_chain, good_walker_mask, nburn, n_clusters=2):
-    """
-    Cluster on all parameter medians simultaneously
-    """
-
-    post = full_chain[good_walker_mask, nburn:, :]  # (n_good, n_steps, n_params)
-    walker_medians = np.median(post, axis=1)         # (n_good, n_params)
-    
-    # Standardise so no single parameter dominates clustering
-    scaler = StandardScaler()
-    walker_medians_scaled = scaler.fit_transform(walker_medians)
-    
-    km = KMeans(n_clusters=n_clusters, random_state=42, n_init=100)
-    labels = km.fit_predict(walker_medians_scaled)
-    
-    # Keep the cluster whose median chi2 is lowest
-    # (rather than the largest cluster, which could be the wrong mode)
-    good_chi2 = chi2[good_walker_mask, nburn:]
-    cluster_chi2 = [np.median(good_chi2[labels == k]) for k in range(n_clusters)]
-    best_label = np.argmin(cluster_chi2)
-    
-    return labels == best_label
 
 def load_result(args):
     """
-    Optimized file loading with step-by-step sigma clipping
+    Optimized file loading with iterative 2D sigma clipping.
     
-    NEW FILTERING STRATEGY:
-    - At EACH step, calculate median and sigma across all walkers
-    - Flag walkers that are outliers at that step
-    
-    This catches walkers that diverge at any point, not just those with
-    different overall medians.
+    FILTERING STRATEGY:
+    - Maintains a 2D mask of shape (n_walkers, n_steps_post) throughout
+    - At each round, sigma clipping is computed over all currently-surviving
+      (walker, step) pairs for chi2 and each parameter independently
+    - Individual (walker, step) pairs are removed without discarding the
+      entire walker chain
+    - Returns good_steps_mask (n_walkers, n_steps_post) for fine-grained use
     """
     raw_save_dir, PLD_order, model_scatter, seed, return_full = args
     print(f"  Processing PLD{PLD_order}, scatter{np.floor(model_scatter)}, seed{seed}...")
     try:
         path_base = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/'
-        
-        # CRITICAL: Use memory mapping instead of loading entire file
+
+        # Load with memory mapping
         raw_chain = np.load(path_base + 'chains.npy', mmap_mode='r')
-        logprob = np.load(path_base + 'logprob.npy', mmap_mode='r')
-        chi2 = np.load(path_base + 'chi2_chain.npy', mmap_mode='r')
+        logprob   = np.load(path_base + 'logprob.npy', mmap_mode='r')
+        chi2      = np.load(path_base + 'chi2_chain.npy', mmap_mode='r')
+
         n_walkers, n_steps, n_params = raw_chain.shape
         n_steps_post = n_steps - fixed_args['nburn']
 
-        # Initialize: START tracking which ORIGINAL walkers are good
-        good_walker_mask = np.ones(n_walkers, dtype=bool)
+        # ======================================================================
+        # BURN: slice to post-burnin only
+        # All arrays are (n_walkers, n_steps_post) or (n_walkers, n_steps_post, n_params)
+        # ======================================================================
+        burnt_chain   = np.array(raw_chain[:, fixed_args['nburn']:, :])   # (n_walkers, n_steps_post, n_params)
+        burnt_chi2    = np.array(chi2[:,    fixed_args['nburn']:])         # (n_walkers, n_steps_post)
+        burnt_logprob = np.array(logprob[:, fixed_args['nburn']:])         # (n_walkers, n_steps_post)
 
-        # Iterate over the number of sigma clipping rounds desired:
+        # ======================================================================
+        # 2D MASK: True = this (walker, step) pair is still alive
+        # ======================================================================
+        good_steps_mask = np.ones((n_walkers, n_steps_post), dtype=bool)  # (n_walkers, n_steps_post)
+
+        # ======================================================================
+        # ITERATIVE SIGMA CLIPPING - operates on surviving pairs each round
+        # ======================================================================
         for round_idx in range(ROUNDS):
-            
-            print(f'ROUND {round_idx+1}')
-            round_chi2 = chi2[good_walker_mask, :]
-            round_raw_chain = raw_chain[good_walker_mask, :, :]
-            
-            # Get the number of good walkers in THIS round
-            n_round_walkers = round_chi2.shape[0]
 
-            # Get the threshold for this round
-            THRESHOLD = THRESHOLDS[round_idx]
+            THRESHOLD  = THRESHOLDS[round_idx]
+            n_alive    = np.sum(good_steps_mask)
+            if verbose:print(f'    ROUND {round_idx+1}/{ROUNDS} (threshold={THRESHOLD}σ, {n_alive} pairs alive)')
 
-            # ======================================================================
-            # FILTER 1: CHI2-BASED STEP-BY-STEP SIGMA CLIPPING
-            # ======================================================================            
-            # Process post-burn-in steps only
-            chi2_post_burnin = round_chi2[:, fixed_args['nburn']:]
-            
-            # Calculate the median value of each chain
-            chi2_median_chains = np.median(chi2_post_burnin, axis=1)
+            # ------------------------------------------------------------------
+            # FILTER 1: CHI2
+            # Extract the chi2 values of currently-alive (walker, step) pairs
+            # ------------------------------------------------------------------
+            alive_chi2 = burnt_chi2[good_steps_mask]                      # (n_alive,)
 
-            # Calculate the overall median and sigma values
-            quartiles = np.percentile(chi2_median_chains, [25, 50, 75])
-            mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
-            
-            # Define bounds
-            lower_bound = mu - THRESHOLD * sig
-            upper_bound = mu + THRESHOLD * sig
+            quartiles  = np.percentile(alive_chi2, [25, 50, 75])
+            mu, iqr    = quartiles[1], quartiles[2] - quartiles[0]
 
-            # Identify outliers
-            chi2_outlier_mask = np.zeros((n_round_walkers), dtype=bool) | (chi2_median_chains < lower_bound) | (chi2_median_chains > upper_bound)
+            # Build a 2D bad mask: False everywhere, then flag outliers among alive pairs
+            chi2_bad_2d                  = np.zeros((n_walkers, n_steps_post), dtype=bool)
+            chi2_bad_2d[good_steps_mask] = (alive_chi2 < mu - THRESHOLD * iqr) | (alive_chi2 > mu + THRESHOLD * iqr)
 
-            print(f"    Chi2 filter: removed {np.sum(chi2_outlier_mask)} walker(s) ({100*(np.sum(chi2_outlier_mask)/n_round_walkers):.1f}%)")
+            if verbose:print(f"      Chi2:  flagged {np.sum(chi2_bad_2d)} / {n_alive} ({100*np.sum(chi2_bad_2d)/n_alive:.1f}%)")
 
-            # ======================================================================
-            # FILTER 2: PARAMETER SPACE STEP-BY-STEP SIGMA CLIPPING
-            # ======================================================================
-            print(f"  Processing parameters...")
-            
-            # Load post-burn-in samples
-            post_burnin_samples = np.array(round_raw_chain[:, fixed_args['nburn']:, :])
-            
-            param_outlier_mask = np.zeros((n_round_walkers), dtype=bool)
+            # ------------------------------------------------------------------
+            # FILTER 2: PARAMETERS
+            # Same pattern: extract alive values per parameter, flag outliers
+            # ------------------------------------------------------------------
+            param_bad_2d = np.zeros((n_walkers, n_steps_post), dtype=bool)
 
-            # Check each parameter independently
             for param_idx in range(n_params):
+                alive_param = burnt_chain[:, :, param_idx][good_steps_mask]  # (n_alive,)
 
-                # Calculate the median value of each chain
-                param_median_chains = np.median(post_burnin_samples[:, :, param_idx], axis=1)
+                quartiles = np.percentile(alive_param, [25, 50, 75])
+                mu, iqr   = quartiles[1], quartiles[2] - quartiles[0]
 
-                # Calculate the overall median and sigma values
-                quartiles = np.percentile(param_median_chains, [25, 50, 75])
-                mu, sig = quartiles[1], 0.74 * (quartiles[2] - quartiles[0])
-                
-                # Define bounds
-                lower_bound = mu - THRESHOLD * sig
-                upper_bound = mu + THRESHOLD * sig
+                outliers_flat = (alive_param < mu - THRESHOLD * iqr) | (alive_param > mu + THRESHOLD * iqr)
+                param_bad_2d[good_steps_mask] |= outliers_flat
 
-                # Identify outliers
-                param_outlier_mask |= (param_median_chains < lower_bound) | (param_median_chains > upper_bound)
+                param_name = fixed_args['var_param_list'][param_idx] if param_idx < len(fixed_args['var_param_list']) else f'param_{param_idx}'
+                if verbose:print(f"      {param_name}: flagged {np.sum(outliers_flat)} / {n_alive} ({100*np.sum(outliers_flat)/n_alive:.1f}%)")
 
-                print(f"    {fixed_args['var_param_list'][param_idx]} filter: removed {np.sum(param_outlier_mask)} walker(s) ({100*(np.sum(param_outlier_mask)/n_round_walkers):.1f}%)")
+            # ------------------------------------------------------------------
+            # UPDATE 2D MASK
+            # ------------------------------------------------------------------
+            round_bad_2d  = chi2_bad_2d | param_bad_2d
+            good_steps_mask &= ~round_bad_2d
 
-            # ======================================================================
-            # BUILD GOOD WALKERS - MAINTAIN ORIGINAL WALKER INDICES
-            # ======================================================================
-            round_bad_walkers = (param_outlier_mask | chi2_outlier_mask)
-            round_good_indices = np.where(~round_bad_walkers)[0]
-            
-            # Get the ORIGINAL indices of good walkers
-            original_good_indices = np.where(good_walker_mask)[0]
-            original_good_indices_to_keep = original_good_indices[round_good_indices]
-            
-            # Update good_walker_mask with only the walkers that passed this round
-            good_walker_mask = np.zeros(n_walkers, dtype=bool)
-            good_walker_mask[original_good_indices_to_keep] = True
-            
-            print(f"    Total filter: removed {np.sum(round_bad_walkers)} walker(s) ({100*(np.sum(round_bad_walkers)/n_round_walkers):.1f}%)")
+            if verbose:print(f"      Round removed {np.sum(round_bad_2d)} / {n_alive} ({100*np.sum(round_bad_2d)/n_alive:.1f}%)")
 
-        print(f"Final filter: removed {n_walkers - np.sum(good_walker_mask)} walker(s) ({100*(1 - (np.sum(good_walker_mask)/n_walkers)):.1f}%)")
+        if verbose:print(f"    Final: {np.sum(good_steps_mask)} / {n_walkers * n_steps_post} (walker, step) pairs survived ({100 * np.sum(good_steps_mask)/(n_walkers * n_steps_post)} %)")
 
-        # # ======================================================================
-        # # FILTER 3: MODE ISOLATION via clustering
-        # # ======================================================================
-        # mode_mask = isolate_dominant_mode_fullparam(
-        #     chi2, raw_chain, good_walker_mask, fixed_args['nburn']
-        # )
-        
-        # # mode_mask is relative to good walkers — map back to original indices
-        # good_walker_indices = np.where(good_walker_mask)[0]
-        # final_good_indices = good_walker_indices[mode_mask]
-        
-        # good_walker_mask = np.zeros(n_walkers, dtype=bool)
-        # good_walker_mask[final_good_indices] = True
-        
-        # print(f"Mode isolation: kept {np.sum(good_walker_mask)} walker(s) "
-        #       f"in dominant mode")
-        
-        # ===================================================================
-        # EXTRACT DATA FROM GOOD WALKERS
-        # ===================================================================
-        
-        # Find best fit from good walkers only
-        good_logprob = logprob[good_walker_mask, :]
-            
-        max_walker_idx, max_step = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
+        # ======================================================================
+        # EXTRACT DATA
+        # ======================================================================
 
-        # Map back to original walker index
-        good_walker_indices = np.where(good_walker_mask)[0]
-        max_walker = good_walker_indices[max_walker_idx]
+        # Best-fit: find the best logprob among surviving pairs
+        masked_logprob         = np.where(good_steps_mask, burnt_logprob, -np.inf)
+        best_walker, best_step = np.unravel_index(np.argmax(masked_logprob), masked_logprob.shape)
+        bestfit_r              = float(burnt_chain[best_walker, best_step, 0])
 
-        # Only load post burn-in data for parameter 0
-        r_chain_post_burnin = np.array(raw_chain[good_walker_mask, fixed_args['nburn']:, 0])
-        bestfit_r = float(raw_chain[max_walker, max_step, 0])
-        
+        # r chain: collect parameter 0 from all surviving (walker, step) pairs
+        r_chain_post_burnin = burnt_chain[:, :, 0][good_steps_mask]       # (n_surviving_pairs,)
+
         if return_full:
-            full_chain = np.array(raw_chain)
+            full_chain   = np.array(raw_chain)
             full_logprob = np.array(logprob)
-            full_chi2 = np.array(chi2)
-            
-            return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r, 
-                   True, full_chain, full_logprob, full_chi2, good_walker_mask)
+            full_chi2    = np.array(chi2)
+
+            return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r,
+                    True, full_chain, full_logprob, full_chi2,
+                    good_steps_mask)    # (n_walkers, n_steps_post)
         else:
-            return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r, 
-                   False, None, None, None, None)
-    
+            return (PLD_order, model_scatter, seed, r_chain_post_burnin, bestfit_r,
+                    False, None, None, None, None)
+
     except Exception as e:
         print(f"Error loading PLD{PLD_order}, scatter{model_scatter}, seed{seed}: {e}")
         import traceback
@@ -369,263 +309,274 @@ def load_result(args):
         return None
 
 
-def plot_diagnostics(full_chain, full_logprob, full_chi2, good_walkers, 
+def plot_diagnostics(full_chain, full_logprob, full_chi2, good_steps_mask,
                      PLD_order, model_scatter, seed):
     """
-    Create comprehensive diagnostic plots after each chunk
-    
+    Create comprehensive diagnostic plots after each chunk.
+
     Plots:
-    1. Trace plots (all parameters) - pre-filtering in red, post-filtering in blue
-    2. Chi2 evolution - pre-filtering in red, post-filtering in blue
+    1. Trace plots (all parameters) - removed walkers in red, surviving in blue,
+       with masked-out steps shown as gaps
+    2. Chi2 evolution
     3. Corner plot (post burn-in) - BLACK: pre-filtering, RED: post-filtering
-       with amplification factors displayed
-    
+
     Parameters:
     -----------
-    full_chain : ndarray
-        Full MCMC chains (all walkers, all steps, all params)
-    full_logprob : ndarray
-        Log probability for all walkers
-    full_chi2 : ndarray
-        Chi-squared for all walkers
-    good_walkers : ndarray of bool or indices
-        Walkers that passed filtering
+    full_chain      : ndarray (n_walkers, n_steps, n_params)
+    full_logprob    : ndarray (n_walkers, n_steps)
+    full_chi2       : ndarray (n_walkers, n_steps)
+    good_steps_mask : ndarray (n_walkers, n_steps_post) — 2D boolean mask from load_result
     """
     n_walkers, n_steps, n_params = full_chain.shape
-    nburn = fixed_args['nburn']
-    
-    # Create output directory for diagnostics
+    nburn        = fixed_args['nburn']
+    n_steps_post = n_steps - nburn
+
+    # Create output directory
     diag_dir = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/diagnostics/'
     os.makedirs(diag_dir, exist_ok=True)
-    
     print(f"    Generating diagnostics for PLD{PLD_order}, scatter{model_scatter}, seed{seed}")
-    
-    n_good = np.sum(good_walkers)
-    n_bad = n_walkers - n_good
 
     # =========================================================================
-    # PLOT 1: Trace plots for all parameters with histograms
+    # DERIVE PER-WALKER SUMMARY FROM 2D MASK (for colouring traces)
+    # fully_good  : all steps survived  → blue
+    # partially   : some steps survived → orange
+    # fully_bad   : no steps survived   → red
     # =========================================================================
-    param_names = ['r', 'i', 'a', 'period', 'sqrtecosw', 'sqrtesinw'] + [f'LD_u{i}' for i in range(1, PLD_order+1)]
+    fully_good_mask   = good_steps_mask.all(axis=1)                       # (n_walkers,)
+    fully_bad_mask    = ~good_steps_mask.any(axis=1)                      # (n_walkers,)
+    partial_mask      = ~fully_good_mask & ~fully_bad_mask                # (n_walkers,)
 
-    # Create figure with 2 columns: traces and histograms
-    fig_trace = plt.figure(figsize=(16, 2*n_params))
-    gs = fig_trace.add_gridspec(n_params, 3, width_ratios=[1,1,1], hspace=0.05, wspace=0.05)
+    n_fully_good  = np.sum(fully_good_mask)
+    n_partial     = np.sum(partial_mask)
+    n_fully_bad   = np.sum(fully_bad_mask)
+    n_good_pairs  = np.sum(good_steps_mask)
 
-    walker_param_medians = np.median(full_chain[:, nburn:, :], axis=1)
+    print(f"      Walkers fully survived : {n_fully_good}")
+    print(f"      Walkers partially survived : {n_partial}")
+    print(f"      Walkers fully removed  : {n_fully_bad}")
+    print(f"      Total surviving (walker, step) pairs: {n_good_pairs} / {n_walkers * n_steps_post}")
+
+    # Post-burnin arrays
+    burnt_chain   = full_chain[:, nburn:, :]                              # (n_walkers, n_steps_post, n_params)
+    burnt_logprob = full_logprob[:, nburn:]                               # (n_walkers, n_steps_post)
+
+    # Surviving samples as flat arrays (used for corner plot and amp factor)
+    # Shape: (n_good_pairs, n_params) and (n_good_pairs,)
+    samples_post  = burnt_chain[good_steps_mask, :]                       # (n_good_pairs, n_params)
+    samples_pre   = burnt_chain.reshape(-1, n_params)                     # (n_walkers * n_steps_post, n_params)
+
+    param_names = ['r', 'i', 'a', 'period', 'sqrtecosw', 'sqrtesinw'] + \
+                  [f'LD_u{i}' for i in range(1, PLD_order + 1)]
+
+    # =========================================================================
+    # PLOT 1: Trace plots
+    # =========================================================================
+    fig_trace = plt.figure(figsize=(16, 2 * n_params))
+    gs = fig_trace.add_gridspec(n_params, 3, width_ratios=[1, 1, 1], hspace=0.05, wspace=0.05)
 
     for i, param_name in enumerate(param_names):
-        # Left column: Trace plot
+
         ax_trace = fig_trace.add_subplot(gs[i, 0])
-        
-        # Plot good walkers: burn-in in orange, post-burn-in in blue
+        ax_burn  = fig_trace.add_subplot(gs[i, 1])
+        ax_hist  = fig_trace.add_subplot(gs[i, 2], sharey=ax_burn)
+
+        # ----- Left: full trace (burn-in + post) -----
         for walker in range(n_walkers):
-            if not good_walkers[walker]:
-                ax_trace.plot(full_chain[walker, :, i], color='red', alpha=0.2, linewidth=0.2)
-            else:
-                ax_trace.plot(np.arange(nburn), full_chain[walker, :nburn, i], 
-                            color='red', alpha=0.2, linewidth=0.2, label=f'Burn-in {n_good} & Filtered({n_bad})' if i==0 else '')
-                ax_trace.plot(np.arange(nburn, n_steps), full_chain[walker, nburn:, i], 
-                            color='blue', alpha=0.2, linewidth=0.2, label=f'Post burn-in ({n_good})')
-        
-        ax_trace.axvline(nburn, color='black', linestyle='--', linewidth=0.2, alpha=0.2, label='Burn-in cutoff' if i==0 else '')
+            color = 'red' if fully_bad_mask[walker] else ('orange' if partial_mask[walker] else 'blue')
+            ax_trace.plot(np.arange(nburn), full_chain[walker, :nburn, i],
+                          color='red', alpha=0.2, linewidth=0.2)
+            ax_trace.plot(np.arange(nburn, n_steps), full_chain[walker, nburn:, i],
+                          color=color, alpha=0.2, linewidth=0.2)
+
+        ax_trace.axvline(nburn, color='black', linestyle='--', linewidth=0.8, alpha=0.5,
+                         label='Burn-in cutoff' if i == 0 else '')
         ax_trace.set_ylabel(param_name, fontsize=10)
         ax_trace.grid(True, alpha=0.3)
-        
-        if i == 0:ax_trace.legend(loc='upper right', fontsize=8)
+        if i == 0:
+            from matplotlib.lines import Line2D
+            ax_trace.legend(handles=[
+                Line2D([0], [0], color='blue',   label=f'Fully good ({n_fully_good})'),
+                Line2D([0], [0], color='orange', label=f'Partial ({n_partial})'),
+                Line2D([0], [0], color='red',    label=f'Fully removed ({n_fully_bad})'),
+            ], fontsize=7, loc='upper right')
         if i < n_params - 1:
             ax_trace.set_xticklabels([])
         else:
             ax_trace.set_xlabel('Step', fontsize=10)
-        
-        # Middle column: Trace plot (post-burn)
-        ax_burn = fig_trace.add_subplot(gs[i, 1])
-        
-        # Plot walkers
-        for walker in range(n_walkers):
-            if not good_walkers[walker]:
-                ax_burn.plot(full_chain[walker, nburn::2, i], color='red', alpha=0.5)
-            else:
-                ax_burn.plot(full_chain[walker, nburn::2, i], color='blue', alpha=0.5)
 
-        # ax_burn.tick_params(axis='y', labelleft=False)
+        # ----- Middle: post-burnin trace with masked steps shown as NaN gaps -----
+        for walker in range(n_walkers):
+            # Mask out steps that were removed for this walker
+            trace = full_chain[walker, nburn:, i].copy().astype(float)
+            trace[~good_steps_mask[walker]] = np.nan          # gaps where steps were removed
+
+            color = 'red' if fully_bad_mask[walker] else ('orange' if partial_mask[walker] else 'blue')
+            ax_burn.plot(trace, color=color, alpha=0.4, linewidth=0.5)
+
         ax_burn.set_ylabel(param_name, fontsize=10)
         ax_burn.grid(True, alpha=0.3)
+        if i < n_params - 1:
+            ax_burn.set_xticklabels([])
+        else:
+            ax_burn.set_xlabel('Post-burnin step', fontsize=10)
 
-        # Right column: Horizontal histogram
-        ax_hist = fig_trace.add_subplot(gs[i, 2], sharey=ax_burn)
-        
-        # Plot horizontal histogram
-        ax_hist.hist(full_chain[:, nburn::2, i].flatten(), bins=30, orientation='horizontal', 
-                    density=True, histtype='stepfilled', color='red', alpha=0.5, edgecolor='red', linewidth=0.5)
-        ax_hist.hist(full_chain[good_walkers, nburn::2, i].flatten(), bins=30, orientation='horizontal', 
-                    density=True, histtype='stepfilled', color='blue', alpha=0.5, edgecolor='blue', linewidth=0.5)
-
-        ax_hist.set_xlabel('Count', fontsize=8)
-        # ax_hist.tick_params(axis='y', labelleft=False)
+        # ----- Right: histogram pre (red) vs post (blue) -----
+        ax_hist.hist(samples_pre[:, i], bins=30, orientation='horizontal',
+                     density=True, histtype='stepfilled',
+                     color='red', alpha=0.4, edgecolor='red', linewidth=0.5,
+                     label='Pre-filter' if i == 0 else '')
+        ax_hist.hist(samples_post[:, i], bins=30, orientation='horizontal',
+                     density=True, histtype='stepfilled',
+                     color='blue', alpha=0.5, edgecolor='blue', linewidth=0.5,
+                     label='Post-filter' if i == 0 else '')
+        ax_hist.set_xlabel('Density', fontsize=8)
+        ax_hist.tick_params(axis='y', labelleft=False)
         ax_hist.grid(True, alpha=0.3, axis='x')
+        if i == 0:
+            ax_hist.legend(fontsize=7)
 
-    fig_trace.suptitle(f'Trace Plots - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
-                    fontsize=12)
-    plt.savefig(os.path.join(diag_dir, f'trace.pdf'), 
-                dpi=150, bbox_inches='tight')
+    fig_trace.suptitle(f'Trace Plots - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}',
+                       fontsize=12)
+    plt.savefig(os.path.join(diag_dir, 'trace.pdf'), dpi=150, bbox_inches='tight')
     plt.close(fig_trace)
-    
+
     # =========================================================================
     # PLOT 2: Chi2 evolution
     # =========================================================================
     fig_chi2, ax_chi2 = plt.subplots(1, 1, figsize=(12, 4))
-    
-    # Plot filtered-out walkers in red
+
     for walker in range(n_walkers):
-        if not good_walkers[walker]:
-            ax_chi2.loglog(full_chi2[walker, :], color='red', alpha=0.5, linewidth=0.8)
-        else:
-            ax_chi2.loglog(np.arange(nburn), full_chi2[walker, :nburn], 
-                        color='red', alpha=0.3, linewidth=0.5)
-            ax_chi2.loglog(np.arange(nburn, n_steps), full_chi2[walker, nburn:], 
-                        color='blue', alpha=0.3, linewidth=0.5)
-    
-    ax_chi2.axvline(nburn, color='black', linestyle='--', linewidth=2, alpha=0.5, label='Burn-in')
+        color = 'red' if fully_bad_mask[walker] else ('orange' if partial_mask[walker] else 'blue')
+        ax_chi2.loglog(np.arange(nburn), full_chi2[walker, :nburn],
+                         color='red', alpha=0.2, linewidth=0.4)
+
+        # Show post-burnin with gaps for masked steps
+        chi2_trace = full_chi2[walker, nburn:].copy().astype(float)
+        chi2_trace[~good_steps_mask[walker]] = np.nan
+        ax_chi2.loglog(np.arange(nburn, n_steps), chi2_trace,
+                         color=color, alpha=0.4, linewidth=0.5)
+
+    ax_chi2.axvline(nburn, color='black', linestyle='--', linewidth=1.5, alpha=0.5, label='Burn-in')
     ax_chi2.set_xlabel('Step', fontsize=10)
     ax_chi2.set_ylabel('Chi-squared', fontsize=10)
-    ax_chi2.set_yscale('log')
     ax_chi2.grid(True, alpha=0.3)
     ax_chi2.legend(loc='upper right')
-    ax_chi2.set_title(f'Chi2 Evolution - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}', 
-                     fontsize=12)
+    ax_chi2.set_title(f'Chi2 Evolution - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}',
+                      fontsize=12)
     plt.tight_layout()
-    plt.savefig(os.path.join(diag_dir, f'chi2.pdf'), 
-               dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(diag_dir, 'chi2.pdf'), dpi=150, bbox_inches='tight')
     plt.close(fig_chi2)
-    
+
     # =========================================================================
-    # PLOT 3: Corner plot with pre/post filtering comparison
+    # PLOT 3: Corner plot
     # =========================================================================
-    
-    # Calculate amplification factors for both cases
-    
-    # PRE-FILTERING: Use all walkers
-    all_chains_post_burnin = full_chain[:, nburn:, :]
-    samples_pre_filter = all_chains_post_burnin.reshape(-1, n_params)
-    
-    # Calculate pre-filtering amplification factor
-    # Extract r parameter (assumed to be index 0)
-    r_chain_pre = full_chain[:, nburn:, 0].flatten()
-    max_idx_pre = np.unravel_index(np.argmax(full_logprob), full_logprob.shape)
+
+    # Pre-filtering amplification factor
+    r_chain_pre   = samples_pre[:, 0]
+    max_idx_pre   = np.unravel_index(np.argmax(full_logprob), full_logprob.shape)
     bestfit_r_pre = full_chain[max_idx_pre[0], max_idx_pre[1], 0]
-    
-    std_r_pre = np.std(r_chain_pre)
-    bestfit_r_error_pre = 2 * std_r_pre * bestfit_r_pre
-    scatter_in_bin = (model_scatter * 1e-6) / np.sqrt(num_IT_pts)
-    amp_factor_pre = bestfit_r_error_pre / scatter_in_bin
-    
-    # POST-FILTERING: Use only good walkers
-    good_chains_post_burnin = full_chain[good_walkers, nburn:, :]
-    samples_post_filter = good_chains_post_burnin.reshape(-1, n_params)
-    
-    # Calculate post-filtering amplification factor
-    r_chain_post = full_chain[good_walkers, nburn:, 0].flatten()
-    good_logprob = full_logprob[good_walkers, :]
-    max_idx_post = np.unravel_index(np.argmax(good_logprob), good_logprob.shape)
-    bestfit_r_post = full_chain[good_walkers, :, :][max_idx_post[0], max_idx_post[1], 0]
-    
-    std_r_post = np.std(r_chain_post)
-    bestfit_r_error_post = 2 * std_r_post * bestfit_r_post
-    amp_factor_post = bestfit_r_error_post / scatter_in_bin
-    
-    # Create corner plot with both distributions
+    amp_factor_pre = (2 * np.std(r_chain_pre) * bestfit_r_pre) / ((model_scatter * 1e-6) / np.sqrt(num_IT_pts))
+
+    # Post-filtering amplification factor
+    r_chain_post   = samples_post[:, 0]
+    masked_logprob = np.where(good_steps_mask, burnt_logprob, -np.inf)
+    best_w, best_s = np.unravel_index(np.argmax(masked_logprob), masked_logprob.shape)
+    bestfit_r_post = burnt_chain[best_w, best_s, 0]
+    amp_factor_post = (2 * np.std(r_chain_post) * bestfit_r_post) / ((model_scatter * 1e-6) / np.sqrt(num_IT_pts))
+
     fig_corner = corner.corner(
-        samples_pre_filter, 
-        labels=param_names,
-        color='black',
-        quantiles=[0.16, 0.5, 0.84],
-        show_titles=False,
-        plot_datapoints=False,
-        plot_density=True,
+        samples_pre, labels=param_names, color='black',
+        quantiles=[0.16, 0.5, 0.84], show_titles=False,
+        plot_datapoints=False, plot_density=True,
         hist_kwargs={'alpha': 0.6, 'linewidth': 2},
         contour_kwargs={'linewidths': 1.5, 'alpha': 0.6}
     )
-    
-    # Overlay post-filtering distribution in red
     corner.corner(
-        samples_post_filter,
-        fig=fig_corner,
-        labels=param_names,
-        color='red',
-        quantiles=[0.16, 0.5, 0.84],
-        show_titles=False,
-        plot_datapoints=False,
-        plot_density=True,
+        samples_post, fig=fig_corner, labels=param_names, color='red',
+        quantiles=[0.16, 0.5, 0.84], show_titles=False,
+        plot_datapoints=False, plot_density=True,
         hist_kwargs={'alpha': 0.8, 'linewidth': 2},
         contour_kwargs={'linewidths': 2, 'alpha': 0.8},
         reverse=True
     )
 
-    # Re-make histogram
+    # Diagonal: mirrored histogram
     axes = np.array(fig_corner.axes).reshape((n_params, n_params))
     for i in range(n_params):
-        ax = axes[i, i]
-        ax.cla()
+        ax_bottom = axes[i, i]
+        ax_bottom.cla()
+        ax_bottom.set_visible(False)  # Hide the original axis — we'll draw two fresh ones on top
 
-        data_pre  = samples_pre_filter[:, i]
-        data_post = samples_post_filter[:, i]
-        bins = np.linspace(
-            min(data_pre.min(), data_post.min()),
-            max(data_pre.max(), data_post.max()),
-            30
+        # Get the position of the diagonal cell in figure coordinates
+        pos = ax_bottom.get_position()  # Bbox in figure fraction: x0, y0, width, height
+
+        # =========================
+        # PRE axis — bottom half, bars grow UPWARD
+        # =========================
+        ax_pre = fig_corner.add_axes(
+            [pos.x0, pos.y0, pos.width, pos.height / 2],
+            label=f"pre_{i}"
         )
+        bins_pre = np.linspace(samples_pre[:, i].min(), samples_pre[:, i].max(), 30)
+        counts_pre, edges_pre = np.histogram(samples_pre[:, i], bins=bins_pre, density=True)
+        ax_pre.bar(
+            edges_pre[:-1],
+            counts_pre,
+            width=np.diff(edges_pre),
+            align="edge",
+            color="black",
+            alpha=0.6,
+            linewidth=0,
+        )
+        ax_pre.set_xlim(samples_pre[:, i].min(), samples_pre[:, i].max())
+        ax_pre.set_ylim(0, counts_pre.max() * 1.05)  # Normal upward orientation
+        ax_pre.yaxis.set_visible(False)
+        ax_pre.spines["top"].set_visible(False)
+        ax_pre.spines["right"].set_visible(False)
+        ax_pre.spines["left"].set_visible(False)
+        ax_pre.tick_params(axis="x", labelsize=8)
 
-        # Compute histogram values manually so we can negate
-        counts_pre,  edges = np.histogram(data_pre,  bins=bins, density=True)
-        counts_post, _     = np.histogram(data_post, bins=bins, density=True)
+        # =========================
+        # POST axis — top half, bars grow DOWNWARD (y-axis inverted)
+        # =========================
+        ax_post = fig_corner.add_axes(
+            [pos.x0, pos.y0 + pos.height / 2, pos.width, pos.height / 2],
+            label=f"post_{i}"
+        )
+        bins_post = np.linspace(samples_post[:, i].min(), samples_post[:, i].max(), 30)
+        counts_post, edges_post = np.histogram(samples_post[:, i], bins=bins_post, density=True)
+        ax_post.bar(
+            edges_post[:-1],
+            counts_post,
+            width=np.diff(edges_post),
+            align="edge",
+            color="red",
+            alpha=0.8,
+            linewidth=0,
+        )
+        ax_post.set_xlim(samples_post[:, i].min(), samples_post[:, i].max())
+        ax_post.set_ylim(0, counts_post.max() * 1.05)
+        ax_post.invert_yaxis()  # Flip so bars hang DOWN from the top spine
+        ax_post.yaxis.set_visible(False)
+        ax_post.xaxis.set_visible(False)  # Hide x-axis on top panel (shown on bottom)
+        ax_post.spines["bottom"].set_visible(False)
+        ax_post.spines["right"].set_visible(False)
+        ax_post.spines["left"].set_visible(False)
 
-        # Black histogram: grows downward from y=0
-        ax.bar(edges[:-1], -counts_pre, width=np.diff(edges), align='edge',
-            color='black', alpha=0.6, linewidth=0)
-
-        # Red histogram: grows upward from y=0
-        ax.bar(edges[:-1],  counts_post, width=np.diff(edges), align='edge',
-            color='red', alpha=0.8, linewidth=0)
-
-        # Symmetric y-limits so y=0 is centred
-        y_max = max(counts_pre.max(), counts_post.max()) * 1.2
-        ax.set_ylim(-y_max, y_max)
-
-        # Draw a single horizontal line at y=0 as a divider
-        ax.axhline(0, color='black', linewidth=0.8, alpha=0.5)
-
-        # Hide y-axis ticks/labels, keep x-axis
-        ax.yaxis.set_visible(False)
-
-        # Add spine labels so it's clear which is which
-        ax.spines['top'].set_visible(True)
-        ax.spines['bottom'].set_visible(True)
-        ax.spines['top'].set_color('red')
-        ax.spines['top'].set_linewidth(1.5)
-        ax.spines['bottom'].set_color('black')
-        ax.spines['bottom'].set_linewidth(1.5)
-
-    # Add title with amplification factors
     title_text = (
         f'Corner Plot - PLD{PLD_order}, scatter={model_scatter:.1f} ppm, seed={seed}\n'
-        f'BLACK: Pre-filtering (all {n_walkers} walkers) - A = {amp_factor_pre:.2f}\n'
-        f'RED: Post-filtering ({n_good} walkers) - A = {amp_factor_post:.2f}\n'
-        f'Improvement: {((amp_factor_pre - amp_factor_post)/amp_factor_pre * 100):.1f}% reduction in A'
+        f'BLACK: Pre-filtering ({n_walkers} walkers, {len(samples_pre)} pairs) - A = {amp_factor_pre:.2f}\n'
+        f'RED: Post-filtering ({n_good_pairs} pairs, {n_fully_good} full + {n_partial} partial walkers) - A = {amp_factor_post:.2f}\n'
+        f'Improvement: {((amp_factor_pre - amp_factor_post) / amp_factor_pre * 100):.1f}% reduction in A'
     )
-    fig_corner.suptitle(title_text, fontsize=11, y=1.0)
-    
-    # Add custom legend
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor='black', alpha=0.6, label=f'Pre-filter: A={amp_factor_pre:.2f}'),
-        Patch(facecolor='red', alpha=0.8, label=f'Post-filter: A={amp_factor_post:.2f}')
-    ]
-    fig_corner.legend(handles=legend_elements, loc='upper right', fontsize=10, 
-                     bbox_to_anchor=(0.95, 0.95))
-    
-    plt.savefig(os.path.join(diag_dir, f'corner.pdf'), 
-               dpi=150, bbox_inches='tight')
+    fig_corner.suptitle(title_text, fontsize=11, y=1.03)
+
+    fig_corner.legend(handles=[
+        Patch(facecolor='black', alpha=0.6, label=f'Pre-filter:  A={amp_factor_pre:.2f}'),
+        Patch(facecolor='red',   alpha=0.8, label=f'Post-filter: A={amp_factor_post:.2f}'),
+    ], loc='upper right', fontsize=10, bbox_to_anchor=(0.95, 0.95))
+
+    plt.savefig(os.path.join(diag_dir, 'corner.pdf'), dpi=150, bbox_inches='tight')
     plt.close(fig_corner)
 
 # OPTIMIZATION 2: JAX-optimized computation
@@ -672,7 +623,7 @@ if __name__ == '__main__':
     #####################
     model_scatters = [0.1, 1, 10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127,
                     129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0]
-    seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
+    seeds = [50]#[40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
     PLD_orders = [2, 3, 4]
 
     #Create cache file to avoid reloading data
