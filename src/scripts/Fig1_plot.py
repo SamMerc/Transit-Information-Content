@@ -596,7 +596,7 @@ def batch_compute_amplification_factors(results_batch, num_IT_pts):
     """
     amp_factors = []
     
-    for _, model_scatter, _, r_chain_post_burnin, bestfit_r in results_batch:
+    for _, model_scatter, _, r_chain_post_burnin, bestfit_r, _, _, _, _, _ in results_batch:
     
         # Flatten the entire filtered chain for this seed
         # r_chain_post_burnin shape: (n_good_walkers, n_steps_post_burnin)
