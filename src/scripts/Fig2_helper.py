@@ -29,6 +29,7 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from scipy.interpolate import CubicSpline
 from lmfit import minimize, Parameters
+import gc
 
 
 ######################################
@@ -83,10 +84,10 @@ lambda_resolution = {
 
 N = 10
 
-N_chords = 1000
+N_chords = 100
 
-bs = jnp.linspace(0, 1, N)
-ps = jnp.logspace(-3, -1, N)
+bs = jnp.linspace(0, 1, 5)
+ps = jnp.logspace(-3, -1, 5)
 
 n_components = 5
 
@@ -205,11 +206,11 @@ gen_dict = {}
 
 gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
 
-gen_dict['local_rps']={model : np.zeros((N, N, N, N, N, N_chords), dtype=float) for model in models}
+gen_dict['local_rps']={model : np.zeros((N, N, N, 5, 5, N_chords), dtype=float) for model in models}
 
 gen_dict['global_intensity_profiles']={model : np.zeros((N, N, N, mu_resolution[model]), dtype=float) for model in models}
 
-gen_dict['local_intensity_profiles']={model : np.zeros((N, N, N, N, N, lambda_resolution[model], N_chords), dtype=float) for model in models}
+gen_dict['local_intensity_profiles']={model : np.zeros((N, N, N, 5, 5, lambda_resolution[model], N_chords), dtype=float) for model in models}
 
 #Iterate over all the stellar models available 
 for model in models:
@@ -242,6 +243,7 @@ for model in models:
 
                     #Store the global stellar intensity spectrum
                     global_stellar_intensities = jnp.copy(sld.stellar_intensities)
+                    del sld  # Free memory from large StellarLimbDarkening object
                 
                     # Integrate stellar spectrum over wavelength
                     global_intensity_profile = jnp.trapezoid(global_stellar_intensities, stellar_wavelengths, axis=0) #shape : (n_mus,)
@@ -282,6 +284,9 @@ for model in models:
                     gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :, :] = (local_stellar_intensities / local_stellar_intensities[:,:,:,0:1])
                     gen_dict['local_rps'][model][i, j, k, :, :, :] = r_ps
 
+                    #Garbage collection
+                    del local_stellar_intensities, local_intensity_profiles, r_ps, x_max, x_vals, t
+                    gc.collect()
 
         #Store the stellar spectrum
         with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -472,40 +477,40 @@ for model in models:
     print(f"\nSaved profiles to {save_data_path}")
 
 
-    #Fitting the mode and outlier profiles with a 4-th order non-linear limb-darkening law
-    for j_fit, special_profile in enumerate([typical_profile] + [pca_int_profile[idx] for idx in outlier_indices]):
+    # #Fitting the mode and outlier profiles with a 4-th order non-linear limb-darkening law
+    # for j_fit, special_profile in enumerate([typical_profile] + [pca_int_profile[idx] for idx in outlier_indices]):
         
-        # #Interpolate intensity profile from its grid to a grid of 100 mu values going from 0.01 to 1.0 with increments of 0.01 with cubic spline (Claret & Bloemen 2011)
-        # new_mus = jnp.linspace(0.01, 1.0, 100)
-        # inter_special_profile = CubicSpline(mus[::-1], special_profile[::-1])(new_mus)
+    #     # #Interpolate intensity profile from its grid to a grid of 100 mu values going from 0.01 to 1.0 with increments of 0.01 with cubic spline (Claret & Bloemen 2011)
+    #     # new_mus = jnp.linspace(0.01, 1.0, 100)
+    #     # inter_special_profile = CubicSpline(mus[::-1], special_profile[::-1])(new_mus)
 
-        #Define 4-th order non-linear LD law
-        def fourNLLD(x, coeffs):
-            return 1 - coeffs[0] * (1 - x**(1/2)) - coeffs[1] * (1 - x) - coeffs[2] * (1 - x**(3/2)) - coeffs[3] * (1 - x**2)
+    #     #Define 4-th order non-linear LD law
+    #     def fourNLLD(x, coeffs):
+    #         return 1 - coeffs[0] * (1 - x**(1/2)) - coeffs[1] * (1 - x) - coeffs[2] * (1 - x**(3/2)) - coeffs[3] * (1 - x**2)
         
-        #Define residual function to minimize
-        def residual(params, x, base_prof):
-            return fourNLLD(x, [params[f'c{i_coeff+1}'].value for i_coeff in range(4)]) - base_prof
+    #     #Define residual function to minimize
+    #     def residual(params, x, base_prof):
+    #         return fourNLLD(x, [params[f'c{i_coeff+1}'].value for i_coeff in range(4)]) - base_prof
     
-        #Define lmfit parameters
-        params = Parameters()
-        for i_param in range(4):
-            params.add(f'c{i_param+1}', value=np.random.uniform(0, 1))
+    #     #Define lmfit parameters
+    #     params = Parameters()
+    #     for i_param in range(4):
+    #         params.add(f'c{i_param+1}', value=np.random.uniform(0, 1))
 
-        #Perform the minimization
-        result = minimize(residual, params, args=(new_mus, inter_special_profile))
+    #     #Perform the minimization
+    #     result = minimize(residual, params, args=(new_mus, inter_special_profile))
 
-        #Plot base profile, interpolated profile, and best-fit profile
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-        ax1.plot(mus, special_profile, 'bo', label='Original Profile', alpha=0.5)
-        ax1.plot(new_mus, inter_special_profile, 'g-', label='Interpolated Profile', alpha=0.7)
-        ax1.plot(new_mus, fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]), 'r--', label='Best-fit 4th Order NLLD', linewidth=2)
-        ax2.plot(new_mus, 100 * (inter_special_profile - fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]))/inter_special_profile, 'r--', linewidth=2)
-        ax2.set_xlabel('μ = cos(θ)')
-        ax1.set_ylabel('Normalized Intensity')
-        ax2.set_ylabel('Relative Difference (%)')
-        ax1.set_title('4th Order Non-Linear Limb-Darkening Fit - ' + ('Typical Profile' if j_fit==0 else f'Outlier Profile {j_fit}'))
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        ax2.grid(True, alpha=0.3)
-        plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j_fit==0 else f"outlier{j_fit}"}_{model}.png', dpi=150, bbox_inches='tight')
+    #     #Plot base profile, interpolated profile, and best-fit profile
+    #     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+    #     ax1.plot(mus, special_profile, 'bo', label='Original Profile', alpha=0.5)
+    #     ax1.plot(new_mus, inter_special_profile, 'g-', label='Interpolated Profile', alpha=0.7)
+    #     ax1.plot(new_mus, fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]), 'r--', label='Best-fit 4th Order NLLD', linewidth=2)
+    #     ax2.plot(new_mus, 100 * (inter_special_profile - fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]))/inter_special_profile, 'r--', linewidth=2)
+    #     ax2.set_xlabel('μ = cos(θ)')
+    #     ax1.set_ylabel('Normalized Intensity')
+    #     ax2.set_ylabel('Relative Difference (%)')
+    #     ax1.set_title('4th Order Non-Linear Limb-Darkening Fit - ' + ('Typical Profile' if j_fit==0 else f'Outlier Profile {j_fit}'))
+    #     ax1.legend()
+    #     ax1.grid(True, alpha=0.3)
+    #     ax2.grid(True, alpha=0.3)
+    #     plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j_fit==0 else f"outlier{j_fit}"}_{model}.png', dpi=150, bbox_inches='tight')
