@@ -145,45 +145,38 @@ def chord_intensity(b, p, intensity_spectra, stellar_radii):
     :param b: Transit chord impact parameter.
     :param p: Planet-to-star radius ratio.
     :param intensity_spectra: 2D array of intensity spectra (shape : n_wavelengths x n_stellar_mus).
-    :param stellar_radii: Array of r values for the edges of the annuli discretizing the stellar disk.
+    :param stellar_radii: Array of r values for the edges of the annuli discretizing the stellar disk. (shape : n_stellar_mus)
     :param N_chords: Number of points discretizing the transit chord.
     '''
     # Calculate the possible positions of the planet along the (half) transit chord based on the impact parameter
     # We only need half of the transit chord to trace out the intensity profile needed.
     x_min = 0.0
-    x_max = jnp.sqrt(1 - b**2)
+    x_max = jnp.sqrt((1+p)**2 - b**2)
     x_vals = jnp.linspace(x_min, x_max, N_chords)
     r_ps = jnp.sqrt(b**2 + x_vals**2)  # Shape: (N_chords,)
     
-    # Get inner and outer radii for each annulus
-    r_inner = stellar_radii[:-1]  # Shape: (n_stellar_mus-1,)
-    r_outer = stellar_radii[1:]  # Shape: (n_stellar_mus-1,)
+    # Add inner edge (r=0) and outer edge (r=1 or last stellar radius)
+    r_inner_edges = jnp.concatenate([jnp.array([0.0]), stellar_radii[:-1]])    # Shape: (n_stellar_mus,)
+    r_outer_edges = stellar_radii
 
     # Vectorize over chord positions and annuli
-    # Create meshgrid: r_ps[:, None] broadcasts to (N_chords, 1)
-    # r_inner[None, :] and r_outer[None, :] broadcast to (1, n_annuli)
-    r_ps_grid = r_ps[:, None]  # Shape: (N_chords, 1)
-    r_inner_grid = r_inner[None, :]  # Shape: (1, n_annuli)
-    r_outer_grid = r_outer[None, :]  # Shape: (1, n_annuli)
+    r_ps_grid = r_ps[:, None]           # Shape: (N_chords, 1)
+    r_inner_grid = r_inner_edges[None, :]  # Shape: (1, n_stellar_mus)
+    r_outer_grid = r_outer_edges[None, :]  # Shape: (1, n_stellar_mus)
 
     # Calculate all overlaps at once
     overlap_areas = calculate_annulus_overlap(
         r_ps_grid, p, r_inner_grid, r_outer_grid
-    )  # Shape: (N_chords, n_annuli)
+    )  # Shape: (N_chords, n_stellar_mus)
         
     # Calculate the occulted intensity spectrum by doing a weighted sum over the occulted annuli 
     # and the weights are the % of planet-occulted area covered by each annulus
     total_planet_area = jnp.pi * p**2
-    weights = overlap_areas / total_planet_area  # Shape: (N_chords, n_annuli)
-    
-    # We need intensities for each annulus, which are between consecutive mu values
-    # Average the intensities at the boundaries of each annulus
-    annulus_intensities = 0.5 * (intensity_spectra[:, :-1] + intensity_spectra[:, 1:])
-    # Shape: (n_wavelengths, n_annuli)
+    weights = overlap_areas / total_planet_area  # Shape: (N_chords, n_stellar_mus)
 
-    # Weighted sum: weights.T @ annulus_intensities.T -> (n_annuli, N_chords) @ (n_annuli, n_wavelengths)
+    # Weighted sum: intensity_spectra @ weights.T -> (n_wavelengths, n_stellar_mus) @ (n_stellar_mus, N_chords)
     # We want (n_wavelengths, N_chords)
-    occulted_intensity_spectra = annulus_intensities @ weights.T
+    occulted_intensity_spectra = intensity_spectra @ weights.T
     # Shape: (n_wavelengths, N_chords)
         
     return occulted_intensity_spectra
@@ -250,7 +243,8 @@ for model in models:
                     ########## Extract intensity profile for each transit chord ##################
                     ##############################################################################
 
-                    # Define the annuli edges
+                    # Define the annuli edges - the models define intensity spectra at a specific 
+                    # mu values so this spreads out these predictions over a band
                     annuli_mus = jnp.append(
                         gen_dict['stellar_mus'][model][:-1] + jnp.diff(gen_dict['stellar_mus'][model])/2, 
                         gen_dict['stellar_mus'][model][-1] + (jnp.diff(gen_dict['stellar_mus'][model])[-1]/2)
@@ -259,10 +253,12 @@ for model in models:
                     # Compute for all (b, p) combinations at once
                     local_stellar_intensities = chord_intensity_vectorized(
                         bs, ps, global_stellar_intensities, jnp.sqrt(1 - annuli_mus**2)
-                    )
+                    ) #shape : (n_bs, n_ps, n_wavelengths, N_chords)
 
                     print('1:',local_stellar_intensities.shape)
-                    plt.plot(local_stellar_intensities[0,0,600,:])
+                    for ib in range(0,10,2):
+                        plt.plot(local_stellar_intensities[0, ib,600,:], linewidth=2, alpha=0.6, label=f'{bs[ib]}')
+                    plt.legend()
                     plt.show()
                     raise KeyboardInterrupt('STOP')
                     # Compute for all (b, p) combinations the integral of the local stellar intensity spectrum over wavelength 
