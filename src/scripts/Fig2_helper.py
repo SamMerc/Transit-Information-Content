@@ -73,6 +73,14 @@ mu_resolution = {
     'mps2' : 24,
 }
 
+lambda_resolution = {
+    'phoenix' : 54500,
+    'kurucz' : 1221,
+    'stagger' : 105767,
+    'mps1' : 1221,
+    'mps2' : 1221,
+}
+
 N = 10
 
 N_chords = 1000
@@ -144,7 +152,7 @@ def chord_intensity(b, p, intensity_spectra, stellar_radii):
     JAX-optimized version for a single (b, p) pair.
     :param b: Transit chord impact parameter.
     :param p: Planet-to-star radius ratio.
-    :param intensity_spectra: 2D array of intensity spectra (shape : n_wavelengths x n_stellar_mus).
+    :param intensity_spectra: 2D array of intensity spectra (shape : n_wavelengths * n_stellar_mus).
     :param stellar_radii: Array of r values for the edges of the annuli discretizing the stellar disk. (shape : n_stellar_mus)
     :param N_chords: Number of points discretizing the transit chord.
     '''
@@ -197,9 +205,11 @@ gen_dict = {}
 
 gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
 
+gen_dict['local_rps']={model : np.zeros((N, N, N, N, N, N_chords), dtype=float) for model in models}
+
 gen_dict['global_intensity_profiles']={model : np.zeros((N, N, N, mu_resolution[model]), dtype=float) for model in models}
 
-gen_dict['local_intensity_profiles']={model : np.zeros((N, N, N, N, N, mu_resolution[model]), dtype=float) for model in models}
+gen_dict['local_intensity_profiles']={model : np.zeros((N, N, N, N, N, lambda_resolution[model], N_chords), dtype=float) for model in models}
 
 #Iterate over all the stellar models available 
 for model in models:
@@ -234,7 +244,7 @@ for model in models:
                     global_stellar_intensities = jnp.copy(sld.stellar_intensities)
                 
                     # Integrate stellar spectrum over wavelength
-                    global_intensity_profile = jnp.trapezoid(global_stellar_intensities, stellar_wavelengths, axis=0)
+                    global_intensity_profile = jnp.trapezoid(global_stellar_intensities, stellar_wavelengths, axis=0) #shape : (n_mus,)
 
                     # Normalize and store the global intensity profile
                     gen_dict['global_intensity_profiles'][model][i, j, k] = global_intensity_profile/global_intensity_profile[0]
@@ -255,12 +265,12 @@ for model in models:
                         bs, ps, global_stellar_intensities, jnp.sqrt(1 - annuli_mus**2)
                     ) #shape : (n_bs, n_ps, n_wavelengths, N_chords)
 
-                    print('1:',local_stellar_intensities.shape)
-                    for ib in range(0,10,2):
-                        plt.plot(local_stellar_intensities[0, ib,600,:], linewidth=2, alpha=0.6, label=f'{bs[ib]}')
-                    plt.legend()
-                    plt.show()
-                    raise KeyboardInterrupt('STOP')
+                    #Define the grid of mu values for each ps and bs considered
+                    x_max = jnp.sqrt((1 + ps[None, :])**2 - bs[:, None]**2)  # Shape: (n_bs, n_ps)
+                    t = jnp.linspace(0.0, 1.0, N_chords)
+                    x_vals = x_max[:, :, None] * t[None, None, :]  # Shape: (n_bs, n_ps, N_chords)
+                    r_ps = jnp.sqrt(bs[:, None, None]**2 + x_vals**2)  # Shape: (n_bs, n_ps, N_chords)
+
                     # Compute for all (b, p) combinations the integral of the local stellar intensity spectrum over wavelength 
                     local_intensity_profiles = jnp.trapezoid(
                         local_stellar_intensities, 
@@ -269,7 +279,8 @@ for model in models:
                     )
                     
                     #Normalize and store this local intensity profile
-                    gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :] = local_intensity_profiles / global_intensity_profile[0]
+                    gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :, :] = (local_stellar_intensities / local_stellar_intensities[:,:,:,0:1])
+                    gen_dict['local_rps'][model][i, j, k, :, :, :] = r_ps
 
 
         #Store the stellar spectrum
@@ -290,8 +301,8 @@ for model in models:
     rs = jnp.sqrt(1 - mus**2)
 
     # Reshaping intensity profiles for PCA
-    intensity_profiles = gen_dict['local_intensity_profiles']
-    pca_int_profile = intensity_profiles[model].reshape((N*N*N*N*N, mu_resolution[model]))
+    intensity_profiles = gen_dict['local_intensity_profiles'][model] #shape : (n_Teffs, n_logg, n_metallicity, n_bs, n_ps, n_wavelengths, N_chords)
+    pca_int_profile = intensity_profiles.reshape((N*N*N*N*N*lambda_resolution[model], N_chords)) #shape : (n_Teffs * n_logg * n_metallicity * n_bs * n_ps * n_wavelengths, N_chords)
 
     # Perform PCA analysis 
     pca = PCA(n_components=n_components)
@@ -464,9 +475,9 @@ for model in models:
     #Fitting the mode and outlier profiles with a 4-th order non-linear limb-darkening law
     for j_fit, special_profile in enumerate([typical_profile] + [pca_int_profile[idx] for idx in outlier_indices]):
         
-        #Interpolate intensity profile from its grid to a grid of 100 mu values going from 0.01 to 1.0 with increments of 0.01 with cubic spline (Claret & Bloemen 2011)
-        new_mus = jnp.linspace(0.01, 1.0, 100)
-        inter_special_profile = CubicSpline(mus[::-1], special_profile[::-1])(new_mus)
+        # #Interpolate intensity profile from its grid to a grid of 100 mu values going from 0.01 to 1.0 with increments of 0.01 with cubic spline (Claret & Bloemen 2011)
+        # new_mus = jnp.linspace(0.01, 1.0, 100)
+        # inter_special_profile = CubicSpline(mus[::-1], special_profile[::-1])(new_mus)
 
         #Define 4-th order non-linear LD law
         def fourNLLD(x, coeffs):
