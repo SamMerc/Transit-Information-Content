@@ -37,7 +37,7 @@ import gc
 ######################################
 
 LD_data_path = '/Volumes/Pandora/Work/PhD/Research/TIC/LD simulation'
-orig_save_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_helper_Storage/'
+orig_save_data_path = '/Volumes/Pandora/Work/PhD/Research/TIC/Gen_Storage/Fig2_helper_Storage/'
 
 models = ['mps1'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
@@ -82,12 +82,13 @@ lambda_resolution = {
     'mps2' : 1221,
 }
 
-N = 10
+N_star = 10
 
 N_chords = 100
 
-bs = jnp.linspace(0, 1, 5)
-ps = jnp.logspace(-3, -1, 5)
+N_bs_ps = 10
+bs = jnp.linspace(0, 1, N_bs_ps)
+ps = jnp.logspace(-3, -1, N_bs_ps)
 
 n_components = 5
 
@@ -204,13 +205,15 @@ if not os.path.exists(orig_save_data_path):os.makedirs(orig_save_data_path)
 # Instantiate dictionary to store information 
 gen_dict = {}
 
+gen_dict['stellar_wavelengths'] = {model : np.zeros(lambda_resolution[model], dtype=float) for model in models}
+
 gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
 
-gen_dict['local_rps']={model : np.zeros((N, N, N, 5, 5, N_chords), dtype=float) for model in models}
+gen_dict['local_rps']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_ps, N_chords), dtype=float) for model in models}
 
-gen_dict['global_intensity_profiles']={model : np.zeros((N, N, N, mu_resolution[model]), dtype=float) for model in models}
+# gen_dict['global_intensity_profiles']={model : np.zeros((N_star, N_star, N_star, mu_resolution[model]), dtype=float) for model in models}
 
-gen_dict['local_intensity_profiles']={model : np.zeros((N, N, N, 5, 5, lambda_resolution[model], N_chords), dtype=float) for model in models}
+gen_dict['local_intensity_profiles']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution[model], N_chords), dtype=float) for model in models}
 
 #Iterate over all the stellar models available 
 for model in models:
@@ -223,11 +226,11 @@ for model in models:
     if mode == 'build':
         #Iterate over the three stellar parameters and retrieve intensity profiles
         #Temperature
-        for i, T in enumerate(jnp.linspace(Teffs[model][0], Teffs[model][1], N)):
+        for i, T in enumerate(jnp.linspace(Teffs[model][0], Teffs[model][1], N_star)):
             #Surface gravity
-            for j, g in enumerate(jnp.linspace(loggs[model][0], loggs[model][1], N)):
+            for j, g in enumerate(jnp.linspace(loggs[model][0], loggs[model][1], N_star)):
                 #Metallicity
-                for k, m in enumerate(jnp.linspace(metallicitys[model][0], metallicitys[model][1], N)):
+                for k, m in enumerate(jnp.linspace(metallicitys[model][0], metallicitys[model][1], N_star)):
                     
                     #Calculate stellar spectrum - across wavelength and viewing angle
                     print('GENERATING Teff =', T, 'logg =', g, 'metallicty =', m, 'for model', model)
@@ -246,10 +249,10 @@ for model in models:
                     del sld  # Free memory from large StellarLimbDarkening object
                 
                     # Integrate stellar spectrum over wavelength
-                    global_intensity_profile = jnp.trapezoid(global_stellar_intensities, stellar_wavelengths, axis=0) #shape : (n_mus,)
+                    # global_intensity_profile = jnp.trapezoid(global_stellar_intensities, stellar_wavelengths, axis=0) #shape : (n_mus,)
 
                     # Normalize and store the global intensity profile
-                    gen_dict['global_intensity_profiles'][model][i, j, k] = global_intensity_profile/global_intensity_profile[0]
+                    # gen_dict['global_intensity_profiles'][model][i, j, k] = global_intensity_profile/global_intensity_profile[0]
 
                     ##############################################################################
                     ########## Extract intensity profile for each transit chord ##################
@@ -272,20 +275,16 @@ for model in models:
                     t = jnp.linspace(0.0, 1.0, N_chords)
                     x_vals = x_max[:, :, None] * t[None, None, :]  # Shape: (n_bs, n_ps, N_chords)
                     r_ps = jnp.sqrt(bs[:, None, None]**2 + x_vals**2)  # Shape: (n_bs, n_ps, N_chords)
-
-                    # Compute for all (b, p) combinations the integral of the local stellar intensity spectrum over wavelength 
-                    local_intensity_profiles = jnp.trapezoid(
-                        local_stellar_intensities, 
-                        stellar_wavelengths, 
-                        axis=2
-                    )
                     
+                    # Filter out profiles full of zeroes
+                    # TODO
+                                
                     #Normalize and store this local intensity profile
                     gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :, :] = (local_stellar_intensities / local_stellar_intensities[:,:,:,0:1])
                     gen_dict['local_rps'][model][i, j, k, :, :, :] = r_ps
 
                     #Garbage collection
-                    del local_stellar_intensities, local_intensity_profiles, r_ps, x_max, x_vals, t
+                    del local_stellar_intensities, r_ps, x_max, x_vals, t
                     gc.collect()
 
         #Store the stellar spectrum
@@ -301,15 +300,19 @@ for model in models:
     ##########################################
     ########## PCA analysis ##################
     ##########################################
+    print('PCA ANALYSIS')
     # Retrieve the grid of mu values
     mus = jnp.copy(gen_dict['stellar_mus'][model])
     rs = jnp.sqrt(1 - mus**2)
 
     # Reshaping intensity profiles for PCA
     intensity_profiles = gen_dict['local_intensity_profiles'][model] #shape : (n_Teffs, n_logg, n_metallicity, n_bs, n_ps, n_wavelengths, N_chords)
-    pca_int_profile = intensity_profiles.reshape((N*N*N*N*N*lambda_resolution[model], N_chords)) #shape : (n_Teffs * n_logg * n_metallicity * n_bs * n_ps * n_wavelengths, N_chords)
+    pca_int_profile = intensity_profiles.reshape((N_star**3*N_bs_ps**2*lambda_resolution[model], N_chords)) #shape : (n_Teffs * n_logg * n_metallicity * n_bs * n_ps * n_wavelengths, N_chords)
 
     # Perform PCA analysis 
+    A = np.sum(np.isnan(pca_int_profile))
+    B = N_chords*N_star**3*N_bs_ps**2*lambda_resolution[model]
+    print(f'2: {A}/{B} ({100 * A/B} %)')
     pca = PCA(n_components=n_components)
     profiles_pca = pca.fit_transform(pca_int_profile)
 
