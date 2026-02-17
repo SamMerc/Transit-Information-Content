@@ -207,7 +207,7 @@ gen_dict = {}
 
 # gen_dict['stellar_wavelengths'] = {model : np.zeros(lambda_resolution[model], dtype=float) for model in models}
 
-gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
+# gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
 
 gen_dict['local_rps']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_ps, N_chords), dtype=float) for model in models}
 
@@ -243,7 +243,7 @@ for model in models:
                     
                     #Store the wavelength and mu arrays
                     if (i == 0) and (j == 0) and (k == 0):
-                        gen_dict['stellar_mus'][model] = jnp.copy(sld.mus)
+                        stellar_mus = jnp.copy(sld.mus)
                         # stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
 
                     #Store the global stellar intensity spectrum
@@ -263,8 +263,8 @@ for model in models:
                     # Define the annuli edges - the models define intensity spectra at a specific 
                     # mu values so this spreads out these predictions over a band
                     annuli_mus = jnp.append(
-                        gen_dict['stellar_mus'][model][:-1] + jnp.diff(gen_dict['stellar_mus'][model])/2, 
-                        gen_dict['stellar_mus'][model][-1] + (jnp.diff(gen_dict['stellar_mus'][model])[-1]/2)
+                        stellar_mus[:-1] + jnp.diff(stellar_mus)/2, 
+                        stellar_mus[-1] + (jnp.diff(stellar_mus)[-1]/2)
                     )
 
                     # Compute for all (b, p) combinations at once
@@ -297,9 +297,10 @@ for model in models:
         # Applied to array shape: (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution, N_chords)
         # Boolean indexing on the first 6 dims → output shape: (n_valid, N_chords) ✓
         gen_dict['local_intensity_profiles'][model] = gen_dict['local_intensity_profiles'][model][gen_dict['intensity_profiles_mask'][model]]
+        gen_dict['local_rps'][model] = gen_dict['local_rps'][model][gen_dict['intensity_profiles_mask'][model]]
 
         #Remove the mask
-        del gen_dict['intensity_profiles_mask']
+        del gen_dict['intensity_profiles_mask'], stellar_mus
         
         # Diagnostic print
         n_total = N_star*N_star*N_star * N_bs_ps*N_bs_ps * lambda_resolution[model]
@@ -321,8 +322,7 @@ for model in models:
     ##########################################
     print('PCA ANALYSIS')
     # Retrieve the grid of mu values
-    mus = jnp.copy(gen_dict['stellar_mus'][model])
-    rs = jnp.sqrt(1 - mus**2)
+    xs = jnp.copy(gen_dict['local_rps'][model]) #shape : (n_valid, N_chords)
 
     # Reshaping intensity profiles for PCA
     pca_int_profile = gen_dict['local_intensity_profiles'][model] #shape : (n_valid, N_chords)
@@ -343,8 +343,8 @@ for model in models:
 
     # Plot 1: All original intensity profiles
     ax1 = plt.subplot(3, 3, 1)
-    for prof in pca_int_profile:
-        ax1.plot(mus, prof, alpha=0.3, color='gray', linewidth=0.5)
+    for x, prof in zip([xs, pca_int_profile]):
+        ax1.plot(xs, prof, alpha=0.3, color='gray', linewidth=0.5)
     ax1.set_xlabel('μ = cos(θ)')
     ax1.set_ylabel('Intensity')
     ax1.set_title('Sample of Original Intensity Profiles')
@@ -372,7 +372,7 @@ for model in models:
     colors = ['blue', 'red', 'green', 'purple', 'orange']
     for i_plot in range(n_components):
         ax = plt.subplot(3, 3, 4 + i_plot)
-        ax.plot(mus, eigen_profiles[i_plot], color=colors[i_plot], linewidth=2)
+        ax.plot(xs[i_plot], eigen_profiles[i_plot], color=colors[i_plot], linewidth=2)
         ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
         ax.set_xlabel('μ = cos(θ)')
         ax.set_ylabel('Component Value')
@@ -419,9 +419,9 @@ for model in models:
     # ===== Top Row: Typical and Outlier Profiles =====
     # Plot typical profile surrounded by rest of profiles
     ax = fig2.add_subplot(gs[0, 0])
-    for prof in pca_int_profile:
-        ax.plot(mus, prof, alpha=0.3, color='gray', linewidth=0.5)
-    ax.plot(mus, typical_profile, 'b-', linewidth=2, label='Typical (Mode)', zorder=10)
+    for x, prof in zip([xs, pca_int_profile]):
+        ax.plot(x, prof, alpha=0.3, color='gray', linewidth=0.5)
+    ax.plot(xs, typical_profile, 'b-', linewidth=2, label='Typical (Mode)', zorder=10)
     ax.set_xlabel('μ = cos(θ)')
     ax.set_ylabel('Normalized Intensity')
     ax.set_title('Most Typical Intensity Profile')
@@ -431,9 +431,9 @@ for model in models:
     # Plot outlier profiles
     for i_plot, outlier_idx in enumerate(outlier_indices):
         ax = fig2.add_subplot(gs[0, i_plot+1])
-        for prof in pca_int_profile:
-            ax.plot(mus, prof, alpha=0.3, color='gray', linewidth=0.5)
-        ax.plot(mus, pca_int_profile[outlier_idx], 'r-', linewidth=2, 
+        for x, prof in zip([xs, pca_int_profile]):
+            ax.plot(x, prof, alpha=0.3, color='gray', linewidth=0.5)
+        ax.plot(xs[outlier_idx], pca_int_profile[outlier_idx], 'r-', linewidth=2, 
                 label=f'Outlier {i_plot+1}', zorder=10)
         ax.set_xlabel('μ = cos(θ)')
         ax.set_ylabel('Normalized Intensity')
@@ -458,8 +458,8 @@ for model in models:
         
         # Top part: Original vs Reconstructed (2/3 of height)
         ax_top = fig2.add_subplot(gs[1, col_idx])
-        ax_top.plot(mus, original, 'k-', linewidth=2, label='Original', alpha=0.7)
-        ax_top.plot(mus, reconstructed, 'r--', linewidth=2, label='Reconstructed')
+        ax_top.plot(xs[test_profile_idx], original, 'k-', linewidth=2, label='Original', alpha=0.7)
+        ax_top.plot(xs[test_profile_idx], reconstructed, 'r--', linewidth=2, label='Reconstructed')
         ax_top.set_ylabel('Normalized Intensity')
         ax_top.set_title(f'{n_comp_plot} Components (RMSE={rmse:.4f})')
         ax_top.legend(loc='best')
@@ -468,7 +468,7 @@ for model in models:
         
         # Bottom part: Residuals (1/3 of height)
         ax_bottom = fig2.add_subplot(gs[2, col_idx], sharex=ax_top)
-        ax_bottom.plot(mus, 100 * residual / original, 'g-', linewidth=1.5, label='Rel. Diff.')
+        ax_bottom.plot(xs[test_profile_idx], 100 * residual / original, 'g-', linewidth=1.5, label='Rel. Diff.')
         ax_bottom.axhline(y=0, color='k', linestyle='--', alpha=0.5)
         ax_bottom.set_xlabel('μ = cos(θ)')
         ax_bottom.set_ylabel('Relative Diff. (%)')
@@ -490,7 +490,6 @@ for model in models:
     for i_save, outlier_idx in enumerate(outlier_indices):
         np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy', 
                 pca_int_profile[outlier_idx])
-    np.save(save_data_path + f'mu_values_{model}.npy', mus)
 
     print(f"\nSaved profiles to {save_data_path}")
 
