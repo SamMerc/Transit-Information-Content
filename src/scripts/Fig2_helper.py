@@ -86,7 +86,7 @@ N_star = 10
 
 N_chords = 100
 
-N_bs_ps = 10
+N_bs_ps = 7
 bs = jnp.linspace(0, 1, N_bs_ps)
 ps = jnp.logspace(-3, -1, N_bs_ps)
 
@@ -205,7 +205,7 @@ if not os.path.exists(orig_save_data_path):os.makedirs(orig_save_data_path)
 # Instantiate dictionary to store information 
 gen_dict = {}
 
-gen_dict['stellar_wavelengths'] = {model : np.zeros(lambda_resolution[model], dtype=float) for model in models}
+# gen_dict['stellar_wavelengths'] = {model : np.zeros(lambda_resolution[model], dtype=float) for model in models}
 
 gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
 
@@ -214,6 +214,8 @@ gen_dict['local_rps']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_p
 # gen_dict['global_intensity_profiles']={model : np.zeros((N_star, N_star, N_star, mu_resolution[model]), dtype=float) for model in models}
 
 gen_dict['local_intensity_profiles']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution[model], N_chords), dtype=float) for model in models}
+
+gen_dict['intensity_profiles_mask']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution[model]), dtype=bool) for model in models}
 
 #Iterate over all the stellar models available 
 for model in models:
@@ -242,7 +244,7 @@ for model in models:
                     #Store the wavelength and mu arrays
                     if (i == 0) and (j == 0) and (k == 0):
                         gen_dict['stellar_mus'][model] = jnp.copy(sld.mus)
-                        stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
+                        # stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
 
                     #Store the global stellar intensity spectrum
                     global_stellar_intensities = jnp.copy(sld.stellar_intensities)
@@ -276,16 +278,33 @@ for model in models:
                     x_vals = x_max[:, :, None] * t[None, None, :]  # Shape: (n_bs, n_ps, N_chords)
                     r_ps = jnp.sqrt(bs[:, None, None]**2 + x_vals**2)  # Shape: (n_bs, n_ps, N_chords)
                     
+                    # Normalize the profiles 
+                    normalized_profiles = (local_stellar_intensities / local_stellar_intensities[:,:,:,0:1])
+
                     # Filter out profiles full of zeroes
-                    # TODO
+                    gen_dict['intensity_profiles_mask'][model][i, j, k, :, :, :] |= jnp.all(jnp.isfinite(normalized_profiles), axis=-1)
                                 
                     #Normalize and store this local intensity profile
-                    gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :, :] = (local_stellar_intensities / local_stellar_intensities[:,:,:,0:1])
+                    gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :, :] = normalized_profiles
                     gen_dict['local_rps'][model][i, j, k, :, :, :] = r_ps
 
                     #Garbage collection
-                    del local_stellar_intensities, r_ps, x_max, x_vals, t
+                    del local_stellar_intensities, global_stellar_intensities, normalized_profiles, annuli_mus, r_ps, x_max, x_vals, t
                     gc.collect()
+
+        #Update the storage 
+        # Boolean mask shape: (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution)
+        # Applied to array shape: (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution, N_chords)
+        # Boolean indexing on the first 6 dims → output shape: (n_valid, N_chords) ✓
+        gen_dict['local_intensity_profiles'][model] = gen_dict['local_intensity_profiles'][model][gen_dict['intensity_profiles_mask'][model]]
+
+        #Remove the mask
+        del gen_dict['intensity_profiles_mask']
+        
+        # Diagnostic print
+        n_total = N_star*N_star*N_star * N_bs_ps*N_bs_ps * lambda_resolution[model]
+        n_valid = gen_dict['local_intensity_profiles'][model].shape[0]
+        print(f"  Valid profiles: {100 * n_valid / n_total:.1f} %")
 
         #Store the stellar spectrum
         with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -306,13 +325,9 @@ for model in models:
     rs = jnp.sqrt(1 - mus**2)
 
     # Reshaping intensity profiles for PCA
-    intensity_profiles = gen_dict['local_intensity_profiles'][model] #shape : (n_Teffs, n_logg, n_metallicity, n_bs, n_ps, n_wavelengths, N_chords)
-    pca_int_profile = intensity_profiles.reshape((N_star**3*N_bs_ps**2*lambda_resolution[model], N_chords)) #shape : (n_Teffs * n_logg * n_metallicity * n_bs * n_ps * n_wavelengths, N_chords)
+    pca_int_profile = gen_dict['local_intensity_profiles'][model] #shape : (n_valid, N_chords)
 
     # Perform PCA analysis 
-    A = np.sum(np.isnan(pca_int_profile))
-    B = N_chords*N_star**3*N_bs_ps**2*lambda_resolution[model]
-    print(f'2: {A}/{B} ({100 * A/B} %)')
     pca = PCA(n_components=n_components)
     profiles_pca = pca.fit_transform(pca_int_profile)
 
