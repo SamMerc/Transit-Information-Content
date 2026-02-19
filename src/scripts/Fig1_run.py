@@ -273,9 +273,10 @@ fixed_args['ndim']=ndim
 
 #Uniform distribution of walker starting positions
 if fixed_args['kernel'] == 'emcee':
+    init_keys = jax.random.split(jaxnoise_key, ndim)
     fixed_args['pos'] = np.zeros((fixed_args['nwalkers'], fixed_args['ndim']), dtype=float)
     for i in range(fixed_args['ndim']):
-        fixed_args['pos'][:, i] = jax.random.uniform(jaxnoise_key, minval=mod_prop[var_param_list[i]]['bounds'][0], maxval=mod_prop[var_param_list[i]]['bounds'][1], shape=(fixed_args['nwalkers'],))
+        fixed_args['pos'][:, i] = jax.random.uniform(init_keys[i], minval=mod_prop[var_param_list[i]]['bounds'][0], maxval=mod_prop[var_param_list[i]]['bounds'][1], shape=(fixed_args['nwalkers'],))
 else:
     fixed_args['pos'] = {}
     for i in range(fixed_args['ndim']):

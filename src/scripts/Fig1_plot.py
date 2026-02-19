@@ -82,7 +82,7 @@ T_dur = (
 #%%%% Model time - ensure pre- and post-transit are same duration as transit
 low_t = -1.5*T_dur                                                      #days
 high_t = 1.5*T_dur                                                      #days
-exposure_time = 5                                                       #seconds
+exposure_time = 5                                                       #secondso
 num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number of points
 init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 

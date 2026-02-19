@@ -30,14 +30,15 @@ from sklearn.cluster import KMeans
 from scipy.interpolate import CubicSpline
 from lmfit import minimize, Parameters
 import gc
+import matplotlib.cm as cm
 
 
 ######################################
 ########## Hyper-parameters ##########
 ######################################
 
-LD_data_path = '/Volumes/Pandora/Work/PhD/Research/TIC/LD simulation'
-orig_save_data_path = '/Volumes/Pandora/Work/PhD/Research/TIC/Gen_Storage/Fig2_helper_Storage/'
+LD_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/LD simulation'
+orig_save_data_path = '//Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_helper_Storage/'
 
 models = ['mps1'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
@@ -86,7 +87,7 @@ N_star = 10
 
 N_chords = 100
 
-N_bs_ps = 7
+N_bs_ps = 5
 bs = jnp.linspace(0, 1, N_bs_ps)
 ps = jnp.logspace(-3, -1, N_bs_ps)
 
@@ -244,7 +245,7 @@ for model in models:
                     #Store the wavelength and mu arrays
                     if (i == 0) and (j == 0) and (k == 0):
                         stellar_mus = jnp.copy(sld.mus)
-                        # stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
+                        stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
 
                     #Store the global stellar intensity spectrum
                     global_stellar_intensities = jnp.copy(sld.stellar_intensities)
@@ -287,7 +288,73 @@ for model in models:
                     #Normalize and store this local intensity profile
                     gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :, :] = normalized_profiles
                     gen_dict['local_rps'][model][i, j, k, :, :, :] = r_ps
+                    
+                    # Find all profiles with increasing segments
+                    has_increase = jnp.any(jnp.diff(local_stellar_intensities, axis=-1) > 0.0, axis=-1)
+                    # Shape: (n_bs, n_ps, n_wavelengths) - True where profile increases
 
+                    if jnp.any(has_increase):
+                        print(f"Found {jnp.sum(has_increase)} profiles with increasing segments")
+                        
+                        # Find the profile with the largest positive jump
+                        diff_profiles = jnp.diff(local_stellar_intensities, axis=-1)
+                        max_diff_idx = jnp.unravel_index(jnp.argmax(diff_profiles), diff_profiles.shape)
+                        print(f"Max increase at (ib={max_diff_idx[0]}, ip={max_diff_idx[1]}, iw={max_diff_idx[2]}, ir={max_diff_idx[3]})")
+                        print(f"Max increase at (b={bs[max_diff_idx[0]]}, p={ps[max_diff_idx[1]]}, w={stellar_wavelengths[max_diff_idx[2]]}, r={r_ps[max_diff_idx[0], max_diff_idx[1], max_diff_idx[3]]})")
+                        
+                        # Plot all offending profiles
+                        cmap = plt.cm.coolwarm
+                        offending_wavelengths = set()
+                        
+                        for ib in range(N_bs_ps):
+                            for ip in range(N_bs_ps):
+                                for iw in range(lambda_resolution[model]):
+                                    if has_increase[ib, ip, iw]:
+                                        offending_wavelengths.add(iw)
+                        
+                        offending_wavelengths = sorted(offending_wavelengths)
+                        to_color = {iw: cmap(i / max(len(offending_wavelengths) - 1, 1)) 
+                                    for i, iw in enumerate(offending_wavelengths)}
+                        
+                        plt.figure(figsize=(10, 6))
+                        for ib in range(N_bs_ps):
+                            for ip in range(N_bs_ps):
+                                for iw in range(lambda_resolution[model]):
+                                    if has_increase[ib, ip, iw]:
+                                        plt.plot(r_ps[ib, ip, :], local_stellar_intensities[ib, ip, iw, :], 
+                                                color=to_color[iw], alpha=0.5, linewidth=0.5)
+                        plt.xlabel('r_p (stellar radii)')
+                        plt.ylabel('Normalized intensity')
+                        plt.title(f'Profiles with increasing segments ({jnp.sum(has_increase)} total)')
+                        plt.grid(True, alpha=0.3)
+                        plt.show()
+                        
+                        # Plot the worst offender
+                        plt.figure(figsize=(10, 6))
+                        plt.plot(r_ps[max_diff_idx[0], max_diff_idx[1], :], 
+                                local_stellar_intensities[max_diff_idx[0], max_diff_idx[1], max_diff_idx[2], :], 
+                                'r-', linewidth=2)
+                        plt.xlabel('r_p (stellar radii)')
+                        plt.ylabel('Normalized intensity')
+                        plt.title(f'Worst offender: b={bs[max_diff_idx[0]]:.3f}, p={ps[max_diff_idx[1]]:.4f}, λ_idx={max_diff_idx[2]}')
+                        plt.grid(True, alpha=0.3)
+                        plt.show()
+
+                        #Plot the stellar intensity spectrum for the worst offender
+                        plt.figure(figsize=(10, 7))
+                        for mu_idx in np.arange(0, len(stellar_mus), 2):
+                            plt.plot(stellar_wavelengths, global_stellar_intensities[:, mu_idx],
+                                    color=cm.inferno(0.85 - mu_idx/stellar_mus[mu_idx]), label="$\mu={:.2f}$".format(stellar_mus[mu_idx]))
+                        plt.axvline(x=stellar_wavelengths[max_diff_idx[2]], color='r', linestyle='--', label='Offending λ')
+                        plt.xlabel("$\lambda / \AA$", fontsize=13)
+                        plt.ylabel("Intensity / $n_{\gamma} s^{-1} cm^{-2} \AA{-1} sr^{-1}$", fontsize=13)
+                        plt.xlim(0, 5e4)
+                        plt.legend(loc="upper right", fontsize=13)
+                        plt.show()
+
+
+                        raise KeyboardInterrupt
+                    
                     #Garbage collection
                     del local_stellar_intensities, global_stellar_intensities, normalized_profiles, annuli_mus, r_ps, x_max, x_vals, t
                     gc.collect()
@@ -297,10 +364,14 @@ for model in models:
         # Applied to array shape: (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution, N_chords)
         # Boolean indexing on the first 6 dims → output shape: (n_valid, N_chords) ✓
         gen_dict['local_intensity_profiles'][model] = gen_dict['local_intensity_profiles'][model][gen_dict['intensity_profiles_mask'][model]]
-        gen_dict['local_rps'][model] = gen_dict['local_rps'][model][gen_dict['intensity_profiles_mask'][model]]
-
-        #Remove the mask
-        del gen_dict['intensity_profiles_mask'], stellar_mus
+        
+        # Expand local_rps from (N_star, N_star, N_star, N_bs_ps, N_bs_ps, N_chords)
+        # to (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_res, N_chords)
+        rps_expanded = jnp.broadcast_to(
+            gen_dict['local_rps'][model][:, :, :, :, :, None, :],
+            (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution[model], N_chords)
+        )
+        gen_dict['local_rps'][model] = rps_expanded[gen_dict['intensity_profiles_mask'][model]]
         
         # Diagnostic print
         n_total = N_star*N_star*N_star * N_bs_ps*N_bs_ps * lambda_resolution[model]
@@ -310,6 +381,10 @@ for model in models:
         #Store the stellar spectrum
         with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
     
+        #Garbage collection
+        del gen_dict['intensity_profiles_mask'], stellar_mus, rps_expanded, n_total, n_valid
+        gc.collect()
+
     #Load intensity profiles grid
     elif mode == 'load':
         with open(save_data_path + 'data.pkl', 'rb') as f:gen_dict = pickle.load(f)
@@ -320,12 +395,17 @@ for model in models:
     ##########################################
     ########## PCA analysis ##################
     ##########################################
+    raise KeyboardInterrupt
     print('PCA ANALYSIS')
+
     # Retrieve the grid of mu values
     xs = jnp.copy(gen_dict['local_rps'][model]) #shape : (n_valid, N_chords)
 
     # Reshaping intensity profiles for PCA
     pca_int_profile = gen_dict['local_intensity_profiles'][model] #shape : (n_valid, N_chords)
+
+    # Retrieve number of valid profiles
+    n_valid = pca_int_profile.shape[0]
 
     # Perform PCA analysis 
     pca = PCA(n_components=n_components)
@@ -343,8 +423,8 @@ for model in models:
 
     # Plot 1: All original intensity profiles
     ax1 = plt.subplot(3, 3, 1)
-    for x, prof in zip([xs, pca_int_profile]):
-        ax1.plot(xs, prof, alpha=0.3, color='gray', linewidth=0.5)
+    for nval in range(0, n_valid, 100):
+        ax1.plot(xs[nval], pca_int_profile[nval], alpha=0.3, color='gray', linewidth=0.5)
     ax1.set_xlabel('μ = cos(θ)')
     ax1.set_ylabel('Intensity')
     ax1.set_title('Sample of Original Intensity Profiles')
@@ -372,7 +452,7 @@ for model in models:
     colors = ['blue', 'red', 'green', 'purple', 'orange']
     for i_plot in range(n_components):
         ax = plt.subplot(3, 3, 4 + i_plot)
-        ax.plot(xs[i_plot], eigen_profiles[i_plot], color=colors[i_plot], linewidth=2)
+        ax.plot(eigen_profiles[i_plot], color=colors[i_plot], linewidth=2)
         ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
         ax.set_xlabel('μ = cos(θ)')
         ax.set_ylabel('Component Value')
@@ -419,9 +499,9 @@ for model in models:
     # ===== Top Row: Typical and Outlier Profiles =====
     # Plot typical profile surrounded by rest of profiles
     ax = fig2.add_subplot(gs[0, 0])
-    for x, prof in zip([xs, pca_int_profile]):
-        ax.plot(x, prof, alpha=0.3, color='gray', linewidth=0.5)
-    ax.plot(xs, typical_profile, 'b-', linewidth=2, label='Typical (Mode)', zorder=10)
+    for nval in range(0, n_valid, 100):
+        ax.plot(xs[nval], pca_int_profile[nval], alpha=0.3, color='gray', linewidth=0.5)
+    ax.plot(xs[typical_idx], typical_profile, 'b-', linewidth=2, label='Typical (Mode)', zorder=10)
     ax.set_xlabel('μ = cos(θ)')
     ax.set_ylabel('Normalized Intensity')
     ax.set_title('Most Typical Intensity Profile')
@@ -431,8 +511,8 @@ for model in models:
     # Plot outlier profiles
     for i_plot, outlier_idx in enumerate(outlier_indices):
         ax = fig2.add_subplot(gs[0, i_plot+1])
-        for x, prof in zip([xs, pca_int_profile]):
-            ax.plot(x, prof, alpha=0.3, color='gray', linewidth=0.5)
+        for nval in range(0, n_valid, 100):
+            ax.plot(xs[nval], pca_int_profile[nval], alpha=0.3, color='gray', linewidth=0.5)
         ax.plot(xs[outlier_idx], pca_int_profile[outlier_idx], 'r-', linewidth=2, 
                 label=f'Outlier {i_plot+1}', zorder=10)
         ax.set_xlabel('μ = cos(θ)')
