@@ -25,22 +25,18 @@ import jax.numpy as jnp
 from jax import jit, vmap
 import exotic_ld as el
 import pickle
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-from scipy.interpolate import CubicSpline
-from lmfit import minimize, Parameters
 import gc
-import matplotlib.cm as cm
-
+cmap = plt.cm.coolwarm
+import seaborn as sns
 
 ######################################
 ########## Hyper-parameters ##########
 ######################################
 
 LD_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/LD simulation'
-orig_save_data_path = '//Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_helper_Storage/'
+orig_save_data_path = '//Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_sidehelper_Storage/'
 
-models = ['mps1'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
+models = ['kurucz'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
 Teffs = {
     'phoenix' : [2300, 15000], 
@@ -91,15 +87,100 @@ N_bs_ps = 5
 bs = jnp.linspace(0, 1, N_bs_ps)
 ps = jnp.logspace(-3, -1, N_bs_ps)
 
-n_components = 5
-
-n_clusters = 2
-
 mode = 'build' # 'build' or 'load'
+
+rolling_std_window_size = 10
+rolling_mean_window_size = 10
 
 ############################
 ###### Function block ######
 ############################
+def rolling_std(wavelengths, intensities, window_size=10):
+    """
+    Computes a rolling standard deviation over a spectrum using a sliding window.
+
+    For each wavelength, the standard deviation is computed over the `window_size`
+    values centred at that point. At the edges, the window is padded by reflecting
+    the signal so the output always has the same length as the input.
+
+    Parameters
+    ----------
+    wavelengths : array-like
+        1-D array of wavelength values.
+    intensities : array-like
+        1-D array of intensity values (same length as wavelengths).
+    window_size : int
+        Number of points in the sliding window (default 10).
+
+    Returns
+    -------
+    wavelengths : np.ndarray
+        Original wavelength array (unchanged).
+    std_values : np.ndarray
+        Rolling standard deviation, same shape as the input arrays.
+    """
+    wavelengths = np.asarray(wavelengths, dtype=float)
+    intensities = np.asarray(intensities, dtype=float)
+
+    if len(wavelengths) != len(intensities):
+        raise ValueError("wavelengths and intensities must have the same length.")
+    if window_size < 2:
+        raise ValueError("window_size must be at least 2.")
+
+    half = window_size // 2
+
+    # Reflect-pad the intensity array so edge windows stay the same size
+    padded = np.pad(intensities, pad_width=half, mode="reflect")
+
+    std_values = np.array(
+        [padded[i : i + window_size].std() for i in range(len(intensities))]
+    )
+
+    return std_values
+
+def rolling_mean(wavelengths, intensities, window_size=10):
+    """
+    Computes a rolling mean over a spectrum using a sliding window.
+
+    For each wavelength, the mean is computed over the `window_size`
+    values centred at that point. At the edges, the window is padded by reflecting
+    the signal so the output always has the same length as the input.
+
+    Parameters
+    ----------
+    wavelengths : array-like
+        1-D array of wavelength values.
+    intensities : array-like
+        1-D array of intensity values (same length as wavelengths).
+    window_size : int
+        Number of points in the sliding window (default 10).
+
+    Returns
+    -------
+    wavelengths : np.ndarray
+        Original wavelength array (unchanged).
+    std_values : np.ndarray
+        Rolling standard deviation, same shape as the input arrays.
+    """
+    wavelengths = np.asarray(wavelengths, dtype=float)
+    intensities = np.asarray(intensities, dtype=float)
+
+    if len(wavelengths) != len(intensities):
+        raise ValueError("wavelengths and intensities must have the same length.")
+    if window_size < 2:
+        raise ValueError("window_size must be at least 2.")
+
+    half = window_size // 2
+
+    # Reflect-pad the intensity array so edge windows stay the same size
+    padded = np.pad(intensities, pad_width=half, mode="reflect")
+
+    mean_values = np.array(
+        [padded[i : i + window_size].mean() for i in range(len(intensities))]
+    )
+
+    return mean_values
+
 @jit
 def calculate_annulus_overlap(r_planet, p, r_inner, r_outer):
     """
@@ -206,17 +287,19 @@ if not os.path.exists(orig_save_data_path):os.makedirs(orig_save_data_path)
 # Instantiate dictionary to store information 
 gen_dict = {}
 
-# gen_dict['stellar_wavelengths'] = {model : np.zeros(lambda_resolution[model], dtype=float) for model in models}
-
-# gen_dict['stellar_mus']={model : np.zeros(mu_resolution[model], dtype=float) for model in models}
-
 gen_dict['local_rps']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_ps, N_chords), dtype=float) for model in models}
 
-# gen_dict['global_intensity_profiles']={model : np.zeros((N_star, N_star, N_star, mu_resolution[model]), dtype=float) for model in models}
+gen_dict['local_intensity_profiles']={model: np.empty((N_star, N_star, N_star), dtype=object) for model in models}
 
-gen_dict['local_intensity_profiles']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution[model], N_chords), dtype=float) for model in models}
+gen_dict['rolling_standard_deviation']={model : np.zeros((N_star, N_star, N_star, mu_resolution[model]), dtype=object) for model in models}
 
-gen_dict['intensity_profiles_mask']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution[model]), dtype=bool) for model in models}
+gen_dict['rolling_mean']={model : np.zeros((N_star, N_star, N_star, mu_resolution[model]), dtype=object) for model in models}
+
+gen_dict['global_stellar_intensity'] = {model: np.empty((N_star, N_star, N_star), dtype=object)for model in models}
+
+gen_dict['stellar_mus'] = {model: np.zeros((N_star, N_star, N_star, mu_resolution[model]), dtype=float)for model in models}
+
+gen_dict['stellar_wavelengths'] = {model: np.empty((N_star, N_star, N_star), dtype=object) for model in models}
 
 #Iterate over all the stellar models available 
 for model in models:
@@ -243,19 +326,34 @@ for model in models:
                                 interpolate_type="nearest")
                     
                     #Store the wavelength and mu arrays
+                    stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
                     if (i == 0) and (j == 0) and (k == 0):
                         stellar_mus = jnp.copy(sld.mus)
-                        stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
+
+                    gen_dict['stellar_mus'][model][i, j, k] = np.array(stellar_mus)
 
                     #Store the global stellar intensity spectrum
                     global_stellar_intensities = jnp.copy(sld.stellar_intensities)
                     del sld  # Free memory from large StellarLimbDarkening object
-                
-                    # Integrate stellar spectrum over wavelength
-                    # global_intensity_profile = jnp.trapezoid(global_stellar_intensities, stellar_wavelengths, axis=0) #shape : (n_mus,)
 
-                    # Normalize and store the global intensity profile
-                    # gen_dict['global_intensity_profiles'][model][i, j, k] = global_intensity_profile/global_intensity_profile[0]
+                    #Filter out the bad portions of the intensity spectra
+                    # thresh = jnp.max(global_stellar_intensities)/1000
+                    # cond = jnp.all(global_stellar_intensities > thresh, axis=1)   # Shape: (n_wavelengths,)
+                    # global_stellar_intensities = global_stellar_intensities[cond, :]
+                    # stellar_wavelengths = stellar_wavelengths[cond]
+
+                    #Store the global stellar intensity spectrum for each model and parameter set
+                    gen_dict['global_stellar_intensity'][model][i, j, k] = np.array(global_stellar_intensities)
+                    gen_dict['stellar_wavelengths'][model][i, j, k] = np.array(stellar_wavelengths)
+
+                    #Perform the rolling window mean across the spectrum
+                    for mu_idx in range(len(stellar_mus)):
+                        gen_dict['rolling_mean'][model][i, j, k, mu_idx] = rolling_mean(stellar_wavelengths, global_stellar_intensities[:, mu_idx], window_size=rolling_mean_window_size)
+
+                    #Remove the rolling window mean from the spectrum to isolate high-frequency variations
+                    #Perform the rolling window standard deviation across on the resulting high-frequency variations to identify regions of the spectrum with high variability which may cause issues for the interpolation and PCA decomposition steps.
+                    for mu_idx in range(len(stellar_mus)):
+                        gen_dict['rolling_standard_deviation'][model][i, j, k, mu_idx] = rolling_std(stellar_wavelengths, (global_stellar_intensities[:, mu_idx] - gen_dict['rolling_mean'][model][i, j, k, mu_idx])/global_stellar_intensities[:, mu_idx], window_size=rolling_std_window_size)
 
                     ##############################################################################
                     ########## Extract intensity profile for each transit chord ##################
@@ -282,11 +380,8 @@ for model in models:
                     # Normalize the profiles 
                     normalized_profiles = (local_stellar_intensities / local_stellar_intensities[:,:,:,0:1])
 
-                    # Filter out profiles full of zeroes
-                    gen_dict['intensity_profiles_mask'][model][i, j, k, :, :, :] |= jnp.all(jnp.isfinite(normalized_profiles), axis=-1)
-                                
                     #Normalize and store this local intensity profile
-                    gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :, :] = normalized_profiles
+                    gen_dict['local_intensity_profiles'][model][i, j, k] = np.array(normalized_profiles)  # (n_bs, n_ps, n_lambda, N_chords)
                     gen_dict['local_rps'][model][i, j, k, :, :, :] = r_ps
                     
                     # Find all profiles with increasing segments
@@ -303,23 +398,22 @@ for model in models:
                         print(f"Max increase at (b={bs[max_diff_idx[0]]}, p={ps[max_diff_idx[1]]}, w={stellar_wavelengths[max_diff_idx[2]]}, r={r_ps[max_diff_idx[0], max_diff_idx[1], max_diff_idx[3]]})")
                         
                         # Plot all offending profiles
-                        cmap = plt.cm.coolwarm
                         offending_wavelengths = set()
                         
                         for ib in range(N_bs_ps):
                             for ip in range(N_bs_ps):
-                                for iw in range(lambda_resolution[model]):
+                                for iw in range(len(stellar_wavelengths)):
                                     if has_increase[ib, ip, iw]:
                                         offending_wavelengths.add(iw)
                         
                         offending_wavelengths = sorted(offending_wavelengths)
-                        to_color = {iw: cmap(i / max(len(offending_wavelengths) - 1, 1)) 
-                                    for i, iw in enumerate(offending_wavelengths)}
+                        to_color = {iw: cmap(p / max(len(offending_wavelengths) - 1, 1)) 
+                                    for p, iw in enumerate(offending_wavelengths)}
                         
                         plt.figure(figsize=(10, 6))
                         for ib in range(N_bs_ps):
                             for ip in range(N_bs_ps):
-                                for iw in range(lambda_resolution[model]):
+                                for iw in range(len(stellar_wavelengths)):
                                     if has_increase[ib, ip, iw]:
                                         plt.plot(r_ps[ib, ip, :], local_stellar_intensities[ib, ip, iw, :], 
                                                 color=to_color[iw], alpha=0.5, linewidth=0.5)
@@ -327,8 +421,9 @@ for model in models:
                         plt.ylabel('Normalized intensity')
                         plt.title(f'Profiles with increasing segments ({jnp.sum(has_increase)} total)')
                         plt.grid(True, alpha=0.3)
-                        plt.show()
-                        
+                        plt.savefig(save_data_path + 'increasing_profiles.pdf', dpi=300)
+                        plt.close()
+
                         # Plot the worst offender
                         plt.figure(figsize=(10, 6))
                         plt.plot(r_ps[max_diff_idx[0], max_diff_idx[1], :], 
@@ -338,51 +433,46 @@ for model in models:
                         plt.ylabel('Normalized intensity')
                         plt.title(f'Worst offender: b={bs[max_diff_idx[0]]:.3f}, p={ps[max_diff_idx[1]]:.4f}, λ_idx={max_diff_idx[2]}')
                         plt.grid(True, alpha=0.3)
-                        plt.show()
+                        plt.savefig(save_data_path + 'worst_increasing_profile.pdf', dpi=300)
+                        plt.close()
 
-                        #Plot the stellar intensity spectrum for the worst offender
-                        plt.figure(figsize=(10, 7))
-                        for mu_idx in np.arange(0, len(stellar_mus), 2):
-                            plt.plot(stellar_wavelengths, global_stellar_intensities[:, mu_idx],
-                                    color=cm.inferno(0.85 - mu_idx/stellar_mus[mu_idx]), label="$\mu={:.2f}$".format(stellar_mus[mu_idx]))
-                        plt.axvline(x=stellar_wavelengths[max_diff_idx[2]], color='r', linestyle='--', label='Offending λ')
-                        plt.xlabel("$\lambda / \AA$", fontsize=13)
-                        plt.ylabel("Intensity / $n_{\gamma} s^{-1} cm^{-2} \AA{-1} sr^{-1}$", fontsize=13)
-                        plt.xlim(0, 5e4)
-                        plt.legend(loc="upper right", fontsize=13)
-                        plt.show()
+                    #Plot the stellar intensity spectrum for the worst offender
+                    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, sharex=True, figsize=(10, 12))
+                    to_color = {p: cmap(p / (len(stellar_mus) - 1)) for p, imu in enumerate(stellar_mus)}
+                    for mu_idx in np.arange(0, len(stellar_mus), 2):
+                        
+                        ax1.plot(stellar_wavelengths, global_stellar_intensities[:, mu_idx],
+                                color=to_color[mu_idx], label="$\mu={:.2f}$".format(stellar_mus[mu_idx]))
+                        
+                        ax2.plot(stellar_wavelengths, gen_dict['rolling_mean'][model][i, j, k, mu_idx],
+                                color=to_color[mu_idx], label="$\mu={:.2f}$".format(stellar_mus[mu_idx]), linestyle='--')
 
+                        ax3.plot(stellar_wavelengths, (global_stellar_intensities[:, mu_idx] - gen_dict['rolling_mean'][model][i, j, k, mu_idx]) ,
+                                color=to_color[mu_idx], label="$\mu={:.2f}$".format(stellar_mus[mu_idx]))
+                        
+                        ax4.plot(stellar_wavelengths, gen_dict['rolling_standard_deviation'][model][i, j, k, mu_idx],
+                                color=to_color[mu_idx], label="$\mu={:.2f}$".format(stellar_mus[mu_idx])) 
 
-                        raise KeyboardInterrupt
+                    ax4.set_xlabel("$\lambda / \AA$", fontsize=13)
+                    ax1.set_ylabel("Intensity / $n_{\gamma} s^{-1} cm^{-2} \AA{-1} sr^{-1}$", fontsize=13)
+                    ax2.set_ylabel("Rolling mean", fontsize=13)
+                    ax3.set_ylabel("Relative difference from rolling mean", fontsize=13)
+                    ax4.set_ylabel("Relative rolling standard deviation", fontsize=13)
+                    # plt.xlim(0, 5e4)
+                    # ax4.set_ylim(-0.05, 0.15)
+                    plt.legend(loc="upper right", fontsize=1, bbox_to_anchor=(1.2, 1.8))
+                    plt.savefig(save_data_path + 'sample_stellar_spectrum.pdf', dpi=300)
+                    plt.close()
                     
                     #Garbage collection
                     del local_stellar_intensities, global_stellar_intensities, normalized_profiles, annuli_mus, r_ps, x_max, x_vals, t
                     gc.collect()
 
-        #Update the storage 
-        # Boolean mask shape: (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution)
-        # Applied to array shape: (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution, N_chords)
-        # Boolean indexing on the first 6 dims → output shape: (n_valid, N_chords) ✓
-        gen_dict['local_intensity_profiles'][model] = gen_dict['local_intensity_profiles'][model][gen_dict['intensity_profiles_mask'][model]]
-        
-        # Expand local_rps from (N_star, N_star, N_star, N_bs_ps, N_bs_ps, N_chords)
-        # to (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_res, N_chords)
-        rps_expanded = jnp.broadcast_to(
-            gen_dict['local_rps'][model][:, :, :, :, :, None, :],
-            (N_star, N_star, N_star, N_bs_ps, N_bs_ps, lambda_resolution[model], N_chords)
-        )
-        gen_dict['local_rps'][model] = rps_expanded[gen_dict['intensity_profiles_mask'][model]]
-        
-        # Diagnostic print
-        n_total = N_star*N_star*N_star * N_bs_ps*N_bs_ps * lambda_resolution[model]
-        n_valid = gen_dict['local_intensity_profiles'][model].shape[0]
-        print(f"  Valid profiles: {100 * n_valid / n_total:.1f} %")
-
         #Store the stellar spectrum
         with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
     
         #Garbage collection
-        del gen_dict['intensity_profiles_mask'], stellar_mus, rps_expanded, n_total, n_valid
+        del stellar_mus
         gc.collect()
 
     #Load intensity profiles grid
@@ -391,223 +481,140 @@ for model in models:
     
     else:
         raise KeyboardInterrupt('Mode not recognized.')
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Wavelength ranges for the three columns — fill these in
+    # ─────────────────────────────────────────────────────────────────────────────
 
-    ##########################################
-    ########## PCA analysis ##################
-    ##########################################
-    raise KeyboardInterrupt
-    print('PCA ANALYSIS')
+    wav_ranges = [
+        (3000, 20000),   # column 0: e.g. (3000, 5000) Å
+        (20000, 40000),   # column 1: e.g. (5000, 7000) Å
+        (40000, 60000),   # column 2: e.g. (7000, 9000) Å
+    ]
+    wav_range_labels = [
+        r"$\lambda \in [3000, 20000]\ \AA$",
+        r"$\lambda \in [20000, 40000]\ \AA$",
+        r"$\lambda \in [40000, 60000]\ \AA$",
+    ]
 
-    # Retrieve the grid of mu values
-    xs = jnp.copy(gen_dict['local_rps'][model]) #shape : (n_valid, N_chords)
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Pre-compute mean relative differences per wavelength range
+    # shape → (n_Teff, n_logg, n_metallicity, n_mu, n_wav_ranges)
+    # ─────────────────────────────────────────────────────────────────────────────
 
-    # Reshaping intensity profiles for PCA
-    pca_int_profile = gen_dict['local_intensity_profiles'][model] #shape : (n_valid, N_chords)
+    n_T, n_g, n_m = N_star, N_star, N_star
+    n_mu          = mu_resolution[model]
+    n_wav_ranges  = len(wav_ranges)
 
-    # Retrieve number of valid profiles
-    n_valid = pca_int_profile.shape[0]
+    mean_rel_diff = np.full((n_T, n_g, n_m, n_mu, n_wav_ranges), np.nan, dtype=float)
 
-    # Perform PCA analysis 
-    pca = PCA(n_components=n_components)
-    profiles_pca = pca.fit_transform(pca_int_profile)
+    for i in range(n_T):
+        for j in range(n_g):
+            for k in range(n_m):
+                glob  = gen_dict['global_stellar_intensity'][model][i, j, k].astype(float)  # (n_wav, n_mu)
+                wavs  = gen_dict['stellar_wavelengths'][model][i, j, k].astype(float)       # (n_wav,)
+                rmean = np.stack(
+                    [gen_dict['rolling_mean'][model][i, j, k, mu_idx] for mu_idx in range(n_mu)],
+                    axis=1
+                ).astype(float)  # (n_wav, n_mu)
 
-    # Extract eigen intensity profile
-    eigen_profiles = pca.components_  # Shape: (n_components, n_mu_points)
+                safe_glob = np.where(glob == 0, np.nan, glob)
+                rel_diff  = (glob - rmean) / safe_glob  # (n_wav, n_mu)
 
-    # Clustering in PCA space
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    cluster_labels = kmeans.fit_predict(profiles_pca[:, :3])  # Use first 3 PCs
+                for w, (wav_lo, wav_hi) in enumerate(wav_ranges):
+                    # Build wavelength mask — treat None as unbounded
+                    mask = np.ones(len(wavs), dtype=bool)
+                    if wav_lo is not None:
+                        mask &= wavs >= wav_lo
+                    if wav_hi is not None:
+                        mask &= wavs <= wav_hi
 
-    # Visualization
-    fig = plt.figure(figsize=(16, 12))
+                    if mask.sum() == 0:
+                        continue  # no wavelengths in this range for this star
 
-    # Plot 1: All original intensity profiles
-    ax1 = plt.subplot(3, 3, 1)
-    for nval in range(0, n_valid, 100):
-        ax1.plot(xs[nval], pca_int_profile[nval], alpha=0.3, color='gray', linewidth=0.5)
-    ax1.set_xlabel('μ = cos(θ)')
-    ax1.set_ylabel('Intensity')
-    ax1.set_title('Sample of Original Intensity Profiles')
-    ax1.grid(True, alpha=0.3)
+                    mean_rel_diff[i, j, k, :, w] = np.abs(
+                        np.nanmax(rel_diff[mask, :], axis=0)
+                    )  # average over wavelengths in range → (n_mu,)
 
-    # Plot 2: Scree plot (explained variance)
-    ax2 = plt.subplot(3, 3, 2)
-    ax2.plot(range(1, n_components + 1), pca.explained_variance_ratio_, 'bo-', linewidth=2)
-    ax2.set_xlabel('Principal Component')
-    ax2.set_ylabel('Explained Variance Ratio')
-    ax2.set_title('Scree Plot')
-    ax2.grid(True, alpha=0.3)
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Axis tick labels
+    # ─────────────────────────────────────────────────────────────────────────────
 
-    # Plot 3: Cumulative explained variance
-    ax3 = plt.subplot(3, 3, 3)
-    ax3.plot(range(1, n_components + 1), jnp.cumsum(pca.explained_variance_ratio_), 'ro-', linewidth=2)
-    ax3.axhline(y=0.95, color='g', linestyle='--', label='95% variance')
-    ax3.set_xlabel('Number of Components')
-    ax3.set_ylabel('Cumulative Explained Variance')
-    ax3.set_title('Cumulative Variance Explained')
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
+    teff_vals  = np.linspace(Teffs[model][0],        Teffs[model][1],        n_T)
+    met_vals   = np.linspace(metallicitys[model][0],  metallicitys[model][1], n_m)
+    teff_labels = [f"{v:.0f}" for v in teff_vals]
+    met_labels  = [f"{v:.1f}" for v in met_vals]
 
-    # Plot 4-8: First 5 Eigen-intensity profiles
-    colors = ['blue', 'red', 'green', 'purple', 'orange']
-    for i_plot in range(n_components):
-        ax = plt.subplot(3, 3, 4 + i_plot)
-        ax.plot(eigen_profiles[i_plot], color=colors[i_plot], linewidth=2)
-        ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
-        ax.set_xlabel('μ = cos(θ)')
-        ax.set_ylabel('Component Value')
-        ax.set_title(f'Eigen-profile {i_plot+1} ({pca.explained_variance_ratio_[i_plot]*100:.1f}%)')
-        ax.grid(True, alpha=0.3)
+    # Three mu indices: first, middle, last
+    mu_indices = [0, n_mu // 2 - 5, n_mu - 1]
+    stellar_mus_ref = gen_dict['stellar_mus'][model][0, 0, 0]  # use (0,0,0) as reference
+    mu_labels = [f"μ = {stellar_mus_ref[idx]:.2f}" for idx in mu_indices]
 
-    # Plot 9: PCA space with clusters
-    ax9 = plt.subplot(3, 3, 9)
-    scatter = ax9.scatter(profiles_pca[:, 0], profiles_pca[:, 1], 
-                        c=cluster_labels, cmap='viridis', s=50, alpha=0.6)
-    ax9.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)')
-    ax9.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)')
-    ax9.set_title('Stellar Models in PCA Space')
-    plt.colorbar(scatter, ax=ax9, label='Cluster')
-    ax9.grid(True, alpha=0.3)
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Build the 3 (rows=mu) × 3 (cols=wavelength range) figure
+    # Always: x = Teff, y = metallicity, averaged over logg (axis 1)
+    # ─────────────────────────────────────────────────────────────────────────────
 
-    plt.savefig(save_data_path + 'PCA_Analysis.png', dpi=150, bbox_inches='tight')
+    fig, axes = plt.subplots(3, 3, figsize=(18, 15))
+    fig.suptitle(
+        f"{model.upper()} — max $|\\Delta I / I|$ averaged over $\\log g$\n"
+        r"$x = T_{\rm eff}$,  $y = $ [M/H]",
+        fontsize=14, y=1.01
+    )
 
-    # Find the mode (median/typical) and outlier profiles
-    # Calculate distances from the cluster centers
-    distances_from_centers = kmeans.transform(profiles_pca[:, :3])
+    # Pre-compute per-column colour limits (shared across all mu rows for that wavelength range)
+    # col_vlims = [
+    #     (np.nanmin(mean_rel_diff[:, :, :, :, col]),
+    #     np.nanmax(mean_rel_diff[:, :, :, :, col]))
+    #     for col in range(n_wav_ranges)
+    # ]
 
-    # Find the most "typical" profile (closest to its cluster center)
-    typical_idx = jnp.argmin(jnp.min(distances_from_centers, axis=1))
-    typical_profile = pca_int_profile[typical_idx]
+    for row, (mu_idx, mu_label) in enumerate(zip(mu_indices, mu_labels)):
 
-    # Find outlier profiles (one from each cluster edge)
-    outlier_indices = []
-    for cluster_id in range(n_clusters):
-        cluster_mask = cluster_labels == cluster_id
-        cluster_distances = distances_from_centers[cluster_mask, cluster_id]
-        # Get the farthest point in this cluster
-        outlier_in_cluster = jnp.where(cluster_mask)[0][jnp.argmax(cluster_distances)]
-        outlier_indices.append(outlier_in_cluster)
+        for col, wav_label in enumerate(wav_range_labels):
 
-    # Alternatively, reconstruct profiles using different numbers of components
-    # This shows how well PCA approximates the original profiles
-    from matplotlib.gridspec import GridSpec
+            ax = axes[row, col]
+            vmin, vmax = 0.01, 0.2 #col_vlims[col]  # shared across rows for this column
 
-    # Create figure with custom grid
-    fig2 = plt.figure(figsize=(15, 12))
-    gs = GridSpec(3, 1+len(outlier_indices), figure=fig2, height_ratios=[1, 0.66, 0.33], hspace=0.05)
+            # Slice this mu and wavelength range → (n_T, n_g, n_m)
+            data_3d = mean_rel_diff[:, :, :, mu_idx, col]
 
-    # ===== Top Row: Typical and Outlier Profiles =====
-    # Plot typical profile surrounded by rest of profiles
-    ax = fig2.add_subplot(gs[0, 0])
-    for nval in range(0, n_valid, 100):
-        ax.plot(xs[nval], pca_int_profile[nval], alpha=0.3, color='gray', linewidth=0.5)
-    ax.plot(xs[typical_idx], typical_profile, 'b-', linewidth=2, label='Typical (Mode)', zorder=10)
-    ax.set_xlabel('μ = cos(θ)')
-    ax.set_ylabel('Normalized Intensity')
-    ax.set_title('Most Typical Intensity Profile')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+            # Average over logg (axis 1) → (n_T, n_m)
+            # heatmap wants (n_y, n_x) = (n_met, n_Teff) → transpose
+            data_2d      = np.nanmean(data_3d, axis=1)   # (n_T, n_m)
+            heatmap_data = data_2d.T                      # (n_m, n_T)
 
-    # Plot outlier profiles
-    for i_plot, outlier_idx in enumerate(outlier_indices):
-        ax = fig2.add_subplot(gs[0, i_plot+1])
-        for nval in range(0, n_valid, 100):
-            ax.plot(xs[nval], pca_int_profile[nval], alpha=0.3, color='gray', linewidth=0.5)
-        ax.plot(xs[outlier_idx], pca_int_profile[outlier_idx], 'r-', linewidth=2, 
-                label=f'Outlier {i_plot+1}', zorder=10)
-        ax.set_xlabel('μ = cos(θ)')
-        ax.set_ylabel('Normalized Intensity')
-        ax.set_title(f'Outlier Profile {i_plot+1}')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+            sns.heatmap(
+                heatmap_data,
+                ax=ax,
+                cmap="coolwarm",
+                vmin=vmin, vmax=vmax,
+                xticklabels=teff_labels,
+                yticklabels=met_labels,
+                annot=False,
+                cbar=(col == 2),
+                cbar_kws={"label": r"$max_\lambda|\Delta I / I|$"},
+            )
 
-    # ===== Bottom Two Rows: Reconstruction Quality =====
-    test_profile_idx = typical_idx
-    original = pca_int_profile[test_profile_idx]
+            ax.set_xlabel("$T_{\\rm eff}$ / K", fontsize=11)
+            ax.set_ylabel("[M/H]",              fontsize=11)
 
-    n_comp_list = [1, 2, n_components]
-    for col_idx, n_comp_plot in enumerate(n_comp_list):
-        # Reconstruct using only first n_comp_plot components
-        pca_temp = PCA(n_components=n_comp_plot)
-        pca_temp.fit(pca_int_profile)
-        reduced = pca_temp.transform(original.reshape(1, -1))
-        reconstructed = pca_temp.inverse_transform(reduced)[0]
-        
-        residual = original - reconstructed
-        rmse = np.sqrt(np.mean(residual**2))
-        
-        # Top part: Original vs Reconstructed (2/3 of height)
-        ax_top = fig2.add_subplot(gs[1, col_idx])
-        ax_top.plot(xs[test_profile_idx], original, 'k-', linewidth=2, label='Original', alpha=0.7)
-        ax_top.plot(xs[test_profile_idx], reconstructed, 'r--', linewidth=2, label='Reconstructed')
-        ax_top.set_ylabel('Normalized Intensity')
-        ax_top.set_title(f'{n_comp_plot} Components (RMSE={rmse:.4f})')
-        ax_top.legend(loc='best')
-        ax_top.grid(True, alpha=0.3)
-        ax_top.set_xticklabels([])  # Remove x-axis labels for top subplot
-        
-        # Bottom part: Residuals (1/3 of height)
-        ax_bottom = fig2.add_subplot(gs[2, col_idx], sharex=ax_top)
-        ax_bottom.plot(xs[test_profile_idx], 100 * residual / original, 'g-', linewidth=1.5, label='Rel. Diff.')
-        ax_bottom.axhline(y=0, color='k', linestyle='--', alpha=0.5)
-        ax_bottom.set_xlabel('μ = cos(θ)')
-        ax_bottom.set_ylabel('Relative Diff. (%)')
-        ax_bottom.legend(loc='best')
-        ax_bottom.grid(True, alpha=0.3)
+            # Thin out tick labels
+            for tick_ax in (ax.xaxis, ax.yaxis):
+                for idx_t, label in enumerate(tick_ax.get_ticklabels()):
+                    if idx_t % (N_star // 5) != 0:
+                        label.set_visible(False)
+
+            # Column title (wavelength range) on top row only
+            if row == 0:
+                ax.set_title(wav_label, fontsize=12, fontweight="bold")
+
+            # Row annotation (mu value) on left column only
+            if col == 0:
+                ax.set_ylabel(f"{mu_label}\n[M/H]", fontsize=11)
 
     plt.tight_layout()
-    plt.savefig(save_data_path + 'Mode&Outliers.png', dpi=150, bbox_inches='tight')
+    plt.savefig(save_data_path + f"{model}_heatmap_rel_diff.pdf", dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Saved heatmap for {model}")
 
-    # Print summary statistics
-    print(f"\n=== PCA Analysis Summary ===")
-    print(f"Total profiles analyzed: {len(pca_int_profile)}")
-    print(f"Variance captured by {n_components} components: {jnp.sum(pca.explained_variance_ratio_)*100:.2f}%")
-    print(f"\nTypical profile index: {typical_idx}")
-    print(f"Outlier profile indices: {outlier_indices}")
-
-    # Save the profiles for use in your transit simulations
-    np.save(save_data_path + f'mode_intensity_profile_{model}.npy', typical_profile)
-    for i_save, outlier_idx in enumerate(outlier_indices):
-        np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy', 
-                pca_int_profile[outlier_idx])
-
-    print(f"\nSaved profiles to {save_data_path}")
-
-
-    # #Fitting the mode and outlier profiles with a 4-th order non-linear limb-darkening law
-    # for j_fit, special_profile in enumerate([typical_profile] + [pca_int_profile[idx] for idx in outlier_indices]):
-        
-    #     # #Interpolate intensity profile from its grid to a grid of 100 mu values going from 0.01 to 1.0 with increments of 0.01 with cubic spline (Claret & Bloemen 2011)
-    #     # new_mus = jnp.linspace(0.01, 1.0, 100)
-    #     # inter_special_profile = CubicSpline(mus[::-1], special_profile[::-1])(new_mus)
-
-    #     #Define 4-th order non-linear LD law
-    #     def fourNLLD(x, coeffs):
-    #         return 1 - coeffs[0] * (1 - x**(1/2)) - coeffs[1] * (1 - x) - coeffs[2] * (1 - x**(3/2)) - coeffs[3] * (1 - x**2)
-        
-    #     #Define residual function to minimize
-    #     def residual(params, x, base_prof):
-    #         return fourNLLD(x, [params[f'c{i_coeff+1}'].value for i_coeff in range(4)]) - base_prof
-    
-    #     #Define lmfit parameters
-    #     params = Parameters()
-    #     for i_param in range(4):
-    #         params.add(f'c{i_param+1}', value=np.random.uniform(0, 1))
-
-    #     #Perform the minimization
-    #     result = minimize(residual, params, args=(new_mus, inter_special_profile))
-
-    #     #Plot base profile, interpolated profile, and best-fit profile
-    #     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-    #     ax1.plot(mus, special_profile, 'bo', label='Original Profile', alpha=0.5)
-    #     ax1.plot(new_mus, inter_special_profile, 'g-', label='Interpolated Profile', alpha=0.7)
-    #     ax1.plot(new_mus, fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]), 'r--', label='Best-fit 4th Order NLLD', linewidth=2)
-    #     ax2.plot(new_mus, 100 * (inter_special_profile - fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]))/inter_special_profile, 'r--', linewidth=2)
-    #     ax2.set_xlabel('μ = cos(θ)')
-    #     ax1.set_ylabel('Normalized Intensity')
-    #     ax2.set_ylabel('Relative Difference (%)')
-    #     ax1.set_title('4th Order Non-Linear Limb-Darkening Fit - ' + ('Typical Profile' if j_fit==0 else f'Outlier Profile {j_fit}'))
-    #     ax1.legend()
-    #     ax1.grid(True, alpha=0.3)
-    #     ax2.grid(True, alpha=0.3)
-    #     plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j_fit==0 else f"outlier{j_fit}"}_{model}.png', dpi=150, bbox_inches='tight')

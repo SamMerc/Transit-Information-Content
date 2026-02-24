@@ -245,7 +245,7 @@ for model in models:
                     #Store the wavelength and mu arrays
                     if (i == 0) and (j == 0) and (k == 0):
                         stellar_mus = jnp.copy(sld.mus)
-                        stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
+                        # stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
 
                     #Store the global stellar intensity spectrum
                     global_stellar_intensities = jnp.copy(sld.stellar_intensities)
@@ -289,72 +289,6 @@ for model in models:
                     gen_dict['local_intensity_profiles'][model][i, j, k, :, :, :, :] = normalized_profiles
                     gen_dict['local_rps'][model][i, j, k, :, :, :] = r_ps
                     
-                    # Find all profiles with increasing segments
-                    has_increase = jnp.any(jnp.diff(local_stellar_intensities, axis=-1) > 0.0, axis=-1)
-                    # Shape: (n_bs, n_ps, n_wavelengths) - True where profile increases
-
-                    if jnp.any(has_increase):
-                        print(f"Found {jnp.sum(has_increase)} profiles with increasing segments")
-                        
-                        # Find the profile with the largest positive jump
-                        diff_profiles = jnp.diff(local_stellar_intensities, axis=-1)
-                        max_diff_idx = jnp.unravel_index(jnp.argmax(diff_profiles), diff_profiles.shape)
-                        print(f"Max increase at (ib={max_diff_idx[0]}, ip={max_diff_idx[1]}, iw={max_diff_idx[2]}, ir={max_diff_idx[3]})")
-                        print(f"Max increase at (b={bs[max_diff_idx[0]]}, p={ps[max_diff_idx[1]]}, w={stellar_wavelengths[max_diff_idx[2]]}, r={r_ps[max_diff_idx[0], max_diff_idx[1], max_diff_idx[3]]})")
-                        
-                        # Plot all offending profiles
-                        cmap = plt.cm.coolwarm
-                        offending_wavelengths = set()
-                        
-                        for ib in range(N_bs_ps):
-                            for ip in range(N_bs_ps):
-                                for iw in range(lambda_resolution[model]):
-                                    if has_increase[ib, ip, iw]:
-                                        offending_wavelengths.add(iw)
-                        
-                        offending_wavelengths = sorted(offending_wavelengths)
-                        to_color = {iw: cmap(i / max(len(offending_wavelengths) - 1, 1)) 
-                                    for i, iw in enumerate(offending_wavelengths)}
-                        
-                        plt.figure(figsize=(10, 6))
-                        for ib in range(N_bs_ps):
-                            for ip in range(N_bs_ps):
-                                for iw in range(lambda_resolution[model]):
-                                    if has_increase[ib, ip, iw]:
-                                        plt.plot(r_ps[ib, ip, :], local_stellar_intensities[ib, ip, iw, :], 
-                                                color=to_color[iw], alpha=0.5, linewidth=0.5)
-                        plt.xlabel('r_p (stellar radii)')
-                        plt.ylabel('Normalized intensity')
-                        plt.title(f'Profiles with increasing segments ({jnp.sum(has_increase)} total)')
-                        plt.grid(True, alpha=0.3)
-                        plt.show()
-                        
-                        # Plot the worst offender
-                        plt.figure(figsize=(10, 6))
-                        plt.plot(r_ps[max_diff_idx[0], max_diff_idx[1], :], 
-                                local_stellar_intensities[max_diff_idx[0], max_diff_idx[1], max_diff_idx[2], :], 
-                                'r-', linewidth=2)
-                        plt.xlabel('r_p (stellar radii)')
-                        plt.ylabel('Normalized intensity')
-                        plt.title(f'Worst offender: b={bs[max_diff_idx[0]]:.3f}, p={ps[max_diff_idx[1]]:.4f}, λ_idx={max_diff_idx[2]}')
-                        plt.grid(True, alpha=0.3)
-                        plt.show()
-
-                        #Plot the stellar intensity spectrum for the worst offender
-                        plt.figure(figsize=(10, 7))
-                        for mu_idx in np.arange(0, len(stellar_mus), 2):
-                            plt.plot(stellar_wavelengths, global_stellar_intensities[:, mu_idx],
-                                    color=cm.inferno(0.85 - mu_idx/stellar_mus[mu_idx]), label="$\mu={:.2f}$".format(stellar_mus[mu_idx]))
-                        plt.axvline(x=stellar_wavelengths[max_diff_idx[2]], color='r', linestyle='--', label='Offending λ')
-                        plt.xlabel("$\lambda / \AA$", fontsize=13)
-                        plt.ylabel("Intensity / $n_{\gamma} s^{-1} cm^{-2} \AA{-1} sr^{-1}$", fontsize=13)
-                        plt.xlim(0, 5e4)
-                        plt.legend(loc="upper right", fontsize=13)
-                        plt.show()
-
-
-                        raise KeyboardInterrupt
-                    
                     #Garbage collection
                     del local_stellar_intensities, global_stellar_intensities, normalized_profiles, annuli_mus, r_ps, x_max, x_vals, t
                     gc.collect()
@@ -395,7 +329,6 @@ for model in models:
     ##########################################
     ########## PCA analysis ##################
     ##########################################
-    raise KeyboardInterrupt
     print('PCA ANALYSIS')
 
     # Retrieve the grid of mu values
