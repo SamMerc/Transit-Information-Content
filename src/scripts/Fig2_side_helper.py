@@ -36,7 +36,7 @@ import seaborn as sns
 LD_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/LD simulation'
 orig_save_data_path = '//Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_sidehelper_Storage/'
 
-models = ['kurucz'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
+models = ['mps1'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
 Teffs = {
     'phoenix' : [2300, 15000], 
@@ -301,6 +301,7 @@ gen_dict['stellar_mus'] = {model: np.zeros((N_star, N_star, N_star, mu_resolutio
 
 gen_dict['stellar_wavelengths'] = {model: np.empty((N_star, N_star, N_star), dtype=object) for model in models}
 
+has_increase_counter = {model: 0 for model in models}
 #Iterate over all the stellar models available 
 for model in models:
     
@@ -337,8 +338,8 @@ for model in models:
                     del sld  # Free memory from large StellarLimbDarkening object
 
                     #Filter out the bad portions of the intensity spectra
-                    # thresh = jnp.max(global_stellar_intensities)/1000
-                    # cond = jnp.all(global_stellar_intensities > thresh, axis=1)   # Shape: (n_wavelengths,)
+                    # thresh = 
+                    # cond = ((stellar_wavelengths > 6000) & (stellar_wavelengths < 53000))   # Shape: (n_wavelengths,)
                     # global_stellar_intensities = global_stellar_intensities[cond, :]
                     # stellar_wavelengths = stellar_wavelengths[cond]
 
@@ -389,7 +390,9 @@ for model in models:
                     # Shape: (n_bs, n_ps, n_wavelengths) - True where profile increases
 
                     if jnp.any(has_increase):
-                        print(f"Found {jnp.sum(has_increase)} profiles with increasing segments")
+                        has_increase_counter[model] += 1
+
+                        print(f"Found {jnp.sum(has_increase)}/{N_bs_ps * N_bs_ps * normalized_profiles.shape[2]} ({100 * (jnp.sum(has_increase))/(N_bs_ps * N_bs_ps * normalized_profiles.shape[2]):.0f} %) profiles with increasing segments")
                         
                         # Find the profile with the largest positive jump
                         diff_profiles = jnp.diff(local_stellar_intensities, axis=-1)
@@ -447,7 +450,7 @@ for model in models:
                         ax2.plot(stellar_wavelengths, gen_dict['rolling_mean'][model][i, j, k, mu_idx],
                                 color=to_color[mu_idx], label="$\mu={:.2f}$".format(stellar_mus[mu_idx]), linestyle='--')
 
-                        ax3.plot(stellar_wavelengths, (global_stellar_intensities[:, mu_idx] - gen_dict['rolling_mean'][model][i, j, k, mu_idx]) ,
+                        ax3.plot(stellar_wavelengths, (global_stellar_intensities[:, mu_idx] - gen_dict['rolling_mean'][model][i, j, k, mu_idx])/global_stellar_intensities[:, mu_idx] ,
                                 color=to_color[mu_idx], label="$\mu={:.2f}$".format(stellar_mus[mu_idx]))
                         
                         ax4.plot(stellar_wavelengths, gen_dict['rolling_standard_deviation'][model][i, j, k, mu_idx],
@@ -468,6 +471,8 @@ for model in models:
                     del local_stellar_intensities, global_stellar_intensities, normalized_profiles, annuli_mus, r_ps, x_max, x_vals, t
                     gc.collect()
 
+        print('Total profiles with increasing segments for model', model, ':', has_increase_counter[model])
+        
         #Store the stellar spectrum
         with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
     
@@ -617,4 +622,99 @@ for model in models:
     plt.savefig(save_data_path + f"{model}_heatmap_rel_diff.pdf", dpi=300, bbox_inches="tight")
     plt.close()
     print(f"Saved heatmap for {model}")
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Corner plot — maximum relative difference across all mu and wavelength ranges
+    # Parameters: Teff (axis 0), logg (axis 1), metallicity (axis 2)
+    # Each point is one star in the (i,j,k) grid
+    # ─────────────────────────────────────────────────────────────────────────────
+
+    # Flatten the parameter grids into 1D arrays, one entry per star
+    teff_grid = np.linspace(Teffs[model][0],        Teffs[model][1],        n_T)
+    logg_grid = np.linspace(loggs[model][0],         loggs[model][1],        n_g)
+    met_grid  = np.linspace(metallicitys[model][0],  metallicitys[model][1], n_m)
+
+    # Build (N_star^3, 3) array of parameter values
+    T_flat   = np.repeat(np.repeat(teff_grid,  n_g * n_m).reshape(n_T, n_g, n_m), 1).ravel()
+    g_flat   = np.tile(np.repeat(logg_grid, n_m), n_T)
+    m_flat   = np.tile(met_grid, n_T * n_g)
+
+    # For each star take the max over all mu angles and all wavelength ranges
+    # mean_rel_diff shape: (n_T, n_g, n_m, n_mu, n_wav_ranges)
+    color_vals = np.nanmax(mean_rel_diff, axis=(3, 4)).ravel()  # (n_T * n_g * n_m,)
+
+    params       = [T_flat,    g_flat,   m_flat  ]
+    param_labels = [
+        "$T_{\\rm eff}$ / K",
+        "$\\log g$",
+        "[M/H]",
+    ]
+    n_params = len(params)
+
+    # Shared colour scale
+    c_vmin = np.nanpercentile(color_vals, 2)   # robust min (ignore extreme outliers)
+    c_vmax = np.nanpercentile(color_vals, 98)  # robust max
+    corner_cmap = plt.cm.coolwarm
+    norm = matplotlib.colors.Normalize(vmin=c_vmin, vmax=c_vmax)
+
+    fig_corner, axes_corner = plt.subplots(
+        n_params, n_params,
+        figsize=(12, 12),
+        sharex="col",
+    )
+    fig_corner.suptitle(
+        f"{model.upper()} — corner plot\n"
+        r"colour $= \max_{\lambda,\,\mu}|\Delta I / I|$",
+        fontsize=14, y=1.01,
+    )
+
+    for row in range(n_params):
+        for col in range(n_params):
+            ax = axes_corner[row, col]
+
+            if col > row:
+                # Upper triangle — hide
+                ax.set_visible(False)
+                continue
+
+            if col == row:
+                # Diagonal — 1D histogram of parameter values,
+                # coloured by binned mean of color_vals
+                ax.hist(params[row], bins=n_T, color="steelblue", alpha=0.7, edgecolor="none")
+                ax.set_ylabel("Count", fontsize=9)
+
+            else:
+                # Lower triangle — scatter plot
+                sc = ax.scatter(
+                    params[col],   # x = column parameter
+                    params[row],   # y = row parameter
+                    c=color_vals,
+                    cmap=corner_cmap,
+                    norm=norm,
+                    s=18,
+                    alpha=0.85,
+                    linewidths=0,
+                )
+
+            # Axis labels on edges only
+            if row == n_params - 1:
+                ax.set_xlabel(param_labels[col], fontsize=11)
+            if col == 0 and row != col:
+                ax.set_ylabel(param_labels[row], fontsize=11)
+
+            ax.tick_params(labelsize=8)
+
+    # Single shared colorbar on the right
+    fig_corner.subplots_adjust(right=0.88, hspace=0.08, wspace=0.08)
+    cbar_ax = fig_corner.add_axes([0.91, 0.15, 0.02, 0.65])  # [left, bottom, width, height]
+    sm = plt.cm.ScalarMappable(cmap=corner_cmap, norm=norm)
+    sm.set_array([])
+    fig_corner.colorbar(sm, cax=cbar_ax, label=r"$\max_{\lambda,\,\mu}|\Delta I / I|$")
+
+    fig_corner.savefig(
+        save_data_path + f"{model}_corner_max_rel_diff.pdf",
+        dpi=300, bbox_inches="tight",
+    )
+    plt.close(fig_corner)
+    print(f"Saved corner plot for {model}")
 
