@@ -31,7 +31,7 @@ from scipy.interpolate import CubicSpline
 from lmfit import minimize, Parameters
 import gc
 import matplotlib.cm as cm
-
+from scipy.interpolate import interp1d
 
 ######################################
 ########## Hyper-parameters ##########
@@ -85,19 +85,25 @@ lambda_resolution = {
 
 N_star = 10
 
-N_chords = 100
+N_chords = 100 
 
 N_bs_ps = 5
 bs = jnp.linspace(0, 1, N_bs_ps)
 ps = jnp.logspace(-3, -1, N_bs_ps)
 
-n_components = 5
+#Number of mu values to interpolate to - set to EJ16 value
+n_mu_fine = 100   # much finer than the native 24 points
 
-n_clusters = 2
+n_components = 10
+cmap=plt.cm.coolwarm
+colors = cmap(np.linspace(0, 1, n_components))
+
+n_clusters = 5
 
 wav_region = [6000, 53000] #0.6 - 5.3 micron
 
-mode = 'build' # 'build' or 'load'
+intr_prof_mode = 'load' # 'build' or 'load'
+PCA_mode = 'build'
 
 ############################
 ###### Function block ######
@@ -224,7 +230,7 @@ for model in models:
     if not os.path.exists(save_data_path):os.makedirs(save_data_path)
 
     #Build intensity profiles grid
-    if mode == 'build':
+    if intr_prof_mode == 'build':
         #Iterate over the three stellar parameters and retrieve intensity profiles
         #Temperature
         for i, T in enumerate(jnp.linspace(Teffs[model][0], Teffs[model][1], N_star)):
@@ -245,30 +251,52 @@ for model in models:
                     stellar_mus = jnp.copy(sld.mus)
 
                     #Store the global stellar intensity spectrum
-                    global_stellar_intensities = jnp.copy(sld.stellar_intensities)
+                    global_stellar_intensities = jnp.copy(sld.stellar_intensities) # Shape: (n_wav, n_mu)
                     del sld  # Free memory from large StellarLimbDarkening object
                 
                     #Filter out the portions of wavelength space we don't want
-                    cond = ((stellar_wavelengths > wav_region[0]) & (stellar_wavelengths < wav_region[1]))   # Shape: (n_wavelengths,)
+                    cond = ((stellar_wavelengths > wav_region[0]) & (stellar_wavelengths < wav_region[1]))   # Shape: (n_wav,)
                     print(f'    Removing {100 * (len(stellar_wavelengths) - np.sum(cond))/(len(stellar_wavelengths)):.2f} % of the wavelength range')
-                    global_stellar_intensities = global_stellar_intensities[cond, :]
-                    stellar_wavelengths = stellar_wavelengths[cond]
-                    gen_dict['stellar_wavelengths'][model][i, j, k] = np.array(stellar_wavelengths)
+                    global_stellar_intensities = global_stellar_intensities[cond, :] # Shape: (n_wav, n_mu)
+                    stellar_wavelengths = stellar_wavelengths[cond] # Shape: (n_wav,)
+                    gen_dict['stellar_wavelengths'][model][i, j, k] = stellar_wavelengths
 
                     ##############################################################################
                     ########## Extract intensity profile for each transit chord ##################
                     ##############################################################################
 
+                    # ─────────────────────────────────────────────────────────────────────────────
+                    # Interpolate stellar intensities onto a fine mu grid to avoid staircase
+                    # ─────────────────────────────────────────────────────────────────────────────
+
+                    # Build fine grid from just above 0 to 1
+                    stellar_mus_fine = jnp.linspace(stellar_mus[-1], stellar_mus[0], n_mu_fine) # (n_mu_fine,)
+
+                    # Interpolate each wavelength's intensity profile onto the fine mu grid
+                    interp_func = interp1d(
+                        stellar_mus[::-1],
+                        global_stellar_intensities[:, ::-1],
+                        kind='cubic',        # cubic gives smooth curves matching exotic_ld's approach
+                        axis=1,              # interpolate along mu axis
+                        bounds_error=False,
+                    )
+                    global_stellar_intensities_fine = interp_func(stellar_mus_fine)   # (n_wav, n_mu_fine)
+
+                    # Put the order back
+                    stellar_mus_fine = stellar_mus_fine[::-1]
+                    global_stellar_intensities_fine = global_stellar_intensities_fine[:, ::-1]
+
+                
                     # Define the annuli edges - the models define intensity spectra at a specific 
                     # mu values so this spreads out these predictions over a band
                     annuli_mus = jnp.append(
-                        stellar_mus[:-1] + jnp.diff(stellar_mus)/2, 
-                        stellar_mus[-1] + (jnp.diff(stellar_mus)[-1]/2)
+                        stellar_mus_fine[:-1] + jnp.diff(stellar_mus_fine)/2,
+                        stellar_mus_fine[-1]  + (jnp.diff(stellar_mus_fine)[-1]/2)
                     )
-
+                    
                     # Compute for all (b, p) combinations at once
                     local_stellar_intensities = chord_intensity_vectorized(
-                        bs, ps, global_stellar_intensities, jnp.sqrt(1 - annuli_mus**2)
+                        bs, ps, global_stellar_intensities_fine, jnp.sqrt(1 - annuli_mus**2)
                     ) #shape : (n_bs, n_ps, n_wavelengths, N_chords)
 
                     #Define the grid of mu values for each ps and bs considered
@@ -295,7 +323,7 @@ for model in models:
 
                     #Garbage collection
                     del local_stellar_intensities, global_stellar_intensities, normalized_profiles, annuli_mus, \
-                    r_ps, x_max, x_vals, t, mask, cond, stellar_wavelengths, stellar_mus
+                    x_max, x_vals, t, mask, cond, stellar_wavelengths, stellar_mus, interp_func, stellar_mus_fine, global_stellar_intensities_fine
                     gc.collect()
 
 
@@ -303,7 +331,7 @@ for model in models:
         with open(save_data_path + 'data.pkl', 'wb') as f:pickle.dump(gen_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     #Load intensity profiles grid
-    elif mode == 'load':
+    elif intr_prof_mode == 'load':
         with open(save_data_path + 'data.pkl', 'rb') as f:gen_dict = pickle.load(f)
     
     else:
@@ -312,262 +340,330 @@ for model in models:
     ##########################################
     ########## PCA analysis ##################
     ##########################################
-    print('MASKING')
+    outlier_profiles = []
+    outlier_xs = []
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # Flatten object array into (N_valid, N_chords) before PCA
-    # Each entry [i,j,k] has shape (N_bs_ps, N_bs_ps, n_wav_valid_ijk, N_chords)
-    # n_wav_valid_ijk varies per star — hence the object array
-    # ─────────────────────────────────────────────────────────────────────────────
+    if PCA_mode == 'build':
+            
+        print('MASKING')
 
-    profile_chunks = []
-    rps_chunks     = []
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Flatten object array into (N_valid, N_chords) before PCA
+        # Each entry [i,j,k] has shape (N_bs_ps, N_bs_ps, n_wav_valid_ijk, N_chords)
+        # n_wav_valid_ijk varies per star — hence the object array
+        # ─────────────────────────────────────────────────────────────────────────────
 
-    for i in range(N_star):
-        for j in range(N_star):
-            for k in range(N_star):
-                entry      = gen_dict['local_intensity_profiles'][model][i, j, k]  # (n_bs, n_ps, n_wav, N_chords)
-                mask_entry = gen_dict['intensity_profiles_mask'][model][i, j, k]   # (n_bs, n_ps, n_wav)
-                rps_entry  = gen_dict['local_rps'][model][i, j, k]                 # (N_bs_ps, N_bs_ps, N_chords)
+        profile_chunks = []
+        rps_chunks     = []
 
-                # Flatten profile and mask to (n_bs*n_ps*n_wav, ...) then apply mask
-                profiles_flat = entry.reshape(-1, N_chords)          # (n_bs*n_ps*n_wav, N_chords)
-                mask_flat     = mask_entry.ravel()                    # (n_bs*n_ps*n_wav,)
-                profile_chunks.append(profiles_flat[mask_flat])      # (n_valid_ijk, N_chords)
+        for i in range(N_star):
+            for j in range(N_star):
+                for k in range(N_star):
+                    entry      = gen_dict['local_intensity_profiles'][model][i, j, k]  # (n_bs, n_ps, n_wav, N_chords)
+                    mask_entry = gen_dict['intensity_profiles_mask'][model][i, j, k]   # (n_bs, n_ps, n_wav)
+                    rps_entry  = gen_dict['local_rps'][model][i, j, k]                 # (N_bs_ps, N_bs_ps, N_chords)
 
-                # Expand r_ps to match profile rows, then apply same mask
-                rps_expanded = np.repeat(
-                    rps_entry.reshape(N_bs_ps * N_bs_ps, 1, N_chords),
-                    entry.shape[2], axis=1
-                ).reshape(-1, N_chords)                              # (n_bs*n_ps*n_wav, N_chords)
-                rps_chunks.append(rps_expanded[mask_flat])           # (n_valid_ijk, N_chords)
+                    # Flatten profile and mask to (n_bs*n_ps*n_wav, ...) then apply mask
+                    profiles_flat = entry.reshape(-1, N_chords)          # (n_bs*n_ps*n_wav, N_chords)
+                    mask_flat     = mask_entry.ravel()                    # (n_bs*n_ps*n_wav,)
+                    profile_chunks.append(profiles_flat[mask_flat])      # (n_valid_ijk, N_chords)
 
-    # Single allocation — no incremental growth
-    pca_int_profile = np.concatenate(profile_chunks, axis=0)  # (N_valid, N_chords)
-    xs              = np.concatenate(rps_chunks,     axis=0)  # (N_valid, N_chords)
+                    # Expand r_ps to match profile rows, then apply same mask
+                    xs_expanded = np.repeat(
+                        rps_entry.reshape(N_bs_ps * N_bs_ps, 1, N_chords),
+                        entry.shape[2], axis=1
+                    ).reshape(-1, N_chords)                              # (n_bs*n_ps*n_wav, N_chords)
+                    rps_chunks.append(xs_expanded[mask_flat])           # (n_valid_ijk, N_chords)
 
-    n_kept  = pca_int_profile.shape[0]
-    n_considered = sum(
-        gen_dict['intensity_profiles_mask'][model][i, j, k].size
-        for i in range(N_star)
-        for j in range(N_star)
-        for k in range(N_star)
-    )
+        # Single allocation — no incremental growth
+        pca_int_profile = np.concatenate(profile_chunks, axis=0)  # (N_valid, N_chords)
+        xs              = np.concatenate(rps_chunks,     axis=0)  # (N_valid, N_chords)
 
-    print(f"\n=== Profile filtering summary ===")
-    print(f"Total profiles considered : {n_considered}")
-    print(f"Kept after filtering      : {n_kept} ({100 * n_kept / n_considered:.1f} %)")
-    print(f"Removed                   : {n_considered - n_kept} ({100 * (n_considered - n_kept) / n_considered:.1f} %)")
+        n_kept  = pca_int_profile.shape[0]
+        n_considered = sum(
+            gen_dict['intensity_profiles_mask'][model][i, j, k].size
+            for i in range(N_star)
+            for j in range(N_star)
+            for k in range(N_star)
+        )
 
-    del profile_chunks, rps_chunks, n_considered
-    gc.collect()
+        print(f"=== Profile filtering summary ===")
+        print(f"Total profiles considered : {n_considered}")
+        print(f"Kept after filtering      : {n_kept} ({100 * n_kept / n_considered:.1f} %)")
+        print(f"Removed                   : {n_considered - n_kept} ({100 * (n_considered - n_kept) / n_considered:.1f} %)")
 
-    print('PCA ANALYSIS')
+        del profile_chunks, rps_chunks, n_considered
+        gc.collect()
 
-    # Retrieve number of valid profiles
-    n_valid = pca_int_profile.shape[0]
+        print('PCA ANALYSIS')
 
-    # Perform PCA analysis 
-    pca = PCA(n_components=n_components)
-    profiles_pca = pca.fit_transform(pca_int_profile)
+        # Retrieve number of valid profiles
+        n_valid = pca_int_profile.shape[0]
 
-    # Extract eigen intensity profile
-    eigen_profiles = pca.components_  # Shape: (n_components, n_mu_points)
+        # Perform PCA analysis 
+        pca = PCA(n_components=n_components)
+        profiles_pca = pca.fit_transform(pca_int_profile)
 
-    # Clustering in PCA space
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    cluster_labels = kmeans.fit_predict(profiles_pca[:, :3])  # Use first 3 PCs
+        # Extract eigen intensity profile
+        eigen_profiles = pca.components_  # Shape: (n_components, n_mu_points)
 
-    # Visualization
-    fig = plt.figure(figsize=(16, 12))
+        # Clustering in PCA space
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        cluster_labels = kmeans.fit_predict(profiles_pca[:, :3])  # Use first 3 PCs
 
-    # Plot 1: All original intensity profiles
-    ax1 = plt.subplot(3, 3, 1)
-    for nval in range(0, n_valid, 100):
-        ax1.plot(xs[nval], pca_int_profile[nval], alpha=0.3, color='gray', linewidth=0.5)
-    ax1.set_xlabel('μ = cos(θ)')
-    ax1.set_ylabel('Intensity')
-    ax1.set_title('Sample of Original Intensity Profiles')
-    ax1.grid(True, alpha=0.3)
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Figure 1: PCA diagnostics — adapts to n_components
+        # Layout: 3 fixed panels (sample profiles, scree, cumulative variance)
+        #       + n_components eigen profile panels
+        #       + 1 PCA scatter panel
+        # All arranged in rows of 3
+        # ─────────────────────────────────────────────────────────────────────────────
 
-    # Plot 2: Scree plot (explained variance)
-    ax2 = plt.subplot(3, 3, 2)
-    ax2.plot(range(1, n_components + 1), pca.explained_variance_ratio_, 'bo-', linewidth=2)
-    ax2.set_xlabel('Principal Component')
-    ax2.set_ylabel('Explained Variance Ratio')
-    ax2.set_title('Scree Plot')
-    ax2.grid(True, alpha=0.3)
+        n_panels  = 3 + n_components + 1   # 3 fixed + eigen profiles + scatter
+        ncols_pca = 3
+        nrows_pca = int(np.ceil(n_panels / ncols_pca))
 
-    # Plot 3: Cumulative explained variance
-    ax3 = plt.subplot(3, 3, 3)
-    ax3.plot(range(1, n_components + 1), jnp.cumsum(pca.explained_variance_ratio_), 'ro-', linewidth=2)
-    ax3.axhline(y=0.95, color='g', linestyle='--', label='95% variance')
-    ax3.set_xlabel('Number of Components')
-    ax3.set_ylabel('Cumulative Explained Variance')
-    ax3.set_title('Cumulative Variance Explained')
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
+        fig1, axes1 = plt.subplots(nrows_pca, ncols_pca,
+                                figsize=(6 * ncols_pca, 4 * nrows_pca))
+        axes_flat = axes1.ravel()
 
-    # Plot 4-8: First 5 Eigen-intensity profiles
-    colors = ['blue', 'red', 'green', 'purple', 'orange']
-    for i_plot in range(n_components):
-        ax = plt.subplot(3, 3, 4 + i_plot)
-        ax.plot(eigen_profiles[i_plot], color=colors[i_plot], linewidth=2)
-        ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
-        ax.set_xlabel('μ = cos(θ)')
-        ax.set_ylabel('Component Value')
-        ax.set_title(f'Eigen-profile {i_plot+1} ({pca.explained_variance_ratio_[i_plot]*100:.1f}%)')
+        # Panel 0: sample profiles
+        ax = axes_flat[0]
+        for nval in range(n_valid):
+            ax.plot(xs[nval], pca_int_profile[nval], alpha=0.2, color='gray', linewidth=0.5)
+        ax.set_xlabel('$r / R_\\star$')
+        ax.set_ylabel('Normalized Intensity')
+        ax.set_title('Sample Intensity Profiles')
         ax.grid(True, alpha=0.3)
 
-    # Plot 9: PCA space with clusters
-    ax9 = plt.subplot(3, 3, 9)
-    scatter = ax9.scatter(profiles_pca[:, 0], profiles_pca[:, 1], 
-                        c=cluster_labels, cmap='viridis', s=50, alpha=0.6)
-    ax9.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)')
-    ax9.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)')
-    ax9.set_title('Stellar Models in PCA Space')
-    plt.colorbar(scatter, ax=ax9, label='Cluster')
-    ax9.grid(True, alpha=0.3)
+        # Panel 1: scree plot
+        ax = axes_flat[1]
+        ax.plot(range(1, n_components + 1), pca.explained_variance_ratio_,
+                'o-', color='steelblue', linewidth=2)
+        ax.set_xlabel('Principal Component')
+        ax.set_ylabel('Explained Variance Ratio')
+        ax.set_title('Scree Plot')
+        ax.grid(True, alpha=0.3)
 
-    plt.savefig(save_data_path + 'PCA_Analysis.png', dpi=150, bbox_inches='tight')
-
-    # Find the mode (median/typical) and outlier profiles
-    # Calculate distances from the cluster centers
-    distances_from_centers = kmeans.transform(profiles_pca[:, :3])
-
-    # Find the most "typical" profile (closest to its cluster center)
-    typical_idx = jnp.argmin(jnp.min(distances_from_centers, axis=1))
-    typical_profile = pca_int_profile[typical_idx]
-
-    # Find outlier profiles (one from each cluster edge)
-    outlier_indices = []
-    for cluster_id in range(n_clusters):
-        cluster_mask = cluster_labels == cluster_id
-        cluster_distances = distances_from_centers[cluster_mask, cluster_id]
-        # Get the farthest point in this cluster
-        outlier_in_cluster = jnp.where(cluster_mask)[0][jnp.argmax(cluster_distances)]
-        outlier_indices.append(outlier_in_cluster)
-
-    # Alternatively, reconstruct profiles using different numbers of components
-    # This shows how well PCA approximates the original profiles
-    from matplotlib.gridspec import GridSpec
-
-    # Create figure with custom grid
-    fig2 = plt.figure(figsize=(15, 12))
-    gs = GridSpec(3, 1+len(outlier_indices), figure=fig2, height_ratios=[1, 0.66, 0.33], hspace=0.05)
-
-    # ===== Top Row: Typical and Outlier Profiles =====
-    # Plot typical profile surrounded by rest of profiles
-    ax = fig2.add_subplot(gs[0, 0])
-    for nval in range(0, n_valid, 100):
-        ax.plot(xs[nval], pca_int_profile[nval], alpha=0.3, color='gray', linewidth=0.5)
-    ax.plot(xs[typical_idx], typical_profile, 'b-', linewidth=2, label='Typical (Mode)', zorder=10)
-    ax.set_xlabel('μ = cos(θ)')
-    ax.set_ylabel('Normalized Intensity')
-    ax.set_title('Most Typical Intensity Profile')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    # Plot outlier profiles
-    for i_plot, outlier_idx in enumerate(outlier_indices):
-        ax = fig2.add_subplot(gs[0, i_plot+1])
-        for nval in range(0, n_valid, 100):
-            ax.plot(xs[nval], pca_int_profile[nval], alpha=0.3, color='gray', linewidth=0.5)
-        ax.plot(xs[outlier_idx], pca_int_profile[outlier_idx], 'r-', linewidth=2, 
-                label=f'Outlier {i_plot+1}', zorder=10)
-        ax.set_xlabel('μ = cos(θ)')
-        ax.set_ylabel('Normalized Intensity')
-        ax.set_title(f'Outlier Profile {i_plot+1}')
+        # Panel 2: cumulative variance
+        ax = axes_flat[2]
+        ax.plot(range(1, n_components + 1),
+                np.cumsum(pca.explained_variance_ratio_), 'o-', color='tomato', linewidth=2)
+        ax.axhline(y=0.95, color='g', linestyle='--', label='95%')
+        ax.set_xlabel('Number of Components')
+        ax.set_ylabel('Cumulative Explained Variance')
+        ax.set_title('Cumulative Variance Explained')
         ax.legend()
         ax.grid(True, alpha=0.3)
 
-    # ===== Bottom Two Rows: Reconstruction Quality =====
-    test_profile_idx = typical_idx
-    original = pca_int_profile[test_profile_idx]
+        # Panels 3 … 3+n_components-1: eigen profiles
+        for i_plot in range(n_components):
+            ax = axes_flat[3 + i_plot]
+            ax.plot(eigen_profiles[i_plot], color=colors[i_plot], linewidth=2)
+            ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+            ax.set_xlabel('$r / R_\\star$')
+            ax.set_ylabel('Component Value')
+            ax.set_title(f'PC{i_plot+1} ({pca.explained_variance_ratio_[i_plot]*100:.1f}%)')
+            ax.grid(True, alpha=0.3)
 
-    n_comp_list = [1, 2, n_components]
-    for col_idx, n_comp_plot in enumerate(n_comp_list):
-        # Reconstruct using only first n_comp_plot components
-        pca_temp = PCA(n_components=n_comp_plot)
-        pca_temp.fit(pca_int_profile)
-        reduced = pca_temp.transform(original.reshape(1, -1))
-        reconstructed = pca_temp.inverse_transform(reduced)[0]
+        # Panel 3+n_components: PCA scatter coloured by cluster
+        ax = axes_flat[3 + n_components]
+        scatter = ax.scatter(profiles_pca[:, 0], profiles_pca[:, 1],
+                            c=cluster_labels, cmap='viridis', s=20, alpha=0.5)
+        plt.colorbar(scatter, ax=ax, label='Cluster')
+        ax.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)')
+        ax.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)')
+        ax.set_title('PCA Space — Clusters')
+        ax.grid(True, alpha=0.3)
+
+        # Hide any unused panels
+        for idx in range(3 + n_components + 1, len(axes_flat)):
+            axes_flat[idx].set_visible(False)
+
+        fig1.tight_layout()
+        fig1.savefig(save_data_path + 'PCA_Analysis.png', dpi=150, bbox_inches='tight')
+        plt.close(fig1)
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Figure 2: Typical + outlier profiles — one column per cluster + 1 for typical
+        # Each column has its own colorbar if needed
+        # ─────────────────────────────────────────────────────────────────────────────
+
+        # Find the mode (median/typical) and outlier profiles
+        # Calculate distances from the cluster centers
+        distances_from_centers = kmeans.transform(profiles_pca[:, :3])
+
+        # Find the most "typical" profile (closest to its cluster center)
+        typical_idx = jnp.argmin(jnp.min(distances_from_centers, axis=1))
+        typical_profile = pca_int_profile[typical_idx]
+
+        # Find outlier profiles (one from each cluster edge)
+        outlier_indices = []
+        for cluster_id in range(n_clusters):
+            cluster_mask = cluster_labels == cluster_id
+            cluster_distances = distances_from_centers[cluster_mask, cluster_id]
+            # Get the farthest point in this cluster
+            outlier_in_cluster = jnp.where(cluster_mask)[0][jnp.argmax(cluster_distances)]
+            outlier_indices.append(outlier_in_cluster)
+
+
+        n_top_cols = 1 + n_clusters   # typical + one outlier per cluster
+        fig2, axes2 = plt.subplots(1, n_top_cols,
+                                figsize=(5 * n_top_cols, 5),
+                                sharey=True)
+        if n_top_cols == 1:
+            axes2 = [axes2]
+
+        # Typical profile (col 0)
+        ax = axes2[0]
+        for nval in range(0, n_valid, max(1, n_valid // 200)):
+            ax.plot(xs[nval], pca_int_profile[nval], alpha=0.2, color='gray', linewidth=0.4)
+        ax.plot(xs[typical_idx], typical_profile, 'b-', linewidth=2,
+                label='Typical', zorder=10)
+        ax.set_xlabel('$r / R_\\star$')
+        ax.set_ylabel('Normalized Intensity')
+        ax.set_title('Most Typical Profile')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        # One outlier column per cluster
+        for i_plot, outlier_idx in enumerate(outlier_indices):
+            ax = axes2[i_plot + 1]
+            # Colour background points by their cluster membership
+            for nval in range(0, n_valid, max(1, n_valid // 200)):
+                ax.plot(xs[nval], pca_int_profile[nval], alpha=0.2, color='gray', linewidth=0.4)
+            ax.plot(xs[outlier_idx], pca_int_profile[outlier_idx], 'r-', linewidth=2,
+                    label=f'Outlier cluster {i_plot}', zorder=10)
+            ax.set_xlabel('$r / R_\\star$')
+            ax.set_title(f'Outlier — Cluster {i_plot}')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+
+        fig2.tight_layout()
+        fig2.savefig(save_data_path + 'Mode_and_Outliers.png', dpi=150, bbox_inches='tight')
+        plt.close(fig2)
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Figure 3: Reconstruction quality for the typical profile
+        # Always 3 columns: 1 component, n_components//2, all n_components
+        # 2 rows: profile overlay (top) + residuals (bottom)
+        # ─────────────────────────────────────────────────────────────────────────────
+
+        from matplotlib.gridspec import GridSpec
+
+        n_comp_list  = [1, max(2, n_components // 2), n_components]
+        n_recon_cols = len(n_comp_list)   # always 3
+        original     = pca_int_profile[typical_idx]
+
+        fig3 = plt.figure(figsize=(6 * n_recon_cols, 6))
+        gs   = GridSpec(2, n_recon_cols, figure=fig3,
+                        height_ratios=[2, 1], hspace=0.05)
+
+        for col_idx, n_comp_plot in enumerate(n_comp_list):
+            pca_temp     = PCA(n_components=n_comp_plot)
+            pca_temp.fit(pca_int_profile)
+            reconstructed = pca_temp.inverse_transform(
+                                pca_temp.transform(original.reshape(1, -1)))[0]
+            residual = original - reconstructed
+            rmse     = np.sqrt(np.mean(residual ** 2))
+
+            ax_top = fig3.add_subplot(gs[0, col_idx])
+            ax_top.plot(xs[typical_idx], original,       'k-',  linewidth=2,
+                        label='Original', alpha=0.8)
+            ax_top.plot(xs[typical_idx], reconstructed,  'r--', linewidth=2,
+                        label='Reconstructed')
+            ax_top.set_ylabel('Normalized Intensity')
+            ax_top.set_title(f'{n_comp_plot} PC{"s" if n_comp_plot > 1 else ""}  '
+                            f'(RMSE = {rmse:.4f})')
+            ax_top.legend(loc='best', fontsize=9)
+            ax_top.grid(True, alpha=0.3)
+            ax_top.tick_params(labelbottom=False)
+
+            ax_bot = fig3.add_subplot(gs[1, col_idx], sharex=ax_top)
+            safe_original = np.where(np.abs(original) < 1e-10, np.nan, original)
+            ax_bot.plot(xs[typical_idx], 100 * residual / safe_original,
+                        'g-', linewidth=1.5, label='Rel. diff.')
+            ax_bot.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+            ax_bot.set_xlabel('$r / R_\\star$')
+            ax_bot.set_ylabel('Rel. diff. (%)')
+            ax_bot.legend(loc='best', fontsize=9)
+            ax_bot.grid(True, alpha=0.3)
+
+        fig3.savefig(save_data_path + 'Reconstruction_Quality.png',
+                    dpi=150, bbox_inches='tight')
+        plt.close(fig3)
+
+        # Print summary statistics
+        print(f"\n=== PCA Analysis Summary ===")
+        print(f"Total profiles analyzed: {len(pca_int_profile)}")
+        print(f"Variance captured by {n_components} components: {jnp.sum(pca.explained_variance_ratio_)*100:.2f}%")
+        print(f"\nTypical profile index: {typical_idx}")
+        print(f"Outlier profile indices: {outlier_indices}")
+
+        # Save the profiles for use in your transit simulations
+        np.save(save_data_path + f'mode_intensity_profile_{model}.npy', typical_profile)
+        np.save(save_data_path + f'mode_rs_{model}.npy', xs[typical_idx])
+        typical_xs = xs[typical_idx]
+        for i_save, outlier_idx in enumerate(outlier_indices):
+            outlier_profiles.append(pca_int_profile[outlier_idx])
+            np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy', 
+                    pca_int_profile[outlier_idx])
+            outlier_xs.append(xs[outlier_idx])
+            np.save(save_data_path + f'outlier{i_save+1}_rs_{model}.npy', 
+                    xs[outlier_idx])
+
+        print(f"\nSaved profiles to {save_data_path}")
+
+    elif PCA_mode == 'load':
+
+        typical_profile = np.load(save_data_path + f'mode_intensity_profile_{model}.npy')
+        typical_xs = np.load(save_data_path + f'mode_rs_{model}.npy')
+        for i_save in range(n_clusters):
+            outlier_profiles.append(np.load(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy'))
+            outlier_xs.append(np.load(save_data_path + f'outlier{i_save+1}_rs_{model}.npy'))
+
+        print(f"\nLoaded profiles from {save_data_path}")
+
+    else:
+        raise KeyboardInterrupt('Wrong PCA mode')
+
+
+    #Fitting the mode and outlier profiles with a 4-th order non-linear limb-darkening law
+    for j_fit, (special_xs, special_profile) in enumerate(zip([typical_xs] + outlier_xs, [typical_profile] + outlier_profiles)):
         
-        residual = original - reconstructed
-        rmse = np.sqrt(np.mean(residual**2))
+        # Get positions from 0 to 1
+        special_ts = jnp.linspace(0, 1, N_chords)
+
+        # Convert the profile values from 'rs' to mus
+        special_mus = jnp.sqrt(1 - special_ts**2)
+        # No need to interpolate on a finer grid of mu values since this was already done previously
+
+        #Define 4-th order non-linear LD law
+        def fourNLLD(x, coeffs):
+            return 1 - coeffs[0] * (1 - x**(1/2)) - coeffs[1] * (1 - x) - coeffs[2] * (1 - x**(3/2)) - coeffs[3] * (1 - x**2)
         
-        # Top part: Original vs Reconstructed (2/3 of height)
-        ax_top = fig2.add_subplot(gs[1, col_idx])
-        ax_top.plot(xs[test_profile_idx], original, 'k-', linewidth=2, label='Original', alpha=0.7)
-        ax_top.plot(xs[test_profile_idx], reconstructed, 'r--', linewidth=2, label='Reconstructed')
-        ax_top.set_ylabel('Normalized Intensity')
-        ax_top.set_title(f'{n_comp_plot} Components (RMSE={rmse:.4f})')
-        ax_top.legend(loc='best')
-        ax_top.grid(True, alpha=0.3)
-        ax_top.set_xticklabels([])  # Remove x-axis labels for top subplot
-        
-        # Bottom part: Residuals (1/3 of height)
-        ax_bottom = fig2.add_subplot(gs[2, col_idx], sharex=ax_top)
-        ax_bottom.plot(xs[test_profile_idx], 100 * residual / original, 'g-', linewidth=1.5, label='Rel. Diff.')
-        ax_bottom.axhline(y=0, color='k', linestyle='--', alpha=0.5)
-        ax_bottom.set_xlabel('μ = cos(θ)')
-        ax_bottom.set_ylabel('Relative Diff. (%)')
-        ax_bottom.legend(loc='best')
-        ax_bottom.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(save_data_path + 'Mode&Outliers.png', dpi=150, bbox_inches='tight')
-
-    # Print summary statistics
-    print(f"\n=== PCA Analysis Summary ===")
-    print(f"Total profiles analyzed: {len(pca_int_profile)}")
-    print(f"Variance captured by {n_components} components: {jnp.sum(pca.explained_variance_ratio_)*100:.2f}%")
-    print(f"\nTypical profile index: {typical_idx}")
-    print(f"Outlier profile indices: {outlier_indices}")
-
-    # Save the profiles for use in your transit simulations
-    np.save(save_data_path + f'mode_intensity_profile_{model}.npy', typical_profile)
-    for i_save, outlier_idx in enumerate(outlier_indices):
-        np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy', 
-                pca_int_profile[outlier_idx])
-
-    print(f"\nSaved profiles to {save_data_path}")
-
-
-    # #Fitting the mode and outlier profiles with a 4-th order non-linear limb-darkening law
-    # for j_fit, special_profile in enumerate([typical_profile] + [pca_int_profile[idx] for idx in outlier_indices]):
-        
-    #     # #Interpolate intensity profile from its grid to a grid of 100 mu values going from 0.01 to 1.0 with increments of 0.01 with cubic spline (Claret & Bloemen 2011)
-    #     # new_mus = jnp.linspace(0.01, 1.0, 100)
-    #     # inter_special_profile = CubicSpline(mus[::-1], special_profile[::-1])(new_mus)
-
-    #     #Define 4-th order non-linear LD law
-    #     def fourNLLD(x, coeffs):
-    #         return 1 - coeffs[0] * (1 - x**(1/2)) - coeffs[1] * (1 - x) - coeffs[2] * (1 - x**(3/2)) - coeffs[3] * (1 - x**2)
-        
-    #     #Define residual function to minimize
-    #     def residual(params, x, base_prof):
-    #         return fourNLLD(x, [params[f'c{i_coeff+1}'].value for i_coeff in range(4)]) - base_prof
+        #Define residual function to minimize
+        def residual(params, x, base_prof):
+            return fourNLLD(x, [params[f'c{i_coeff+1}'].value for i_coeff in range(4)]) - base_prof
     
-    #     #Define lmfit parameters
-    #     params = Parameters()
-    #     for i_param in range(4):
-    #         params.add(f'c{i_param+1}', value=np.random.uniform(0, 1))
+        #Define lmfit parameters
+        params = Parameters()
+        for i_param in range(4):
+            params.add(f'c{i_param+1}', value=np.random.uniform(0, 1))
 
-    #     #Perform the minimization
-    #     result = minimize(residual, params, args=(new_mus, inter_special_profile))
+        #Perform the minimization
+        result = minimize(residual, params, args=(special_mus, special_profile))
 
-    #     #Plot base profile, interpolated profile, and best-fit profile
-    #     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-    #     ax1.plot(mus, special_profile, 'bo', label='Original Profile', alpha=0.5)
-    #     ax1.plot(new_mus, inter_special_profile, 'g-', label='Interpolated Profile', alpha=0.7)
-    #     ax1.plot(new_mus, fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]), 'r--', label='Best-fit 4th Order NLLD', linewidth=2)
-    #     ax2.plot(new_mus, 100 * (inter_special_profile - fourNLLD(new_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]))/inter_special_profile, 'r--', linewidth=2)
-    #     ax2.set_xlabel('μ = cos(θ)')
-    #     ax1.set_ylabel('Normalized Intensity')
-    #     ax2.set_ylabel('Relative Difference (%)')
-    #     ax1.set_title('4th Order Non-Linear Limb-Darkening Fit - ' + ('Typical Profile' if j_fit==0 else f'Outlier Profile {j_fit}'))
-    #     ax1.legend()
-    #     ax1.grid(True, alpha=0.3)
-    #     ax2.grid(True, alpha=0.3)
-    #     plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j_fit==0 else f"outlier{j_fit}"}_{model}.png', dpi=150, bbox_inches='tight')
+        #Plot base profile, interpolated profile, and best-fit profile
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+        ax1.plot(special_mus, special_profile, 'bo', label='Original Profile', alpha=0.5)
+        ax1.plot(special_mus, fourNLLD(special_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]), 'r--', label='Best-fit 4th Order NLLD', linewidth=2)
+        ax2.plot(special_mus, 100 * (special_profile - fourNLLD(special_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]))/special_profile, 'r--', linewidth=2)
+        ax2.set_xlabel('μ = cos(θ)')
+        ax1.set_ylabel('Normalized Intensity')
+        ax2.set_ylabel('Relative Difference (%)')
+        ax1.set_title('4th Order Non-Linear Limb-Darkening Fit - ' + ('Typical Profile' if j_fit==0 else f'Outlier Profile {j_fit}'))
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        ax2.grid(True, alpha=0.3)
+        plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j_fit==0 else f"outlier{j_fit}"}_{model}.png', dpi=150, bbox_inches='tight')

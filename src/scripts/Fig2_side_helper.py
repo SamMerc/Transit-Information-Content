@@ -28,6 +28,7 @@ import pickle
 import gc
 cmap = plt.cm.coolwarm
 import seaborn as sns
+from scipy.interpolate import interp1d
 
 ######################################
 ########## Hyper-parameters ##########
@@ -86,6 +87,8 @@ N_chords = 100
 N_bs_ps = 5
 bs = jnp.linspace(0, 1, N_bs_ps)
 ps = jnp.logspace(-3, -1, N_bs_ps)
+
+n_mu_fine = 100
 
 mode = 'build' # 'build' or 'load'
 
@@ -291,13 +294,13 @@ gen_dict['local_rps']={model : np.zeros((N_star, N_star, N_star, N_bs_ps, N_bs_p
 
 gen_dict['local_intensity_profiles']={model: np.empty((N_star, N_star, N_star), dtype=object) for model in models}
 
-gen_dict['rolling_standard_deviation']={model : np.zeros((N_star, N_star, N_star, mu_resolution[model]), dtype=object) for model in models}
+gen_dict['rolling_standard_deviation']={model : np.zeros((N_star, N_star, N_star, n_mu_fine), dtype=object) for model in models}
 
-gen_dict['rolling_mean']={model : np.zeros((N_star, N_star, N_star, mu_resolution[model]), dtype=object) for model in models}
+gen_dict['rolling_mean']={model : np.zeros((N_star, N_star, N_star, n_mu_fine), dtype=object) for model in models}
 
 gen_dict['global_stellar_intensity'] = {model: np.empty((N_star, N_star, N_star), dtype=object)for model in models}
 
-gen_dict['stellar_mus'] = {model: np.zeros((N_star, N_star, N_star, mu_resolution[model]), dtype=float)for model in models}
+gen_dict['stellar_mus'] = {model: np.zeros((N_star, N_star, N_star, n_mu_fine), dtype=float)for model in models}
 
 gen_dict['stellar_wavelengths'] = {model: np.empty((N_star, N_star, N_star), dtype=object) for model in models}
 
@@ -328,10 +331,7 @@ for model in models:
                     
                     #Store the wavelength and mu arrays
                     stellar_wavelengths = jnp.copy(sld.stellar_wavelengths)
-                    if (i == 0) and (j == 0) and (k == 0):
-                        stellar_mus = jnp.copy(sld.mus)
-
-                    gen_dict['stellar_mus'][model][i, j, k] = np.array(stellar_mus)
+                    stellar_mus = jnp.copy(sld.mus)
 
                     #Store the global stellar intensity spectrum
                     global_stellar_intensities = jnp.copy(sld.stellar_intensities)
@@ -339,13 +339,39 @@ for model in models:
 
                     #Filter out the bad portions of the intensity spectra
                     # thresh = 
-                    # cond = ((stellar_wavelengths > 6000) & (stellar_wavelengths < 53000))   # Shape: (n_wavelengths,)
-                    # global_stellar_intensities = global_stellar_intensities[cond, :]
-                    # stellar_wavelengths = stellar_wavelengths[cond]
+                    cond = ((stellar_wavelengths > 6000) & (stellar_wavelengths < 53000))   # Shape: (n_wavelengths,)
+                    global_stellar_intensities = global_stellar_intensities[cond, :]
+                    stellar_wavelengths = stellar_wavelengths[cond]
 
                     #Store the global stellar intensity spectrum for each model and parameter set
                     gen_dict['global_stellar_intensity'][model][i, j, k] = np.array(global_stellar_intensities)
                     gen_dict['stellar_wavelengths'][model][i, j, k] = np.array(stellar_wavelengths)
+
+                    ##############################################################################
+                    ########## Extract intensity profile for each transit chord ##################
+                    ##############################################################################
+
+                    # ─────────────────────────────────────────────────────────────────────────────
+                    # Interpolate stellar intensities onto a fine mu grid to avoid staircase
+                    # ─────────────────────────────────────────────────────────────────────────────
+
+                    # Build fine grid from just above 0 to 1
+                    stellar_mus_fine = jnp.linspace(stellar_mus[-1], stellar_mus[0], n_mu_fine) # (n_mu_fine,)
+
+                    # Interpolate each wavelength's intensity profile onto the fine mu grid
+                    interp_func = interp1d(
+                        stellar_mus[::-1],
+                        global_stellar_intensities[:, ::-1],
+                        kind='cubic',        # cubic gives smooth curves matching exotic_ld's approach
+                        axis=1,              # interpolate along mu axis
+                        bounds_error=False,
+                    )
+                    global_stellar_intensities_fine = interp_func(stellar_mus_fine)   # (n_wav, n_mu_fine)
+
+                    # Put the order back
+                    stellar_mus = stellar_mus_fine[::-1]
+                    global_stellar_intensities = global_stellar_intensities_fine[:, ::-1]
+                    gen_dict['stellar_mus'][model][i, j, k] = stellar_mus
 
                     #Perform the rolling window mean across the spectrum
                     for mu_idx in range(len(stellar_mus)):
@@ -355,18 +381,14 @@ for model in models:
                     #Perform the rolling window standard deviation across on the resulting high-frequency variations to identify regions of the spectrum with high variability which may cause issues for the interpolation and PCA decomposition steps.
                     for mu_idx in range(len(stellar_mus)):
                         gen_dict['rolling_standard_deviation'][model][i, j, k, mu_idx] = rolling_std(stellar_wavelengths, (global_stellar_intensities[:, mu_idx] - gen_dict['rolling_mean'][model][i, j, k, mu_idx])/global_stellar_intensities[:, mu_idx], window_size=rolling_std_window_size)
-
-                    ##############################################################################
-                    ########## Extract intensity profile for each transit chord ##################
-                    ##############################################################################
-
+                
                     # Define the annuli edges - the models define intensity spectra at a specific 
                     # mu values so this spreads out these predictions over a band
                     annuli_mus = jnp.append(
-                        stellar_mus[:-1] + jnp.diff(stellar_mus)/2, 
-                        stellar_mus[-1] + (jnp.diff(stellar_mus)[-1]/2)
+                        stellar_mus[:-1] + jnp.diff(stellar_mus)/2,
+                        stellar_mus[-1]  + (jnp.diff(stellar_mus)[-1]/2)
                     )
-
+                    
                     # Compute for all (b, p) combinations at once
                     local_stellar_intensities = chord_intensity_vectorized(
                         bs, ps, global_stellar_intensities, jnp.sqrt(1 - annuli_mus**2)
@@ -623,98 +645,114 @@ for model in models:
     plt.close()
     print(f"Saved heatmap for {model}")
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # Corner plot — maximum relative difference across all mu and wavelength ranges
-    # Parameters: Teff (axis 0), logg (axis 1), metallicity (axis 2)
-    # Each point is one star in the (i,j,k) grid
-    # ─────────────────────────────────────────────────────────────────────────────
+from scipy.interpolate import griddata
 
-    # Flatten the parameter grids into 1D arrays, one entry per star
-    teff_grid = np.linspace(Teffs[model][0],        Teffs[model][1],        n_T)
-    logg_grid = np.linspace(loggs[model][0],         loggs[model][1],        n_g)
-    met_grid  = np.linspace(metallicitys[model][0],  metallicitys[model][1], n_m)
+# ─────────────────────────────────────────────────────────────────────────────
+# Corner plot — heatmap version via 2D interpolation
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # Build (N_star^3, 3) array of parameter values
-    T_flat   = np.repeat(np.repeat(teff_grid,  n_g * n_m).reshape(n_T, n_g, n_m), 1).ravel()
-    g_flat   = np.tile(np.repeat(logg_grid, n_m), n_T)
-    m_flat   = np.tile(met_grid, n_T * n_g)
+teff_grid = np.linspace(Teffs[model][0],        Teffs[model][1],        n_T)
+logg_grid = np.linspace(loggs[model][0],         loggs[model][1],        n_g)
+met_grid  = np.linspace(metallicitys[model][0],  metallicitys[model][1], n_m)
 
-    # For each star take the max over all mu angles and all wavelength ranges
-    # mean_rel_diff shape: (n_T, n_g, n_m, n_mu, n_wav_ranges)
-    color_vals = np.nanmax(mean_rel_diff, axis=(3, 4)).ravel()  # (n_T * n_g * n_m,)
+T_flat = np.repeat(np.repeat(teff_grid, n_g * n_m).reshape(n_T, n_g, n_m), 1).ravel()
+g_flat = np.tile(np.repeat(logg_grid, n_m), n_T)
+m_flat = np.tile(met_grid, n_T * n_g)
 
-    params       = [T_flat,    g_flat,   m_flat  ]
-    param_labels = [
-        "$T_{\\rm eff}$ / K",
-        "$\\log g$",
-        "[M/H]",
-    ]
-    n_params = len(params)
+color_vals = np.nanmax(mean_rel_diff, axis=(3, 4)).ravel()  # (n_T * n_g * n_m,)
 
-    # Shared colour scale
-    c_vmin = np.nanpercentile(color_vals, 2)   # robust min (ignore extreme outliers)
-    c_vmax = np.nanpercentile(color_vals, 98)  # robust max
-    corner_cmap = plt.cm.coolwarm
-    norm = matplotlib.colors.Normalize(vmin=c_vmin, vmax=c_vmax)
+params       = [T_flat,   g_flat,  m_flat ]
+param_labels = ["$T_{\\rm eff}$ / K", "$\\log g$", "[M/H]"]
+n_params     = len(params)
 
-    fig_corner, axes_corner = plt.subplots(
-        n_params, n_params,
-        figsize=(12, 12),
-        sharex="col",
-    )
-    fig_corner.suptitle(
-        f"{model.upper()} — corner plot\n"
-        r"colour $= \max_{\lambda,\,\mu}|\Delta I / I|$",
-        fontsize=14, y=1.01,
-    )
+c_vmin = np.nanpercentile(color_vals, 2)
+c_vmax = np.nanpercentile(color_vals, 98)
+corner_cmap = plt.cm.coolwarm
+norm = matplotlib.colors.Normalize(vmin=c_vmin, vmax=c_vmax)
 
-    for row in range(n_params):
-        for col in range(n_params):
-            ax = axes_corner[row, col]
+# Resolution of the interpolated grid in each panel
+n_interp = 10
 
-            if col > row:
-                # Upper triangle — hide
-                ax.set_visible(False)
-                continue
+fig_corner, axes_corner = plt.subplots(
+    n_params, n_params,
+    figsize=(12, 12),
+)
+fig_corner.suptitle(
+    f"{model.upper()} — corner plot\n"
+    r"colour $= \max_{\lambda,\,\mu}|\Delta I / I|$",
+    fontsize=14, y=1.01,
+)
 
-            if col == row:
-                # Diagonal — 1D histogram of parameter values,
-                # coloured by binned mean of color_vals
-                ax.hist(params[row], bins=n_T, color="steelblue", alpha=0.7, edgecolor="none")
-                ax.set_ylabel("Count", fontsize=9)
+for row in range(n_params):
+    for col in range(n_params):
+        ax = axes_corner[row, col]
 
-            else:
-                # Lower triangle — scatter plot
-                sc = ax.scatter(
-                    params[col],   # x = column parameter
-                    params[row],   # y = row parameter
-                    c=color_vals,
-                    cmap=corner_cmap,
-                    norm=norm,
-                    s=18,
-                    alpha=0.85,
-                    linewidths=0,
-                )
+        if col > row:
+            ax.set_visible(False)
+            continue
 
-            # Axis labels on edges only
-            if row == n_params - 1:
-                ax.set_xlabel(param_labels[col], fontsize=11)
-            if col == 0 and row != col:
-                ax.set_ylabel(param_labels[row], fontsize=11)
+        if col == row:
+            # Diagonal — 1D histogram
+            ax.hist(params[row], bins=n_T, color="steelblue",
+                    alpha=0.7, edgecolor="none")
+            ax.set_ylabel("Count", fontsize=9)
 
-            ax.tick_params(labelsize=8)
+        else:
+            # Lower triangle — interpolated heatmap
+            x_data = params[col]   # x = column parameter
+            y_data = params[row]   # y = row parameter
 
-    # Single shared colorbar on the right
-    fig_corner.subplots_adjust(right=0.88, hspace=0.08, wspace=0.08)
-    cbar_ax = fig_corner.add_axes([0.91, 0.15, 0.02, 0.65])  # [left, bottom, width, height]
-    sm = plt.cm.ScalarMappable(cmap=corner_cmap, norm=norm)
-    sm.set_array([])
-    fig_corner.colorbar(sm, cax=cbar_ax, label=r"$\max_{\lambda,\,\mu}|\Delta I / I|$")
+            # Build a regular grid spanning the data range
+            xi = np.linspace(x_data.min(), x_data.max(), n_interp)
+            yi = np.linspace(y_data.min(), y_data.max(), n_interp)
+            xi_grid, yi_grid = np.meshgrid(xi, yi)
 
-    fig_corner.savefig(
-        save_data_path + f"{model}_corner_max_rel_diff.pdf",
-        dpi=300, bbox_inches="tight",
-    )
-    plt.close(fig_corner)
-    print(f"Saved corner plot for {model}")
+            # Interpolate scattered (x, y, value) onto the regular grid
+            # 'linear' is safe; use 'cubic' for smoother result if no NaNs appear
+            zi = griddata(
+                points=np.column_stack([x_data, y_data]),
+                values=color_vals,
+                xi=(xi_grid, yi_grid),
+                method='linear',
+                fill_value=np.nan,
+            )
+
+            im = ax.imshow(
+                zi,
+                origin='lower',
+                extent=[x_data.min(), x_data.max(),
+                        y_data.min(), y_data.max()],
+                aspect='auto',
+                cmap=corner_cmap,
+                norm=norm,
+                interpolation='bilinear',
+            )
+
+        # Axis labels on edges only
+        if row == n_params - 1:
+            ax.set_xlabel(param_labels[col], fontsize=11)
+        else:
+            ax.tick_params(labelbottom=False)
+
+        if col == 0 and row != col:
+            ax.set_ylabel(param_labels[row], fontsize=11)
+        elif col != 0:
+            ax.tick_params(labelleft=False)
+
+        ax.tick_params(labelsize=8)
+
+# Single shared colorbar
+fig_corner.subplots_adjust(right=0.88, hspace=0.08, wspace=0.08)
+cbar_ax = fig_corner.add_axes([0.91, 0.15, 0.02, 0.65])
+sm = plt.cm.ScalarMappable(cmap=corner_cmap, norm=norm)
+sm.set_array([])
+fig_corner.colorbar(sm, cax=cbar_ax,
+                    label=r"$\max_{\lambda,\,\mu}|\Delta I / I|$")
+
+fig_corner.savefig(
+    save_data_path + f"{model}_heat_max_rel_diff.pdf",
+    dpi=300, bbox_inches="tight",
+)
+plt.close(fig_corner)
+print(f"Saved corner plot for {model}")
 
