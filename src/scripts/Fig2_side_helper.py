@@ -29,6 +29,7 @@ import gc
 cmap = plt.cm.coolwarm
 import seaborn as sns
 from scipy.interpolate import interp1d
+from scipy.interpolate import griddata
 
 ######################################
 ########## Hyper-parameters ##########
@@ -344,7 +345,6 @@ for model in models:
                     stellar_wavelengths = stellar_wavelengths[cond]
 
                     #Store the global stellar intensity spectrum for each model and parameter set
-                    gen_dict['global_stellar_intensity'][model][i, j, k] = np.array(global_stellar_intensities)
                     gen_dict['stellar_wavelengths'][model][i, j, k] = np.array(stellar_wavelengths)
 
                     ##############################################################################
@@ -372,6 +372,7 @@ for model in models:
                     stellar_mus = stellar_mus_fine[::-1]
                     global_stellar_intensities = global_stellar_intensities_fine[:, ::-1]
                     gen_dict['stellar_mus'][model][i, j, k] = stellar_mus
+                    gen_dict['global_stellar_intensity'][model][i, j, k] = global_stellar_intensities_fine
 
                     #Perform the rolling window mean across the spectrum
                     for mu_idx in range(len(stellar_mus)):
@@ -514,14 +515,14 @@ for model in models:
     # ─────────────────────────────────────────────────────────────────────────────
 
     wav_ranges = [
-        (3000, 20000),   # column 0: e.g. (3000, 5000) Å
+        (6000, 20000),   # column 0: e.g. (3000, 5000) Å
         (20000, 40000),   # column 1: e.g. (5000, 7000) Å
-        (40000, 60000),   # column 2: e.g. (7000, 9000) Å
+        (40000, 53000),   # column 2: e.g. (7000, 9000) Å
     ]
     wav_range_labels = [
-        r"$\lambda \in [3000, 20000]\ \AA$",
+        r"$\lambda \in [6000, 20000]\ \AA$",
         r"$\lambda \in [20000, 40000]\ \AA$",
-        r"$\lambda \in [40000, 60000]\ \AA$",
+        r"$\lambda \in [40000, 53000]\ \AA$",
     ]
 
     # ─────────────────────────────────────────────────────────────────────────────
@@ -530,7 +531,7 @@ for model in models:
     # ─────────────────────────────────────────────────────────────────────────────
 
     n_T, n_g, n_m = N_star, N_star, N_star
-    n_mu          = mu_resolution[model]
+    n_mu          = n_mu_fine
     n_wav_ranges  = len(wav_ranges)
 
     mean_rel_diff = np.full((n_T, n_g, n_m, n_mu, n_wav_ranges), np.nan, dtype=float)
@@ -573,7 +574,7 @@ for model in models:
     met_labels  = [f"{v:.1f}" for v in met_vals]
 
     # Three mu indices: first, middle, last
-    mu_indices = [0, n_mu // 2 - 5, n_mu - 1]
+    mu_indices = [0, n_mu // 2, n_mu - 1]
     stellar_mus_ref = gen_dict['stellar_mus'][model][0, 0, 0]  # use (0,0,0) as reference
     mu_labels = [f"μ = {stellar_mus_ref[idx]:.2f}" for idx in mu_indices]
 
@@ -601,7 +602,7 @@ for model in models:
         for col, wav_label in enumerate(wav_range_labels):
 
             ax = axes[row, col]
-            vmin, vmax = 0.01, 0.2 #col_vlims[col]  # shared across rows for this column
+            vmin, vmax = 0.01, 0.5 #col_vlims[col]  # shared across rows for this column
 
             # Slice this mu and wavelength range → (n_T, n_g, n_m)
             data_3d = mean_rel_diff[:, :, :, mu_idx, col]
@@ -644,8 +645,6 @@ for model in models:
     plt.savefig(save_data_path + f"{model}_heatmap_rel_diff.pdf", dpi=300, bbox_inches="tight")
     plt.close()
     print(f"Saved heatmap for {model}")
-
-from scipy.interpolate import griddata
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Corner plot — heatmap version via 2D interpolation

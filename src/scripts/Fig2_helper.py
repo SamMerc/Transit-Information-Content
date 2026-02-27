@@ -92,7 +92,7 @@ bs = jnp.linspace(0, 1, N_bs_ps)
 ps = jnp.logspace(-3, -1, N_bs_ps)
 
 #Number of mu values to interpolate to - set to EJ16 value
-n_mu_fine = 100   # much finer than the native 24 points
+n_mu_fine = 1000   # much finer than the native 24 points
 
 n_components = 10
 cmap=plt.cm.coolwarm
@@ -319,7 +319,7 @@ for model in models:
 
                     #Normalize and store this local intensity profile
                     gen_dict['local_intensity_profiles'][model][i, j, k] = normalized_profiles # (n_bs, n_ps, n_wav_valid, N_chords)
-                    gen_dict['local_rps'][model][i, j, k, :, :, :] = r_ps
+                    gen_dict['local_rps'][model][i, j, k, :, :, :] = jnp.linspace(0.0, 1.0, N_chords)
 
                     #Garbage collection
                     del local_stellar_intensities, global_stellar_intensities, normalized_profiles, annuli_mus, \
@@ -348,14 +348,29 @@ for model in models:
         print('MASKING')
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # Flatten object array into (N_valid, N_chords) before PCA
-        # Each entry [i,j,k] has shape (N_bs_ps, N_bs_ps, n_wav_valid_ijk, N_chords)
-        # n_wav_valid_ijk varies per star — hence the object array
+        # Pass 1 — count valid profiles and total considered (single cheap loop)
         # ─────────────────────────────────────────────────────────────────────────────
+        n_considered = 0
+        n_valid      = 0
+        for i in range(N_star):
+            for j in range(N_star):
+                for k in range(N_star):
+                    mask_entry    = gen_dict['intensity_profiles_mask'][model][i, j, k]
+                    n_considered += mask_entry.size
+                    n_valid      += int(np.sum(mask_entry))
 
-        profile_chunks = []
-        rps_chunks     = []
+        print(f"=== Profile filtering summary ===")
+        print(f"Total profiles considered : {n_considered}")
+        print(f"Kept after filtering      : {n_valid} ({100 * n_valid / n_considered:.1f} %)")
+        print(f"Removed                   : {n_considered - n_valid} ({100 * (n_considered - n_valid) / n_considered:.1f} %)")
 
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Pass 2 — pre-allocate exact arrays, fill with a write pointer
+        # ─────────────────────────────────────────────────────────────────────────────
+        pca_int_profile = np.empty((n_valid, N_chords), dtype=np.float32)
+        xs              = np.empty((n_valid, N_chords), dtype=np.float32)
+
+        ptr = 0  # write pointer — tracks next empty row
         for i in range(N_star):
             for j in range(N_star):
                 for k in range(N_star):
@@ -363,44 +378,33 @@ for model in models:
                     mask_entry = gen_dict['intensity_profiles_mask'][model][i, j, k]   # (n_bs, n_ps, n_wav)
                     rps_entry  = gen_dict['local_rps'][model][i, j, k]                 # (N_bs_ps, N_bs_ps, N_chords)
 
-                    # Flatten profile and mask to (n_bs*n_ps*n_wav, ...) then apply mask
-                    profiles_flat = entry.reshape(-1, N_chords)          # (n_bs*n_ps*n_wav, N_chords)
-                    mask_flat     = mask_entry.ravel()                    # (n_bs*n_ps*n_wav,)
-                    profile_chunks.append(profiles_flat[mask_flat])      # (n_valid_ijk, N_chords)
+                    profiles_flat = np.array(entry).reshape(-1, N_chords)   # (n_bs*n_ps*n_wav, N_chords)
+                    mask_flat     = mask_entry.ravel()                       # (n_bs*n_ps*n_wav,)
+                    n_valid_ijk   = int(np.sum(mask_flat))
 
-                    # Expand r_ps to match profile rows, then apply same mask
-                    xs_expanded = np.repeat(
+                    rps_expanded = np.repeat(
                         rps_entry.reshape(N_bs_ps * N_bs_ps, 1, N_chords),
                         entry.shape[2], axis=1
-                    ).reshape(-1, N_chords)                              # (n_bs*n_ps*n_wav, N_chords)
-                    rps_chunks.append(xs_expanded[mask_flat])           # (n_valid_ijk, N_chords)
+                    ).reshape(-1, N_chords)                                  # (n_bs*n_ps*n_wav, N_chords)
 
-        # Single allocation — no incremental growth
-        pca_int_profile = np.concatenate(profile_chunks, axis=0)  # (N_valid, N_chords)
-        xs              = np.concatenate(rps_chunks,     axis=0)  # (N_valid, N_chords)
+                    # Write directly into pre-allocated slice — no copy, no reallocation
+                    pca_int_profile[ptr : ptr + n_valid_ijk] = profiles_flat[mask_flat]
+                    xs             [ptr : ptr + n_valid_ijk] = rps_expanded [mask_flat]
+                    ptr += n_valid_ijk
 
-        n_kept  = pca_int_profile.shape[0]
-        n_considered = sum(
-            gen_dict['intensity_profiles_mask'][model][i, j, k].size
-            for i in range(N_star)
-            for j in range(N_star)
-            for k in range(N_star)
-        )
+                    del entry, mask_entry, rps_entry, profiles_flat, mask_flat, rps_expanded, n_valid_ijk
+                    gc.collect()
 
-        print(f"=== Profile filtering summary ===")
-        print(f"Total profiles considered : {n_considered}")
-        print(f"Kept after filtering      : {n_kept} ({100 * n_kept / n_considered:.1f} %)")
-        print(f"Removed                   : {n_considered - n_kept} ({100 * (n_considered - n_kept) / n_considered:.1f} %)")
-
-        del profile_chunks, rps_chunks, n_considered
-        gc.collect()
-
-        print('PCA ANALYSIS')
+        assert ptr == n_valid, f"Write pointer mismatch: {ptr} != {n_valid}"
 
         # Retrieve number of valid profiles
         n_valid = pca_int_profile.shape[0]
 
+        # Reshape the xs
+        xs = xs[:, ::-1]
+
         # Perform PCA analysis 
+        print('PCA ANALYSIS')
         pca = PCA(n_components=n_components)
         profiles_pca = pca.fit_transform(pca_int_profile)
 
@@ -408,6 +412,7 @@ for model in models:
         eigen_profiles = pca.components_  # Shape: (n_components, n_mu_points)
 
         # Clustering in PCA space
+        print('CLUSTERING')
         kmeans = KMeans(n_clusters=n_clusters, random_state=42)
         cluster_labels = kmeans.fit_predict(profiles_pca[:, :3])  # Use first 3 PCs
 
@@ -419,6 +424,8 @@ for model in models:
         # All arranged in rows of 3
         # ─────────────────────────────────────────────────────────────────────────────
 
+        print('PLOTTING')
+        print('    FIGURE 1')
         n_panels  = 3 + n_components + 1   # 3 fixed + eigen profiles + scatter
         ncols_pca = 3
         nrows_pca = int(np.ceil(n_panels / ncols_pca))
@@ -429,7 +436,7 @@ for model in models:
 
         # Panel 0: sample profiles
         ax = axes_flat[0]
-        for nval in range(n_valid):
+        for nval in range(0, n_valid, 1000):
             ax.plot(xs[nval], pca_int_profile[nval], alpha=0.2, color='gray', linewidth=0.5)
         ax.set_xlabel('$r / R_\\star$')
         ax.set_ylabel('Normalized Intensity')
@@ -488,6 +495,7 @@ for model in models:
         # Figure 2: Typical + outlier profiles — one column per cluster + 1 for typical
         # Each column has its own colorbar if needed
         # ─────────────────────────────────────────────────────────────────────────────
+        print('    FIGURE 2')
 
         # Find the mode (median/typical) and outlier profiles
         # Calculate distances from the cluster centers
@@ -548,6 +556,7 @@ for model in models:
         # Always 3 columns: 1 component, n_components//2, all n_components
         # 2 rows: profile overlay (top) + residuals (bottom)
         # ─────────────────────────────────────────────────────────────────────────────
+        print('    FIGURE 3')
 
         from matplotlib.gridspec import GridSpec
 
@@ -627,16 +636,9 @@ for model in models:
     else:
         raise KeyboardInterrupt('Wrong PCA mode')
 
-
+    print('    FIGURE 4')
     #Fitting the mode and outlier profiles with a 4-th order non-linear limb-darkening law
-    for j_fit, (special_xs, special_profile) in enumerate(zip([typical_xs] + outlier_xs, [typical_profile] + outlier_profiles)):
-        
-        # Get positions from 0 to 1
-        special_ts = jnp.linspace(0, 1, N_chords)
-
-        # Convert the profile values from 'rs' to mus
-        special_mus = jnp.sqrt(1 - special_ts**2)
-        # No need to interpolate on a finer grid of mu values since this was already done previously
+    for j_fit, (special_mus, special_profile) in enumerate(zip([typical_xs] + outlier_xs, [typical_profile] + outlier_profiles)):
 
         #Define 4-th order non-linear LD law
         def fourNLLD(x, coeffs):
@@ -667,3 +669,4 @@ for model in models:
         ax1.grid(True, alpha=0.3)
         ax2.grid(True, alpha=0.3)
         plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j_fit==0 else f"outlier{j_fit}"}_{model}.png', dpi=150, bbox_inches='tight')
+        plt.close()
