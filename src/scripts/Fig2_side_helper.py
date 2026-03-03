@@ -35,8 +35,8 @@ from scipy.interpolate import griddata
 ########## Hyper-parameters ##########
 ######################################
 
-LD_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/LD simulation'
-orig_save_data_path = '//Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_sidehelper_Storage/'
+LD_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/LD simulation'
+orig_save_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/Transit-Information-Content/Fig2_sidehelper_Storage/'
 
 models = ['mps1'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
