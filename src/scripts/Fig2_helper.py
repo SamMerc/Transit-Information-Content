@@ -27,10 +27,10 @@ import exotic_ld as el
 import pickle
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-from scipy.interpolate import CubicSpline
 from lmfit import minimize, Parameters
 import gc
 import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 from scipy.interpolate import interp1d
 
 ######################################
@@ -38,7 +38,7 @@ from scipy.interpolate import interp1d
 ######################################
 
 LD_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/LD simulation'
-orig_save_data_path = '/Users/samsonmercier/Desktop/Work/PhD/Research/Transit-Information-Content/Fig2_helper_Storage/'
+orig_save_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig2_helper_Storage/'
 
 models = ['mps1'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
@@ -94,7 +94,7 @@ ps = jnp.logspace(-3, -1, N_bs_ps)
 #Number of mu values to interpolate to - set to EJ16 value
 n_mu_fine = 1000   # much finer than the native 24 points
 
-n_components = 10
+n_components = 4
 cmap=plt.cm.coolwarm
 colors = cmap(np.linspace(0, 1, n_components))
 
@@ -104,6 +104,10 @@ wav_region = [6000, 53000] #0.6 - 5.3 micron
 
 intr_prof_mode = 'load' # 'build' or 'load'
 PCA_mode = 'build'
+
+excluded_bp_pairs = [
+    # (N_bs_ps - 1, 0),   # b=1 (grazing), p=0.001 (smallest planet)
+]
 
 ############################
 ###### Function block ######
@@ -348,325 +352,537 @@ for model in models:
         print('MASKING')
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # Pass 1 — count valid profiles and total considered (single cheap loop)
+        # Pass 1 — count n_valid separately for each b, p, and wavelength region
         # ─────────────────────────────────────────────────────────────────────────────
-        n_considered = 0
-        n_valid      = 0
+        n_wav_bins     = 10
+
+        # Compute once — split wavelength array directly into 10 equal chunks by index
+        wavs_ref   = np.array(gen_dict['stellar_wavelengths'][model][0, 0, 0])  # (n_wav,)
+        wav_bins   = np.array_split(wavs_ref, n_wav_bins)                        # list of 10 sub-arrays
+        wav_bin_labels = [f'{b[0]/1e4:.2f}-{b[-1]/1e4:.2f} μm' for b in wav_bins]
+
+        # Pre-compute the index slices once — avoids rebuilding boolean masks in the loop
+        wav_bin_slices = np.array_split(np.arange(len(wavs_ref)), n_wav_bins)   # list of 10 index arrays
+
+        n_valid_per_b   = np.zeros(N_bs_ps,   dtype=int)
+        n_valid_per_p   = np.zeros(N_bs_ps,   dtype=int)
+        n_valid_per_wav = np.zeros(n_wav_bins, dtype=int)
+        n_considered    = 0
+        n_valid         = 0
+
         for i in range(N_star):
             for j in range(N_star):
                 for k in range(N_star):
-                    mask_entry    = gen_dict['intensity_profiles_mask'][model][i, j, k]
+                    mask_entry = gen_dict['intensity_profiles_mask'][model][i, j, k].copy()  # (n_bs, n_ps, n_wav)
+                    wavs       = gen_dict['stellar_wavelengths'][model][i, j, k]              # (n_wav,)
+
+                    for ib_excl, ip_excl in excluded_bp_pairs:
+                        mask_entry[ib_excl, ip_excl, :] = False
+
                     n_considered += mask_entry.size
                     n_valid      += int(np.sum(mask_entry))
 
+                    for ib in range(N_bs_ps):
+                        n_valid_per_b[ib] += int(np.sum(mask_entry[ib, :, :]))
+                    for ip in range(N_bs_ps):
+                        n_valid_per_p[ip] += int(np.sum(mask_entry[:, ip, :]))
+                    for iw_bin in range(n_wav_bins):
+                        idx = wav_bin_slices[iw_bin]
+                        n_valid_per_wav[iw_bin] += int(np.sum(mask_entry[:, :, idx]))
+
         print(f"=== Profile filtering summary ===")
         print(f"Total profiles considered : {n_considered}")
-        print(f"Kept after filtering      : {n_valid} ({100 * n_valid / n_considered:.1f} %)")
-        print(f"Removed                   : {n_considered - n_valid} ({100 * (n_considered - n_valid) / n_considered:.1f} %)")
+        print(f"Total valid               : {n_valid} ({100 * n_valid / n_considered:.1f} %)")
+        print(f"=================================")
+        print(f"Per impact parameter b:")
+        for ib in range(N_bs_ps):
+            n_considered_b = n_considered // N_bs_ps
+            print(f"  b[{ib}]={float(bs[ib]):.3f} : {n_valid_per_b[ib]}/{n_considered_b} valid "
+                f"({100 * n_valid_per_b[ib] / n_considered_b:.1f} %)")
+        print(f"=================================")
+        print(f"Per planet-to-star radius ratio p:")
+        for ip in range(N_bs_ps):
+            n_considered_p = n_considered // N_bs_ps
+            print(f"  p[{ip}]={float(ps[ip]):.5f} : {n_valid_per_p[ip]}/{n_considered_p} valid "
+                f"({100 * n_valid_per_p[ip] / n_considered_p:.1f} %)")
+        print(f"=================================")
+        print(f"Per wavelength region:")
+        n_total_per_wav = np.array([len(idx) * N_bs_ps * N_bs_ps * N_star * N_star * N_star for idx in wav_bin_slices])
+        for iw_bin in range(n_wav_bins):
+            print(f"  {wav_bin_labels[iw_bin]} : {n_valid_per_wav[iw_bin]}/{n_total_per_wav[iw_bin]} valid "
+                f"({100 * n_valid_per_wav[iw_bin] / n_total_per_wav[iw_bin]:.1f} %)")
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # Pass 2 — pre-allocate exact arrays, fill with a write pointer
+        # Pass 2 — pre-allocate one array per b, fill with write pointers
+        # Also store group_id per valid profile so we can later find the common
+        # subset valid across all b values
+        # group_id = unique integer per (i,j,k,ip,iw) combination
         # ─────────────────────────────────────────────────────────────────────────────
-        pca_int_profile = np.empty((n_valid, N_chords), dtype=np.float32)
-        xs              = np.empty((n_valid, N_chords), dtype=np.float32)
+        pca_int_profile = [np.empty((n_valid_per_b[ib], N_chords),  dtype=np.float32) for ib in range(N_bs_ps)]
+        xs_per_b        = [np.empty((n_valid_per_b[ib], N_chords),  dtype=np.float32) for ib in range(N_bs_ps)]
+        group_ids       = [np.empty( n_valid_per_b[ib],             dtype=np.int64  ) for ib in range(N_bs_ps)]
+        # Add metadata arrays — 5 columns: [ip, i(Teff), j(logg), k(met), iw]
+        meta_per_b = [np.empty((n_valid_per_b[ib], 5), dtype=np.int32) for ib in range(N_bs_ps)]
 
-        ptr = 0  # write pointer — tracks next empty row
+        ptrs       = np.zeros(N_bs_ps, dtype=int)
+        group_base = 0   # running offset so each (i,j,k) star gets a unique block of IDs
+
         for i in range(N_star):
             for j in range(N_star):
                 for k in range(N_star):
-                    entry      = gen_dict['local_intensity_profiles'][model][i, j, k]  # (n_bs, n_ps, n_wav, N_chords)
-                    mask_entry = gen_dict['intensity_profiles_mask'][model][i, j, k]   # (n_bs, n_ps, n_wav)
-                    rps_entry  = gen_dict['local_rps'][model][i, j, k]                 # (N_bs_ps, N_bs_ps, N_chords)
+                    entry      = np.array(gen_dict['local_intensity_profiles'][model][i, j, k])  # (n_bs, n_ps, n_wav, N_chords)
+                    mask_entry = gen_dict['intensity_profiles_mask'][model][i, j, k]              # (n_bs, n_ps, n_wav)
+                    rps_entry  = gen_dict['local_rps'][model][i, j, k]                            # (n_bs, n_ps, N_chords)
 
-                    profiles_flat = np.array(entry).reshape(-1, N_chords)   # (n_bs*n_ps*n_wav, N_chords)
-                    mask_flat     = mask_entry.ravel()                       # (n_bs*n_ps*n_wav,)
-                    n_valid_ijk   = int(np.sum(mask_flat))
+                    for ib_excl, ip_excl in excluded_bp_pairs:
+                        mask_entry[ib_excl, ip_excl, :] = False
 
-                    rps_expanded = np.repeat(
-                        rps_entry.reshape(N_bs_ps * N_bs_ps, 1, N_chords),
-                        entry.shape[2], axis=1
-                    ).reshape(-1, N_chords)                                  # (n_bs*n_ps*n_wav, N_chords)
+                    n_ps_  = entry.shape[1]
+                    n_wav_ = entry.shape[2]
 
-                    # Write directly into pre-allocated slice — no copy, no reallocation
-                    pca_int_profile[ptr : ptr + n_valid_ijk] = profiles_flat[mask_flat]
-                    xs             [ptr : ptr + n_valid_ijk] = rps_expanded [mask_flat]
-                    ptr += n_valid_ijk
+                    # group_id for each (ip, iw) pair within this star
+                    # shape (n_ps * n_wav,) — unique across all stars via group_base
+                    local_group_ids = (group_base
+                                    + np.arange(n_ps_ * n_wav_, dtype=np.int64))  # (n_ps*n_wav,)
 
-                    del entry, mask_entry, rps_entry, profiles_flat, mask_flat, rps_expanded, n_valid_ijk
+                    for ib in range(N_bs_ps):
+                        # profiles at this b: (n_ps, n_wav, N_chords) → (n_ps*n_wav, N_chords)
+                        prof_ib   = entry[ib].reshape(-1, N_chords)        # (n_ps*n_wav, N_chords)
+                        mask_ib   = mask_entry[ib].ravel()                  # (n_ps*n_wav,)
+                        rps_ib    = rps_entry[ib].reshape(n_ps_, 1, N_chords)
+                        rps_ib    = np.repeat(rps_ib, n_wav_, axis=1).reshape(-1, N_chords)
+
+                        # Metadata: for each (ip, iw) row, record its indices
+                        ip_idx = np.repeat(np.arange(n_ps_), n_wav_)   # (n_ps*n_wav,)
+                        iw_idx = np.tile  (np.arange(n_wav_), n_ps_)   # (n_ps*n_wav,)
+                        i_idx  = np.full(n_ps_ * n_wav_, i,  dtype=np.int32)
+                        j_idx  = np.full(n_ps_ * n_wav_, j,  dtype=np.int32)
+                        k_idx  = np.full(n_ps_ * n_wav_, k,  dtype=np.int32)
+                        meta   = np.stack([ip_idx, i_idx, j_idx, k_idx, iw_idx], axis=1)  # (n_ps*n_wav, 5)
+
+                        n_ijk = int(np.sum(mask_ib))
+                        if n_ijk == 0:
+                            continue
+
+                        ptr = ptrs[ib]
+                        pca_int_profile[ib][ptr : ptr + n_ijk] = prof_ib        [mask_ib]
+                        xs_per_b       [ib][ptr : ptr + n_ijk] = rps_ib         [mask_ib]
+                        group_ids      [ib][ptr : ptr + n_ijk] = local_group_ids[mask_ib]
+                        meta_per_b     [ib][ptr : ptr + n_ijk] = meta   [mask_ib]
+                        ptrs[ib] += n_ijk
+
+                    group_base += n_ps_ * n_wav_
+                    del entry, mask_entry, rps_entry, prof_ib, mask_ib, rps_ib
                     gc.collect()
 
-        assert ptr == n_valid, f"Write pointer mismatch: {ptr} != {n_valid}"
+        for ib in range(N_bs_ps):
+            assert ptrs[ib] == n_valid_per_b[ib], f"Pointer mismatch at b[{ib}]"
+            #Reshape the xs
+            xs_per_b[ib] = xs_per_b[ib][:, ::-1]
 
-        # Retrieve number of valid profiles
-        n_valid = pca_int_profile.shape[0]
-
-        # Reshape the xs
-        xs = xs[:, ::-1]
-
-        # Perform PCA analysis 
+        # ─────────────────────────────────────────────────────────────────────────────
+        # PCA — one per b value
+        # ─────────────────────────────────────────────────────────────────────────────
         print('PCA ANALYSIS')
-        pca = PCA(n_components=n_components)
-        profiles_pca = pca.fit_transform(pca_int_profile)
+        pcas         = []
+        profiles_pca = []   # PCA scores per b: list of (n_valid_ib, n_components)
 
-        # Extract eigen intensity profile
-        eigen_profiles = pca.components_  # Shape: (n_components, n_mu_points)
+        for ib in range(N_bs_ps):
+            if ib == N_bs_ps - 1:  # grazing case
 
-        # Clustering in PCA space
+                meta_ib = meta_per_b[ib]   # (n_valid_ib, 5): [ip, i, j, k, iw]
+                med     = np.median(pca_int_profile[ib], axis=0)
+                resid   = pca_int_profile[ib] - med    # (n_valid_ib, N_chords)
+
+                # Assign each profile to a wavelength bin
+                wav_bin_of_profile = np.empty(len(meta_ib), dtype=np.int32)
+                for iw_bin, idx_slice in enumerate(wav_bin_slices):
+                    in_bin = np.isin(meta_ib[:, 4], idx_slice)
+                    wav_bin_of_profile[in_bin] = iw_bin
+
+                # Recover physical values for each profile
+                T_vals   = np.linspace(Teffs[model][0],       Teffs[model][1],       N_star)
+                g_vals   = np.linspace(loggs[model][0],        loggs[model][1],        N_star)
+                m_vals   = np.linspace(metallicitys[model][0], metallicitys[model][1], N_star)
+                p_vals   = np.array(ps)
+
+                color_sources = {
+                    'Planet size $p$'  : p_vals  [meta_ib[:, 0]],
+                    '$T_{eff}$ (K)'    : T_vals  [meta_ib[:, 1]],
+                    '$\\log g$'        : g_vals  [meta_ib[:, 2]],
+                    'Metallicity [M/H]': m_vals  [meta_ib[:, 3]],
+                    'Wavelength bin'   : wav_bin_of_profile.astype(float),
+                }
+
+                step      = max(1, len(resid) // 20000)   # subsample for speed
+                fig_g, axes_g = plt.subplots(1, 5, figsize=(30, 5), sharex=True, sharey=True)
+                fig_g.suptitle(f'Grazing profiles (b={float(bs[ib]):.2f}) coloured by parameter',
+                               fontsize=12)
+
+                for ax, (clabel, cvals) in zip(axes_g, color_sources.items()):
+                    cmap_g = cm.get_cmap('coolwarm')
+                    norm_g = mcolors.Normalize(vmin=np.min(cvals), vmax=np.max(cvals))
+
+                    for idx in range(0, len(resid), step):
+                        ax.plot(xs_per_b[ib][idx], resid[idx],
+                                alpha=0.15, linewidth=0.4,
+                                color=cmap_g(norm_g(cvals[idx])))
+
+                    # Colorbar
+                    sm = cm.ScalarMappable(cmap=cmap_g, norm=norm_g)
+                    sm.set_array([])
+                    plt.colorbar(sm, ax=ax, label=clabel, fraction=0.046, pad=0.04)
+
+                    ax.set_xlabel('$r / R_\\star$')
+                    ax.set_ylabel('Residual intensity' if ax is axes_g[0] else '')
+                    ax.set_title(clabel)
+                    ax.grid(True, alpha=0.3)
+
+                fig_g.tight_layout()
+                plt.show()
+                # fig_g.savefig(save_data_path + f'Grazing_profiles_coloured_{model}.png',
+                #               dpi=150, bbox_inches='tight')
+                # plt.close(fig_g)
+                
+        for ib in range(N_bs_ps):
+            print(f'  Fitting PCA for b[{ib}]={float(bs[ib]):.3f} '
+                f'on {n_valid_per_b[ib]} profiles ...')
+            pca_b = PCA(n_components=n_components)
+            scores_b = pca_b.fit_transform(pca_int_profile[ib])
+            pcas.append(pca_b)
+            profiles_pca.append(scores_b)
+            print(f'    Variance captured: {np.sum(pca_b.explained_variance_ratio_)*100:.1f}%')
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Find common group IDs valid across ALL b values
+        # These are the only profiles we can meaningfully compare across b
+        # ─────────────────────────────────────────────────────────────────────────────
+        print('FINDING COMMON PROFILES')
+        common_ids = set(group_ids[0])
+        for ib in range(1, N_bs_ps):
+            common_ids &= set(group_ids[ib])
+        common_ids = np.array(sorted(common_ids), dtype=np.int64)
+        n_common   = len(common_ids)
+        print(f'  Profiles valid for all b values: {n_common}')
+
+        # For each b, build index arrays mapping common_ids → row in pca_int_profile[ib]
+        # and a combined score matrix (n_common, N_bs_ps * n_components) for clustering
+        id_to_row = []
+        for ib in range(N_bs_ps):
+            sorter      = np.argsort(group_ids[ib])
+            rows        = sorter[np.searchsorted(group_ids[ib], common_ids, sorter=sorter)]
+            id_to_row.append(rows)
+
+        combined_scores = np.concatenate(
+            [profiles_pca[ib][id_to_row[ib]] for ib in range(N_bs_ps)],
+            axis=1
+        )  # (n_common, N_bs_ps * n_components)
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Clustering on combined PCA space
+        # ─────────────────────────────────────────────────────────────────────────────
         print('CLUSTERING')
         kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-        cluster_labels = kmeans.fit_predict(profiles_pca[:, :3])  # Use first 3 PCs
+        cluster_labels = kmeans.fit_predict(combined_scores[:, :3])
+
+        distances_from_centers = kmeans.transform(combined_scores[:, :3])
+        typical_common_idx     = int(np.argmin(np.min(distances_from_centers, axis=1)))
+
+        outlier_common_indices = []
+        for cluster_id in range(n_clusters):
+            cmask     = cluster_labels == cluster_id
+            cdists    = distances_from_centers[cmask, cluster_id]
+            outlier_common_indices.append(int(np.where(cmask)[0][np.argmax(cdists)]))
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # Figure 1: PCA diagnostics — adapts to n_components
-        # Layout: 3 fixed panels (sample profiles, scree, cumulative variance)
-        #       + n_components eigen profile panels
-        #       + 1 PCA scatter panel
-        # All arranged in rows of 3
+        # Figure 1: one row per b — scree, cumulative variance, eigen profiles
         # ─────────────────────────────────────────────────────────────────────────────
-
         print('PLOTTING')
         print('    FIGURE 1')
-        n_panels  = 3 + n_components + 1   # 3 fixed + eigen profiles + scatter
-        ncols_pca = 3
-        nrows_pca = int(np.ceil(n_panels / ncols_pca))
+        b_colors  = plt.cm.plasma(np.linspace(0.1, 0.9, N_bs_ps))
+        ncols_f1  = 2 + n_components   # scree | cumvar | eigen_1 ... eigen_n
+        fig1, axes1 = plt.subplots(N_bs_ps, ncols_f1,
+                                    figsize=(4 * ncols_f1, 4 * N_bs_ps))
 
-        fig1, axes1 = plt.subplots(nrows_pca, ncols_pca,
-                                figsize=(6 * ncols_pca, 4 * nrows_pca))
-        axes_flat = axes1.ravel()
+        for ib in range(N_bs_ps):
+            pca_b  = pcas[ib]
+            eigen  = pca_b.components_   # (n_components, N_chords)
+            evr    = pca_b.explained_variance_ratio_
 
-        # Panel 0: sample profiles
-        ax = axes_flat[0]
-        for nval in range(0, n_valid, 1000):
-            ax.plot(xs[nval], pca_int_profile[nval], alpha=0.2, color='gray', linewidth=0.5)
-        ax.set_xlabel('$r / R_\\star$')
-        ax.set_ylabel('Normalized Intensity')
-        ax.set_title('Sample Intensity Profiles')
-        ax.grid(True, alpha=0.3)
-
-        # Panel 1: scree plot
-        ax = axes_flat[1]
-        ax.plot(range(1, n_components + 1), pca.explained_variance_ratio_,
-                'o-', color='steelblue', linewidth=2)
-        ax.set_xlabel('Principal Component')
-        ax.set_ylabel('Explained Variance Ratio')
-        ax.set_title('Scree Plot')
-        ax.grid(True, alpha=0.3)
-
-        # Panel 2: cumulative variance
-        ax = axes_flat[2]
-        ax.plot(range(1, n_components + 1),
-                np.cumsum(pca.explained_variance_ratio_), 'o-', color='tomato', linewidth=2)
-        ax.axhline(y=0.95, color='g', linestyle='--', label='95%')
-        ax.set_xlabel('Number of Components')
-        ax.set_ylabel('Cumulative Explained Variance')
-        ax.set_title('Cumulative Variance Explained')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-        # Panels 3 … 3+n_components-1: eigen profiles
-        for i_plot in range(n_components):
-            ax = axes_flat[3 + i_plot]
-            ax.plot(eigen_profiles[i_plot], color=colors[i_plot], linewidth=2)
-            ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
-            ax.set_xlabel('$r / R_\\star$')
-            ax.set_ylabel('Component Value')
-            ax.set_title(f'PC{i_plot+1} ({pca.explained_variance_ratio_[i_plot]*100:.1f}%)')
+            # Scree
+            ax = axes1[ib, 0]
+            ax.plot(range(1, n_components+1), evr, 'o-', color=b_colors[ib], linewidth=2)
+            ax.set_title(f'b={float(bs[ib]):.3f}  Scree')
+            ax.set_xlabel('PC')
+            ax.set_ylabel('Expl. var. ratio')
             ax.grid(True, alpha=0.3)
 
-        # Panel 3+n_components: PCA scatter coloured by cluster
-        ax = axes_flat[3 + n_components]
-        scatter = ax.scatter(profiles_pca[:, 0], profiles_pca[:, 1],
-                            c=cluster_labels, cmap='viridis', s=20, alpha=0.5)
-        plt.colorbar(scatter, ax=ax, label='Cluster')
-        ax.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)')
-        ax.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)')
-        ax.set_title('PCA Space — Clusters')
-        ax.grid(True, alpha=0.3)
+            # Cumulative
+            ax = axes1[ib, 1]
+            ax.plot(range(1, n_components+1), np.cumsum(evr), 'o-', color=b_colors[ib], linewidth=2)
+            ax.axhline(0.95, color='g', linestyle='--', label='95%')
+            ax.set_title(f'b={float(bs[ib]):.3f}  Cumul. var.')
+            ax.set_xlabel('PC')
+            ax.set_ylabel('Cumul. expl. var.')
+            ax.legend(fontsize=7)
+            ax.grid(True, alpha=0.3)
 
-        # Hide any unused panels
-        for idx in range(3 + n_components + 1, len(axes_flat)):
-            axes_flat[idx].set_visible(False)
+            # Eigen profiles
+            for i_plot in range(n_components):
+                ax = axes1[ib, 2 + i_plot]
+                ax.plot(xs_per_b[ib][0], eigen[i_plot],
+                        color=colors[i_plot], linewidth=1.5)
+                ax.axhline(0, color='k', linestyle='--', alpha=0.3)
+                ax.set_title(f'b={float(bs[ib]):.2f}  PC{i_plot+1} ({evr[i_plot]*100:.1f}%)')
+                ax.set_xlabel('$r/R_\\star$')
+                ax.set_ylabel('Component value')
+                ax.grid(True, alpha=0.3)
 
         fig1.tight_layout()
         fig1.savefig(save_data_path + 'PCA_Analysis.png', dpi=150, bbox_inches='tight')
         plt.close(fig1)
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # Figure 2: Typical + outlier profiles — one column per cluster + 1 for typical
-        # Each column has its own colorbar if needed
+        # Figure 2: combined PCA scatter + typical/outlier profiles
+        # Top row: PCA scatter per b coloured by cluster
+        # Bottom rows: typical and outlier profiles per b
         # ─────────────────────────────────────────────────────────────────────────────
         print('    FIGURE 2')
+        n_specials  = 1 + n_clusters   # typical + one outlier per cluster
+        fig2, axes2 = plt.subplots(1 + N_bs_ps, n_specials,
+                                    figsize=(5 * n_specials, 4 * (1 + N_bs_ps)),
+                                    sharey='row')
 
-        # Find the mode (median/typical) and outlier profiles
-        # Calculate distances from the cluster centers
-        distances_from_centers = kmeans.transform(profiles_pca[:, :3])
-
-        # Find the most "typical" profile (closest to its cluster center)
-        typical_idx = jnp.argmin(jnp.min(distances_from_centers, axis=1))
-        typical_profile = pca_int_profile[typical_idx]
-
-        # Find outlier profiles (one from each cluster edge)
-        outlier_indices = []
-        for cluster_id in range(n_clusters):
-            cluster_mask = cluster_labels == cluster_id
-            cluster_distances = distances_from_centers[cluster_mask, cluster_id]
-            # Get the farthest point in this cluster
-            outlier_in_cluster = jnp.where(cluster_mask)[0][jnp.argmax(cluster_distances)]
-            outlier_indices.append(outlier_in_cluster)
-
-
-        n_top_cols = 1 + n_clusters   # typical + one outlier per cluster
-        fig2, axes2 = plt.subplots(1, n_top_cols,
-                                figsize=(5 * n_top_cols, 5),
-                                sharey=True)
-        if n_top_cols == 1:
-            axes2 = [axes2]
-
-        # Typical profile (col 0)
-        ax = axes2[0]
-        for nval in range(0, n_valid, max(1, n_valid // 200)):
-            ax.plot(xs[nval], pca_int_profile[nval], alpha=0.2, color='gray', linewidth=0.4)
-        ax.plot(xs[typical_idx], typical_profile, 'b-', linewidth=2,
-                label='Typical', zorder=10)
-        ax.set_xlabel('$r / R_\\star$')
-        ax.set_ylabel('Normalized Intensity')
-        ax.set_title('Most Typical Profile')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-        # One outlier column per cluster
-        for i_plot, outlier_idx in enumerate(outlier_indices):
-            ax = axes2[i_plot + 1]
-            # Colour background points by their cluster membership
-            for nval in range(0, n_valid, max(1, n_valid // 200)):
-                ax.plot(xs[nval], pca_int_profile[nval], alpha=0.2, color='gray', linewidth=0.4)
-            ax.plot(xs[outlier_idx], pca_int_profile[outlier_idx], 'r-', linewidth=2,
-                    label=f'Outlier cluster {i_plot}', zorder=10)
-            ax.set_xlabel('$r / R_\\star$')
-            ax.set_title(f'Outlier — Cluster {i_plot}')
-            ax.legend()
+        # Top row: PCA scatter (PC1 vs PC2) per b, coloured by cluster label
+        for ib in range(N_bs_ps):
+            ax = axes2[0, ib] if n_specials > 1 else axes2[0]
+            sc = ax.scatter(profiles_pca[ib][id_to_row[ib], 0],
+                            profiles_pca[ib][id_to_row[ib], 1],
+                            c=cluster_labels, cmap='viridis', s=15, alpha=0.5)
+            ax.set_xlabel(f'PC1 b={float(bs[ib]):.2f}')
+            ax.set_ylabel('PC2')
+            ax.set_title(f'PCA space b={float(bs[ib]):.3f}')
+            plt.colorbar(sc, ax=ax, label='Cluster')
             ax.grid(True, alpha=0.3)
+
+        # Hide unused top-row panels
+        for col in range(N_bs_ps, n_specials):
+            axes2[0, col].set_visible(False)
+
+        # Bottom N_bs_ps rows: one special profile per column, one b per row
+        special_common_indices = [typical_common_idx] + outlier_common_indices
+        special_labels         = ['Typical'] + [f'Outlier {c}' for c in range(n_clusters)]
+        special_colors         = ['blue'] + ['red'] * n_clusters
+
+        for ib in range(N_bs_ps):
+            rows_ib = id_to_row[ib]
+            for col, (cidx, slabel, scol) in enumerate(
+                    zip(special_common_indices, special_labels, special_colors)):
+                ax = axes2[1 + ib, col]
+                # Background: all profiles at this b (subsampled)
+                n_v = n_valid_per_b[ib]
+                for nval in range(0, n_v, max(1, n_v // 200)):
+                    ax.plot(xs_per_b[ib][nval], pca_int_profile[ib][nval],
+                            alpha=0.15, color='gray', linewidth=0.3)
+                # Highlighted profile
+                row_in_b = rows_ib[cidx]
+                ax.plot(xs_per_b[ib][row_in_b], pca_int_profile[ib][row_in_b],
+                        color=scol, linewidth=2, label=slabel, zorder=10)
+                ax.set_xlabel('$r/R_\\star$')
+                ax.set_ylabel('Norm. Intensity')
+                ax.set_title(f'{slabel}  b={float(bs[ib]):.3f}')
+                ax.legend(fontsize=7)
+                ax.grid(True, alpha=0.3)
 
         fig2.tight_layout()
         fig2.savefig(save_data_path + 'Mode_and_Outliers.png', dpi=150, bbox_inches='tight')
         plt.close(fig2)
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # Figure 3: Reconstruction quality for the typical profile
-        # Always 3 columns: 1 component, n_components//2, all n_components
-        # 2 rows: profile overlay (top) + residuals (bottom)
+        # Figure 3: reconstruction quality for the typical profile — one col per b
         # ─────────────────────────────────────────────────────────────────────────────
         print('    FIGURE 3')
-
         from matplotlib.gridspec import GridSpec
 
-        n_comp_list  = [1, max(2, n_components // 2), n_components]
-        n_recon_cols = len(n_comp_list)   # always 3
-        original     = pca_int_profile[typical_idx]
+        n_comp_list = [1, max(2, n_components // 2), n_components]
+        fig3 = plt.figure(figsize=(5 * N_bs_ps, 6 * len(n_comp_list)))
+        gs   = GridSpec(len(n_comp_list) * 2, N_bs_ps, figure=fig3,
+                        hspace=0.05, wspace=0.3)
 
-        fig3 = plt.figure(figsize=(6 * n_recon_cols, 6))
-        gs   = GridSpec(2, n_recon_cols, figure=fig3,
-                        height_ratios=[2, 1], hspace=0.05)
+        for col_ib, ib in enumerate(range(N_bs_ps)):
+            row_in_b = id_to_row[ib][typical_common_idx]
+            original = pca_int_profile[ib][row_in_b]
+            x_orig   = xs_per_b[ib][row_in_b]
 
-        for col_idx, n_comp_plot in enumerate(n_comp_list):
-            pca_temp     = PCA(n_components=n_comp_plot)
-            pca_temp.fit(pca_int_profile)
-            reconstructed = pca_temp.inverse_transform(
-                                pca_temp.transform(original.reshape(1, -1)))[0]
-            residual = original - reconstructed
-            rmse     = np.sqrt(np.mean(residual ** 2))
+            for row_idx, n_comp_plot in enumerate(n_comp_list):
+                pca_temp      = PCA(n_components=n_comp_plot)
+                pca_temp.fit(pca_int_profile[ib])
+                reconstructed = pca_temp.inverse_transform(
+                                    pca_temp.transform(original.reshape(1, -1)))[0]
+                residual = original - reconstructed
+                rmse     = np.sqrt(np.mean(residual**2))
 
-            ax_top = fig3.add_subplot(gs[0, col_idx])
-            ax_top.plot(xs[typical_idx], original,       'k-',  linewidth=2,
-                        label='Original', alpha=0.8)
-            ax_top.plot(xs[typical_idx], reconstructed,  'r--', linewidth=2,
-                        label='Reconstructed')
-            ax_top.set_ylabel('Normalized Intensity')
-            ax_top.set_title(f'{n_comp_plot} PC{"s" if n_comp_plot > 1 else ""}  '
-                            f'(RMSE = {rmse:.4f})')
-            ax_top.legend(loc='best', fontsize=9)
-            ax_top.grid(True, alpha=0.3)
-            ax_top.tick_params(labelbottom=False)
+                ax_top = fig3.add_subplot(gs[row_idx * 2,     col_ib])
+                ax_bot = fig3.add_subplot(gs[row_idx * 2 + 1, col_ib], sharex=ax_top)
 
-            ax_bot = fig3.add_subplot(gs[1, col_idx], sharex=ax_top)
-            safe_original = np.where(np.abs(original) < 1e-10, np.nan, original)
-            ax_bot.plot(xs[typical_idx], 100 * residual / safe_original,
-                        'g-', linewidth=1.5, label='Rel. diff.')
-            ax_bot.axhline(y=0, color='k', linestyle='--', alpha=0.5)
-            ax_bot.set_xlabel('$r / R_\\star$')
-            ax_bot.set_ylabel('Rel. diff. (%)')
-            ax_bot.legend(loc='best', fontsize=9)
-            ax_bot.grid(True, alpha=0.3)
+                ax_top.plot(x_orig, original,      color=b_colors[ib], linewidth=2,  label='Original')
+                ax_top.plot(x_orig, reconstructed, color=b_colors[ib], linewidth=1.2,
+                            linestyle='--', label='Recon.')
+                ax_top.set_title(f'b={float(bs[ib]):.2f}  {n_comp_plot}PC  RMSE={rmse:.4f}',
+                                fontsize=8)
+                ax_top.set_ylabel('Norm. Intensity', fontsize=7)
+                ax_top.legend(fontsize=6)
+                ax_top.grid(True, alpha=0.3)
+                ax_top.tick_params(labelbottom=False)
 
-        fig3.savefig(save_data_path + 'Reconstruction_Quality.png',
-                    dpi=150, bbox_inches='tight')
+                safe = np.where(np.abs(original) < 1e-10, np.nan, original)
+                ax_bot.plot(x_orig, 100 * residual / safe, color=b_colors[ib], linewidth=1.0)
+                ax_bot.axhline(0, color='k', linestyle='--', alpha=0.5)
+                ax_bot.set_xlabel('$r/R_\\star$', fontsize=7)
+                ax_bot.set_ylabel('Rel. diff. (%)', fontsize=7)
+                ax_bot.grid(True, alpha=0.3)
+
+        fig3.savefig(save_data_path + 'Reconstruction_Quality.png', dpi=150, bbox_inches='tight')
         plt.close(fig3)
 
-        # Print summary statistics
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Save
+        # ─────────────────────────────────────────────────────────────────────────────
         print(f"\n=== PCA Analysis Summary ===")
-        print(f"Total profiles analyzed: {len(pca_int_profile)}")
-        print(f"Variance captured by {n_components} components: {jnp.sum(pca.explained_variance_ratio_)*100:.2f}%")
-        print(f"\nTypical profile index: {typical_idx}")
-        print(f"Outlier profile indices: {outlier_indices}")
+        for ib in range(N_bs_ps):
+            print(f"  b[{ib}]={float(bs[ib]):.3f}: "
+                f"{np.sum(pcas[ib].explained_variance_ratio_)*100:.1f}% variance in {n_components} PCs")
+        print(f"Common profiles (valid for all b): {n_common}")
 
-        # Save the profiles for use in your transit simulations
-        np.save(save_data_path + f'mode_intensity_profile_{model}.npy', typical_profile)
-        np.save(save_data_path + f'mode_rs_{model}.npy', xs[typical_idx])
-        typical_xs = xs[typical_idx]
-        for i_save, outlier_idx in enumerate(outlier_indices):
-            outlier_profiles.append(pca_int_profile[outlier_idx])
-            np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy', 
-                    pca_int_profile[outlier_idx])
-            outlier_xs.append(xs[outlier_idx])
-            np.save(save_data_path + f'outlier{i_save+1}_rs_{model}.npy', 
-                    xs[outlier_idx])
+        # Save one profile vector per b for each special profile
+        for ib in range(N_bs_ps):
+            row_typical = id_to_row[ib][typical_common_idx]
+            np.save(save_data_path + f'mode_intensity_profile_{model}_b{ib}.npy',
+                    pca_int_profile[ib][row_typical])
+            np.save(save_data_path + f'mode_rs_{model}_b{ib}.npy',
+                    xs_per_b[ib][row_typical])
+            for i_save, cidx in enumerate(outlier_common_indices):
+                row_out = id_to_row[ib][cidx]
+                np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}_b{ib}.npy',
+                        pca_int_profile[ib][row_out])
+                np.save(save_data_path + f'outlier{i_save+1}_rs_{model}_b{ib}.npy',
+                        xs_per_b[ib][row_out])
 
-        print(f"\nSaved profiles to {save_data_path}")
+        # Also build the flat lists needed for Figure 4
+        typical_profile = [pca_int_profile[ib][id_to_row[ib][typical_common_idx]] for ib in range(N_bs_ps)]
+        typical_xs      = [xs_per_b[ib]       [id_to_row[ib][typical_common_idx]] for ib in range(N_bs_ps)]
+        outlier_profiles = [[pca_int_profile[ib][id_to_row[ib][cidx]] for ib in range(N_bs_ps)]
+                            for cidx in outlier_common_indices]
+        outlier_xs       = [[xs_per_b[ib]       [id_to_row[ib][cidx]] for ib in range(N_bs_ps)]
+                            for cidx in outlier_common_indices]
+        print(f"Saved profiles to {save_data_path}")
 
     elif PCA_mode == 'load':
+        b_colors  = plt.cm.plasma(np.linspace(0.1, 0.9, N_bs_ps))
 
-        typical_profile = np.load(save_data_path + f'mode_intensity_profile_{model}.npy')
-        typical_xs = np.load(save_data_path + f'mode_rs_{model}.npy')
+        # Load one profile per b per special case
+        typical_profile = [np.load(save_data_path + f'mode_intensity_profile_{model}_b{ib}.npy')
+                           for ib in range(N_bs_ps)]
+        typical_xs      = [np.load(save_data_path + f'mode_rs_{model}_b{ib}.npy')
+                           for ib in range(N_bs_ps)]
+
+        outlier_profiles = []
+        outlier_xs       = []
         for i_save in range(n_clusters):
-            outlier_profiles.append(np.load(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy'))
-            outlier_xs.append(np.load(save_data_path + f'outlier{i_save+1}_rs_{model}.npy'))
-
+            outlier_profiles.append(
+                [np.load(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}_b{ib}.npy')
+                 for ib in range(N_bs_ps)]
+            )
+            outlier_xs.append(
+                [np.load(save_data_path + f'outlier{i_save+1}_rs_{model}_b{ib}.npy')
+                 for ib in range(N_bs_ps)]
+            )
         print(f"\nLoaded profiles from {save_data_path}")
 
     else:
         raise KeyboardInterrupt('Wrong PCA mode')
 
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Figure 4: 4th-order NLLD fit
+    # One figure per special profile (typical + n_clusters outliers)
+    # Within each figure: one row per b value
+    # ─────────────────────────────────────────────────────────────────────────────
     print('    FIGURE 4')
-    #Fitting the mode and outlier profiles with a 4-th order non-linear limb-darkening law
-    for j_fit, (special_mus, special_profile) in enumerate(zip([typical_xs] + outlier_xs, [typical_profile] + outlier_profiles)):
 
-        #Define 4-th order non-linear LD law
-        def fourNLLD(x, coeffs):
-            return 1 - coeffs[0] * (1 - x**(1/2)) - coeffs[1] * (1 - x) - coeffs[2] * (1 - x**(3/2)) - coeffs[3] * (1 - x**2)
-        
-        #Define residual function to minimize
-        def residual(params, x, base_prof):
-            return fourNLLD(x, [params[f'c{i_coeff+1}'].value for i_coeff in range(4)]) - base_prof
-    
-        #Define lmfit parameters
-        params = Parameters()
-        for i_param in range(4):
-            params.add(f'c{i_param+1}', value=np.random.uniform(0, 1))
+    def fourNLLD(x, coeffs):
+        return (1 - coeffs[0] * (1 - x**0.5)
+                  - coeffs[1] * (1 - x)
+                  - coeffs[2] * (1 - x**1.5)
+                  - coeffs[3] * (1 - x**2))
 
-        #Perform the minimization
-        result = minimize(residual, params, args=(special_mus, special_profile))
+    def residual_fn(params, x, base_prof):
+        return fourNLLD(x, [params[f'c{ic+1}'].value for ic in range(4)]) - base_prof
 
-        #Plot base profile, interpolated profile, and best-fit profile
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-        ax1.plot(special_mus, special_profile, 'bo', label='Original Profile', alpha=0.5)
-        ax1.plot(special_mus, fourNLLD(special_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]), 'r--', label='Best-fit 4th Order NLLD', linewidth=2)
-        ax2.plot(special_mus, 100 * (special_profile - fourNLLD(special_mus, [result.params[f'c{i_coeff+1}'].value for i_coeff in range(4)]))/special_profile, 'r--', linewidth=2)
-        ax2.set_xlabel('μ = cos(θ)')
-        ax1.set_ylabel('Normalized Intensity')
-        ax2.set_ylabel('Relative Difference (%)')
-        ax1.set_title('4th Order Non-Linear Limb-Darkening Fit - ' + ('Typical Profile' if j_fit==0 else f'Outlier Profile {j_fit}'))
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        ax2.grid(True, alpha=0.3)
-        plt.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{"mode" if j_fit==0 else f"outlier{j_fit}"}_{model}.png', dpi=150, bbox_inches='tight')
-        plt.close()
+    # Bundle all special profiles: list of (label, profiles_per_b, xs_per_b)
+    specials = (
+        [('mode', typical_profile, typical_xs)]
+        + [(f'outlier{i+1}', outlier_profiles[i], outlier_xs[i])
+           for i in range(n_clusters)]
+    )
+
+    for label, prof_per_b, rps_per_b in specials:
+
+        fig4, axes4 = plt.subplots(
+            N_bs_ps, 2,
+            figsize=(12, 4 * N_bs_ps),
+            sharex=False,
+            gridspec_kw={'width_ratios': [3, 1]}
+        )
+        fig4.suptitle(f'4th Order NLLD Fit — {label}', fontsize=13)
+
+        for ib in range(N_bs_ps):
+            mus_ib  = np.array(rps_per_b[ib])   # (N_chords,)  mu from star centre
+            prof_ib = np.array(prof_per_b[ib])  # (N_chords,)  normalised intensity
+
+            # ── Fit ───────────────────────────────────────────────────────────
+            params = Parameters()
+            for ip in range(4):
+                params.add(f'c{ip+1}', value=np.random.uniform(0, 1))
+            result  = minimize(residual_fn, params, args=(mus_ib, prof_ib))
+            coeffs  = [result.params[f'c{ic+1}'].value for ic in range(4)]
+            fit_ib  = fourNLLD(mus_ib, coeffs)
+
+            # ── Plot ──────────────────────────────────────────────────────────
+            ax1 = axes4[ib, 0]
+            ax2 = axes4[ib, 1]
+
+            ax1.plot(mus_ib, prof_ib, 'o',
+                     color=b_colors[ib], markersize=3, alpha=0.6,
+                     label=f'b={float(bs[ib]):.3f}')
+            ax1.plot(mus_ib, fit_ib, 'r--', linewidth=2, label='4th order NLLD')
+            ax1.set_ylabel('Norm. Intensity')
+            ax1.set_title(f'b = {float(bs[ib]):.3f}', fontsize=9)
+            ax1.legend(fontsize=7)
+            ax1.grid(True, alpha=0.3)
+            if ib < N_bs_ps - 1:
+                ax1.tick_params(labelbottom=False)
+            else:
+                ax1.set_xlabel('μ = cos(θ)')
+
+            safe = np.where(np.abs(prof_ib) < 1e-10, np.nan, prof_ib)
+            ax2.plot(mus_ib, 100 * (prof_ib - fit_ib) / safe,
+                     '--', color=b_colors[ib], linewidth=1.5)
+            ax2.axhline(0, color='k', linestyle='--', alpha=0.5)
+            ax2.set_ylabel('Rel. diff. (%)')
+            ax2.grid(True, alpha=0.3)
+            if ib < N_bs_ps - 1:
+                ax2.tick_params(labelbottom=False)
+            else:
+                ax2.set_xlabel('μ = cos(θ)')
+
+            # Print fit coefficients
+            print(f"  {label}  b[{ib}]={float(bs[ib]):.3f}  "
+                  f"c=[{', '.join(f'{c:.4f}' for c in coeffs)}]  "
+                  f"redchi={result.redchi:.4e}")
+
+        fig4.tight_layout()
+        fig4.savefig(
+            save_data_path + f'4thOrderNLLD_Fit_Profile_{label}_{model}.png',
+            dpi=150, bbox_inches='tight'
+        )
+        plt.close(fig4)
