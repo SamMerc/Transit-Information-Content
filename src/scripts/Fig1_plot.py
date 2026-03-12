@@ -92,7 +92,7 @@ num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2)
                         (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
 
 #%% Location of MCMC results and where plot will be output
-raw_save_dir = '/Volumes/Pandora/Work/PhD/Research/TIC/Gen_Storage/Fig1_Storage/'
+raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig1_Storage/'
 
 #%% Model parameters
 mod_prop = {
@@ -116,9 +116,9 @@ fixed_args['nburn'] = 400000
 
 # Optimization
 # Set number of cpus to use
-num_workers = int(0.5 * cpu_count())
+num_workers = 1
 # Number of files in each chunk
-CHUNK_SIZE = 60
+CHUNK_SIZE = 30
 
 # Filtering parameters
 THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
@@ -621,7 +621,7 @@ if __name__ == '__main__':
     #### Optimization ###
     #####################
     model_scatters = [0.1, 1, 10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127,
-                    129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0]
+                    129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0, 30000.0]
     seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
     PLD_orders = [2, 3, 4]
 
@@ -846,10 +846,10 @@ if __name__ == '__main__':
     ax_right.tick_params(axis='x', labelsize=12)
     ax_right.tick_params(axis='y', labelsize=12)
     ax_right.set_xticks([0.1, 1, 10, 100, 1000, 10000], labels = [0.1, 1, 10, 100, 1000, 10000])
-    ax_right.set_xlim([0.08, 30000])
+    ax_right.set_xlim([0.08, 50000])
     ax_right.set_yticks([1, 10], labels = [1, 10])
     ax_right.grid(which='both', linestyle='--', alpha=0.5)
-    ax_right.set_ylim([0.85, 55])
+    ax_right.set_ylim([0.85, 60])
 
     # --- Gradient Transition Region with log-aware fading ---
     x_min, x_max = 2, 10000
@@ -875,24 +875,24 @@ if __name__ == '__main__':
                 shading='auto', cmap='Greys', alpha=alpha_2d, zorder=0)
 
     ax_right.axhline(np.sqrt(3), color='k', linestyle='dashed')
-    ax_right.text(0.13, np.sqrt(3) + 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
-    ax_right.text(30, 48 - 0.5, 'Transition region', fontsize=12, color='black')
-    ax_right.text(4400, 48 - 0.5, 'Noise limited', fontsize=12, color='black')
-    ax_right.text(0.13, 48 - 0.5, 'Model (i.e. degeneracy) limited', fontsize=12, color='black')
+    ax_right.text(0.13, np.sqrt(3) - 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
+    ax_right.text(100, 50, 'Transition region', fontsize=12, color='black')
+    ax_right.text(9000, 50, 'Noise limited', fontsize=12, color='black')
+    ax_right.text(0.13, 50, 'Model (i.e. degeneracy) limited', fontsize=12, color='black')
 
     # Add arrows from "Transition Region" to the other two regions
     ax_right.annotate("",
-                xy=(3200, 49), xycoords="data",   # Noise Limited
-                xytext=(250, 49), textcoords="data",  # Transition Region
+                xy=(8200, 52), xycoords="data",   # Noise Limited
+                xytext=(750, 52), textcoords="data",  # Transition Region
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
     ax_right.annotate("",
-                xy=(5, 49), xycoords="data",   # Degeneracy Limited
-                xytext=(21, 49), textcoords="data",  # Transition Region
+                xy=(5, 52), xycoords="data",   # Degeneracy Limited
+                xytext=(80, 52), textcoords="data",  # Transition Region
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
     # --- Asymptote lines with fading into transition region ---
-    for y_asym, bias_asym, x_fade_min, x_fade_max, asym_color in zip([3.4760264633464213, 10.614606725662671, 32.00651136170043], [10, 5, 1], [10, 1, 0.5], [130, 20, 8], fit_colors):
+    for idx, (y_asym, bias_asym, x_fade_min, x_fade_max, asym_color, text_loc) in enumerate(zip([2.4, 6.8, 23], [10, 5, 1], [10, 1, 0.5], [130, 20, 8], fit_colors, [2., 0.13, 0.13])):
 
         # log-spaced x for the line
         x_line = np.logspace(np.log10(0.08), np.log10(x_fade_max), 500)
@@ -913,10 +913,11 @@ if __name__ == '__main__':
         base_color = mcolors.to_rgba(asym_color)  # convert to RGBA
         lc = LineCollection(segments, colors=[(base_color[0], base_color[1], base_color[2], a) for a in alphas[:-1]], linewidths=2, zorder=1)
         ax_right.add_collection(lc)
-        ax_right.text(0.13, y_asym + (y_asym/6), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}', fontsize=12, color=asym_color)
 
+        if idx==0:ax_right.text(text_loc, y_asym + (y_asym/6), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}', fontsize=12, color=asym_color)
+        else:ax_right.text(text_loc, y_asym - (y_asym/5), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}', fontsize=12, color=asym_color)
     print(f"\nPlotting complete in {time.time() - t_plot_start:.2f} seconds")
 
-    plt.savefig(raw_save_dir+'Fig1_opt.pdf')
+    plt.savefig(raw_save_dir+'Fig1_opt.png')
     # fig.savefig(paths.figures / "Fig1.pdf", bbox_inches="tight", dpi=300)
     plt.show()

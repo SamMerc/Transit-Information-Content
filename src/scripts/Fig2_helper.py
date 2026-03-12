@@ -92,7 +92,7 @@ bs = jnp.linspace(0, 1, N_bs_ps)
 ps = jnp.logspace(-3, -1, N_bs_ps)
 
 #Number of mu values to interpolate to - set to EJ16 value
-n_mu_fine = 1000   # much finer than the native 24 points
+n_mu_fine = 100000   # much finer than the native 24 points
 
 n_components = 4
 cmap=plt.cm.coolwarm
@@ -102,11 +102,14 @@ n_clusters = 5
 
 wav_region = [6000, 53000] #0.6 - 5.3 micron
 
-intr_prof_mode = 'load' # 'build' or 'load'
+intr_prof_mode = 'build' # 'build' or 'load'
 PCA_mode = 'build'
 
 excluded_bp_pairs = [
     # (N_bs_ps - 1, 0),   # b=1 (grazing), p=0.001 (smallest planet)
+    # (N_bs_ps - 1, 1),   # b=1 (grazing), p=0.001 (smallest planet)
+    # (N_bs_ps - 1, 2),   # b=1 (grazing), p=0.001 (smallest planet)
+    # (N_bs_ps - 1, 3),   # b=1 (grazing), p=0.001 (smallest planet)
 ]
 
 ############################
