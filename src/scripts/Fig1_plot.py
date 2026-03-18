@@ -580,10 +580,9 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_steps_mask,
 
 # OPTIMIZATION 2: JAX-optimized computation
 @jit
-def compute_bias_jax(true_r, bestfit_r, r_chain_flat):
+def compute_bias_jax(true_r, bestfit_r):
     """JIT-compiled bias calculation"""
-    std_r = jnp.std(r_chain_flat)
-    return jnp.abs((bestfit_r - true_r)/std_r)
+    return jnp.abs((bestfit_r - true_r)/true_r)
 
 
 def batch_compute_biases(results_batch):
@@ -594,16 +593,10 @@ def batch_compute_biases(results_batch):
     """
     biases = []
     
-    for _, _, _, r_chain_post_burnin, bestfit_r, _, _, _, _, _ in results_batch:
+    for _, _, _, _, bestfit_r, _, _, _, _, _ in results_batch:
     
-        # Flatten the entire filtered chain for this seed
-        # r_chain_post_burnin shape: (n_good_walkers, n_steps_post_burnin)
-        r_chain_flat = r_chain_post_burnin.flatten()
-
-        # Convert to JAX arrays and compute
-        r_chain_jax = jnp.array(r_chain_flat)
         bias = compute_bias_jax(
-            r_chain_jax, bestfit_r, init_state_dic['r']
+            init_state_dic['r'], bestfit_r 
         )
         biases.append(bias)
 
@@ -856,10 +849,15 @@ if __name__ == '__main__':
     fit_colors = ['blue', 'green', 'salmon']
     fit_labels = ['2nd order LD', '3rd order LD', '4th order LD']
 
+    #Define the model scatter values to use for the asymptote calculation
+    asymp_scatters = [10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127, 129.1549665014884]
+    asymp_amp_factor = np.zeros(len(PLD_orders), dtype=float)
+    asymp_bias = np.zeros(len(PLD_orders), dtype=float)
+
     plt.rcParams["font.family"] = "Arial"
 
     #Loop over LD models
-    for PLD_order, fit_color in zip(PLD_orders, fit_colors):
+    for ipld, (PLD_order, fit_color) in enumerate(zip(PLD_orders, fit_colors)):
         print('    PROCESSING PLD ORDER:', PLD_order)
     
         #Loop over model scatters
@@ -867,7 +865,10 @@ if __name__ == '__main__':
             print('        PROCESSING MODEL SCATTER:', model_scatter)
             
             #Initialize array to store amplification factors for all seeds
-            amp_factors = cached_data[PLD_order][model_scatter]
+            amp_factors = cached_data['amp_factors'][PLD_order][model_scatter]
+
+            #Initialize array to store amplification factors for all seeds
+            biases = cached_data['biases'][PLD_order][model_scatter]
             
             #Make box-plot for this PLD-model scatter-seed combination
             ax_right.boxplot(amp_factors, positions=[model_scatter], patch_artist=True,
@@ -877,6 +878,16 @@ if __name__ == '__main__':
                     capprops=dict(color=fit_color, linewidth=1.5),
                     flierprops=dict(marker='o', color=fit_color, markersize=5, alpha=0.5),
                     showfliers=False)
+            
+            #Add to the asymptote value
+            if model_scatter in asymp_scatters:
+                asymp_amp_factor[ipld] += np.median(amp_factors)
+                asymp_bias[ipld]       += np.median(biases)
+
+    # Normalize the asymptote values to get averages
+    asymp_amp_factor /= len(asymp_scatters)
+    asymp_bias /= len(asymp_scatters)
+
     # Styling
     ax_right.set_xscale('log')
     ax_right.set_yscale('log')
@@ -931,7 +942,7 @@ if __name__ == '__main__':
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
     # --- Asymptote lines with fading into transition region ---
-    for idx, (y_asym, bias_asym, x_fade_min, x_fade_max, asym_color, text_loc) in enumerate(zip([2.4, 6.8, 23], [10, 5, 1], [10, 1, 0.5], [130, 20, 8], fit_colors, [2., 0.13, 0.13])):
+    for idx, (y_asym, bias_asym, x_fade_min, x_fade_max, asym_color, text_loc) in enumerate(zip(asymp_amp_factor, asymp_bias, [10, 1, 0.5], [130, 20, 8], fit_colors, [2., 0.13, 0.13])):
 
         # log-spaced x for the line
         x_line = np.logspace(np.log10(0.08), np.log10(x_fade_max), 500)
