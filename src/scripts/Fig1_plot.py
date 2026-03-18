@@ -580,6 +580,37 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_steps_mask,
 
 # OPTIMIZATION 2: JAX-optimized computation
 @jit
+def compute_bias_jax(true_r, bestfit_r, r_chain_flat):
+    """JIT-compiled bias calculation"""
+    std_r = jnp.std(r_chain_flat)
+    return jnp.abs((bestfit_r - true_r)/std_r)
+
+
+def batch_compute_biases(results_batch):
+    """
+    Process multiple results in batch using JAX vectorization
+    
+    This processes all chains for a given (PLD_order, model_scatter) at once
+    """
+    biases = []
+    
+    for _, _, _, r_chain_post_burnin, bestfit_r, _, _, _, _, _ in results_batch:
+    
+        # Flatten the entire filtered chain for this seed
+        # r_chain_post_burnin shape: (n_good_walkers, n_steps_post_burnin)
+        r_chain_flat = r_chain_post_burnin.flatten()
+
+        # Convert to JAX arrays and compute
+        r_chain_jax = jnp.array(r_chain_flat)
+        bias = compute_bias_jax(
+            r_chain_jax, bestfit_r, init_state_dic['r']
+        )
+        biases.append(bias)
+
+    return biases
+
+# OPTIMIZATION 2: JAX-optimized computation
+@jit
 def compute_amplification_factor_jax(r_chain_flat, bestfit_r, model_scatter, num_IT_pts):
     """JIT-compiled amplification factor calculation"""
     std_r = jnp.std(r_chain_flat)
@@ -703,9 +734,10 @@ if __name__ == '__main__':
         print("Computing amplification factors with JAX vectorization...")
         computation_start = time.time()
 
-        cached_data = {}
+        cached_data = {'amp_factors':{},'biases':{}}
         for PLD_order in PLD_orders:
-            cached_data[PLD_order] = {}
+            cached_data['amp_factors'][PLD_order] = {}
+            cached_data['biases'][PLD_order] = {}
             print(f"\nProcessing PLD order {PLD_order}")
             for model_scatter in model_scatters:
                 print(f"\nProcessing Model scatter {model_scatter:.0f}")
@@ -718,12 +750,19 @@ if __name__ == '__main__':
 
                 if len(batch_data) > 0:
                     # Use batch processing with JAX
+                    ## Amplification factor
                     amp_factors = batch_compute_amplification_factors(
                         batch_data, num_IT_pts
                     )
-                    cached_data[PLD_order][model_scatter] = np.array(amp_factors)
+                    ## Bias (in sigma)
+                    biases = batch_compute_biases(
+                        batch_data,
+                    )
+                    cached_data['amp_factors'][PLD_order][model_scatter] = np.array(amp_factors)
+                    cached_data['biases'][PLD_order][model_scatter] = np.array(biases)
                 else:
-                    cached_data[PLD_order][model_scatter] = np.array([])
+                    cached_data['amp_factors'][PLD_order][model_scatter] = np.array([])
+                    cached_data['biases'][PLD_order][model_scatter] = np.array([])
         
         computation_time = time.time() - computation_start
         total_time = time.time() - t_start

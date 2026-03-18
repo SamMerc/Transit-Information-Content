@@ -37,7 +37,7 @@ from scipy.interpolate import interp1d
 ########## Hyper-parameters ##########
 ######################################
 
-LD_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/LD simulation'
+LD_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/LD_simulation'
 orig_save_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig2_helper_Storage/'
 
 models = ['mps1'] #['phoenix','kurucz', 'stagger', 'mps1', 'mps2']

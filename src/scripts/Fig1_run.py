@@ -134,8 +134,7 @@ fixed_args['regularize_mass_matrix'] = True
 ########## Define parrallelization ##########
 #############################################
 # Define the fit parameters
-model_scatters = [0.1, 1, 10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127,
-                   129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0]
+model_scatters = jnp.logspace(-2, 5, 15).tolist()
 seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 PLD_orders = [2, 3, 4]
 
@@ -181,7 +180,7 @@ if PLD_order == 2:
     )
 
     #Define plotting labels
-    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "u$_1$", "u$_2$"]
+    fixed_args['labels'] = ["RpR$$_*$$", 'i', "aR$$_*$$", "P", "$$\sqrt{e}\cos{\omega}$$", "$$\sqrt{e}\sin{\omega}$$", "u$$_1$$", "u$$_2$$"]
 
 elif PLD_order == 3:
     #Setting base LDCs
@@ -210,7 +209,7 @@ elif PLD_order == 3:
     )
 
     #Define plotting labels
-    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "u$_1$", "u$_2$", "u$_3$"]
+    fixed_args['labels'] = ["RpR$$_*$$", 'i', "aR$$_*$$", "P", "$$\sqrt{e}\cos{\omega}$$", "$$\sqrt{e}\sin{\omega}$$", "u$$_1$$", "u$$_2$$", "u$$_3$$"]
 
 elif PLD_order == 4:
     #Setting base LDCs
@@ -241,7 +240,7 @@ elif PLD_order == 4:
     )
 
     #Define plotting labels
-    fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", "u$_1$", "u$_2$", "u$_3$", "u$_4$"]
+    fixed_args['labels'] = ["RpR$$_*$$", 'i', "aR$$_*$$", "P", "$$\sqrt{e}\cos{\omega}$$", "$$\sqrt{e}\sin{\omega}$$", "u$$_1$$", "u$$_2$$", "u$$_3$$", "u$$_4$$"]
 
 else:
     raise KeyError('Wrong order of polynomial limb darkening law.')
@@ -470,6 +469,61 @@ def emcee_log_probability(p_step, x, y, yerr):
     lk = jnp.where(jnp.isnan(lk), -jnp.inf, lk)
 
     return lp + lk, {'step_chi2': step_chi2}
+
+def next_pow_two(n):
+    """Find the next power of two greater than or equal to n."""
+    i = 1
+    while i < n:
+        i = i << 1
+    return i
+
+
+def autocorr_func_1d(x, norm=True):
+    """Estimate the normalized autocorrelation function of a 1-D series via FFT."""
+    x = np.atleast_1d(x)
+    if len(x.shape) != 1:
+        raise ValueError("invalid dimensions for 1D autocorrelation function")
+    n = next_pow_two(len(x))
+
+    # Compute the FFT and then (auto-)correlation function
+    f = np.fft.fft(x - np.mean(x), n=2 * n)
+    acf = np.fft.ifft(f * np.conjugate(f))[: len(x)].real
+    acf /= 4 * n
+
+    # Optionally normalize
+    if norm:
+        acf /= acf[0]
+
+    return acf
+
+
+def auto_window(taus, c):
+    """Automated windowing procedure following Sokal (1989)."""
+    m = np.arange(len(taus)) < c * taus
+    if np.any(m):
+        return np.argmin(m)
+    return len(taus) - 1
+
+
+def autocorr_gw2010(y, c=5.0):
+    """Autocorrelation-time estimator following Goodman & Weare (2010).
+    Averages the chain across walkers before computing the ACF."""
+    f = autocorr_func_1d(np.mean(y, axis=0))
+    taus = 2.0 * np.cumsum(f) - 1.0
+    window = auto_window(taus, c)
+    return taus[window]
+
+
+def autocorr_new(y, c=5.0):
+    """Improved autocorrelation-time estimator.
+    Computes per-walker ACF then averages."""
+    f = np.zeros(y.shape[1])
+    for yy in y:
+        f += autocorr_func_1d(yy)
+    f /= len(y)
+    taus = 2.0 * np.cumsum(f) - 1.0
+    window = auto_window(taus, c)
+    return taus[window]
 
 #############################################
 ################ Running code ###############
@@ -791,3 +845,65 @@ scatter_in_bin = (model_scatter*1e-6)/jnp.sqrt(num_IT_pts)
 #% Print results
 print(f'Median radius ratio: {median_r} +/- {jnp.std(r_chain)}. Median amplification factor: {median_r_error/scatter_in_bin}')
 print(f'Bestfit radius ratio: {bestfit_r} +/- {jnp.std(r_chain)}. Bestfit amplification factor: {bestfit_r_error/scatter_in_bin}')
+
+# 6. Plot the autocorrelation time estimates for each parameter
+print('STEP 6: AUTOCORRELATION TIME')
+
+# Number of chain-length evaluation points
+n_eval = 15
+# Use the post-burn-in chain: shape (nwalkers, nsteps_postburn, ndim)
+postburn_chain = np.array(raw_chain[:, fixed_args['nburn']:, :])
+nsteps_postburn = postburn_chain.shape[1]
+
+# Chain lengths at which to evaluate tau
+N_eval = np.unique(
+    np.exp(np.linspace(np.log(100), np.log(nsteps_postburn), n_eval)).astype(int)
+)
+
+# Set up figure: one subplot per free parameter
+ncols = 3
+nrows = int(np.ceil(fixed_args['ndim'] / ncols))
+fig_ac, axes_ac = plt.subplots(
+    nrows, ncols, figsize=(6 * ncols, 4 * nrows), squeeze=False
+)
+
+for iparam in range(fixed_args['ndim']):
+    ax = axes_ac[iparam // ncols, iparam % ncols]
+
+    # Extract this parameter's chain across all walkers: shape (nwalkers, nsteps_postburn)
+    y_param = postburn_chain[:, :, iparam]
+
+    gw2010_vals = np.full(len(N_eval), np.nan)
+    new_vals = np.full(len(N_eval), np.nan)
+
+    for idx, n in enumerate(N_eval):
+        try:
+            gw2010_vals[idx] = autocorr_gw2010(y_param[:, :n])
+        except Exception:
+            pass
+        try:
+            new_vals[idx] = autocorr_new(y_param[:, :n])
+        except Exception:
+            pass
+
+    # Plot both estimators
+    ax.loglog(N_eval, gw2010_vals, "o-", label="G&W 2010", color="C0", markersize=4)
+    ax.loglog(N_eval, new_vals, "o-", label="New", color="C1", markersize=4)
+
+    # Plot the tau = N/50 convergence threshold
+    ylim = ax.get_ylim()
+    ax.loglog(N_eval, N_eval / 50.0, "--k", label=r"$\tau = N/50$")
+    ax.set_ylim(ylim)
+
+    ax.set_xlabel("Number of samples, $N$")
+    ax.set_ylabel(r"$\tau$ estimates")
+    ax.set_title(fixed_args['labels'][iparam])
+    ax.legend(fontsize=8)
+
+# Turn off any unused subplots
+for iparam in range(fixed_args['ndim'], nrows * ncols):
+    axes_ac[iparam // ncols, iparam % ncols].set_visible(False)
+
+fig_ac.tight_layout()
+plt.savefig(fixed_args['save_loc'] + 'autocorrelation.pdf')
+plt.close()
