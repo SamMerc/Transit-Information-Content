@@ -942,7 +942,7 @@ if __name__ == '__main__':
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
     # --- Asymptote lines with fading into transition region ---
-    for idx, (y_asym, bias_asym, x_fade_min, x_fade_max, asym_color, text_loc) in enumerate(zip(asymp_amp_factor, asymp_bias, [10, 1, 0.5], [130, 20, 8], fit_colors, [2., 0.13, 0.13])):
+    for idx, (y_asym, bias_asym, x_fade_min, x_fade_max, asym_color, text_loc) in enumerate(zip(asymp_amp_factor, asymp_bias*1e6, [10, 1, 0.5], [130, 20, 8], fit_colors, [2., 0.13, 0.13])):
 
         # log-spaced x for the line
         x_line = np.logspace(np.log10(0.08), np.log10(x_fade_max), 500)
@@ -964,8 +964,8 @@ if __name__ == '__main__':
         lc = LineCollection(segments, colors=[(base_color[0], base_color[1], base_color[2], a) for a in alphas[:-1]], linewidths=2, zorder=1)
         ax_right.add_collection(lc)
 
-        if idx==0:ax_right.text(text_loc, y_asym + (y_asym/6), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}', fontsize=12, color=asym_color)
-        else:ax_right.text(text_loc, y_asym - (y_asym/5), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}', fontsize=12, color=asym_color)
+        if idx==0:ax_right.text(text_loc, y_asym + (y_asym/6), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}ppm', fontsize=12, color=asym_color)
+        else:ax_right.text(text_loc, y_asym - (y_asym/5), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}ppm', fontsize=12, color=asym_color)
     print(f"\nPlotting complete in {time.time() - t_plot_start:.2f} seconds")
 
     plt.savefig(raw_save_dir+'Fig1_opt.png')
