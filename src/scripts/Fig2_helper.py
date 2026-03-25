@@ -32,6 +32,12 @@ import gc
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from scipy.interpolate import interp1d
+import corner
+from tqdm import tqdm
+from scipy.cluster.hierarchy import (linkage, fcluster,
+                                        dendrogram as scipy_dendrogram,
+                                        optimal_leaf_ordering)
+from sklearn.preprocessing import StandardScaler
 
 ######################################
 ########## Hyper-parameters ##########
@@ -83,7 +89,7 @@ lambda_resolution = {
     'mps2' : 1221,
 }
 
-N_star = 10
+N_star = 5
 
 N_chords = 100 
 
@@ -92,7 +98,13 @@ bs = jnp.linspace(0, 1, N_bs_ps)
 ps = jnp.logspace(-3, -1, N_bs_ps)
 
 #Number of mu values to interpolate to - set to EJ16 value
-n_mu_fine = 100000   # much finer than the native 24 points
+n_mu_fine = 1000  # much finer than the native 24 points # run 1x, 25x, 50x, 75x, 100x
+#Percetnage of accepted profiles : 
+# 1x : 94.9%
+# 25x : 66%
+# 50x : 63.8%
+# 75x : 68.9%
+# 100x : 59.3%
 
 n_components = 4
 cmap=plt.cm.coolwarm
@@ -102,8 +114,9 @@ n_clusters = 5
 
 wav_region = [6000, 53000] #0.6 - 5.3 micron
 
-intr_prof_mode = 'build' # 'build' or 'load'
+intr_prof_mode = 'load' # 'build' or 'load'
 PCA_mode = 'build'
+All_Corner = 'build'
 
 excluded_bp_pairs = [
     # (N_bs_ps - 1, 0),   # b=1 (grazing), p=0.001 (smallest planet)
@@ -112,9 +125,261 @@ excluded_bp_pairs = [
     # (N_bs_ps - 1, 3),   # b=1 (grazing), p=0.001 (smallest planet)
 ]
 
+# ── Profile subsampling ──────────────────────────────────────────────────────
+# If True, randomly draw n_subsample_profiles from each b's valid profiles
+# before running PCA, clustering, fitting, etc.
+# Set to False to use all valid profiles.
+subsample_profiles = True
+n_subsample_profiles = 10000
+subsample_seed = 42  # for reproducibility
+
+plot_dendogram = False
+
 ############################
 ###### Function block ######
 ############################
+def hierarchical_clustering(
+    data,
+    label,
+    save_path,
+    feature_labels  = None,
+    cutoff          = None,
+    method          = 'complete',
+    max_display     = 60,
+    n_subsample     = 30_000,
+    external_labels = None,
+    clustering_metric = 'euclidean',
+):
+    """
+    Hierarchical clustering with scipy pairwise distance computation.
+
+    Parameters
+    ----------
+    data            : np.ndarray (N, D)
+    label           : str
+    save_path       : str
+    feature_labels  : list of str, optional
+    cutoff          : float or None
+    method          : str            linkage method, default 'complete'
+    max_display     : int            max dendrogram leaves shown
+    n_subsample     : int            scatter plot cap per cluster
+    external_labels : np.ndarray or None   pre-computed labels (skips clustering)
+
+    Returns
+    -------
+    labels      : np.ndarray (N,)   1-indexed cluster labels
+    cutoff_used : float
+    Z           : np.ndarray (N-1, 3) or None
+    """
+
+    N, D = data.shape
+    if feature_labels is None:
+        feature_labels = [f'Feature {d}' for d in range(D)]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # External-labels path — skip clustering entirely, go straight to plotting
+    # ─────────────────────────────────────────────────────────────────────────
+    if external_labels is not None:
+        valid_ext  = external_labels >= 0
+        data       = data[valid_ext]
+        labels     = (external_labels[valid_ext] + 1).astype(int)
+        unique_cl  = np.unique(labels)
+        n_cls      = len(unique_cl)
+        cutoff_used = np.nan
+        Z           = None
+        print(f'  [{label}] External labels: {n_cls} modes, '
+              f'{valid_ext.sum():,} valid profiles')
+
+    else:
+        # ── 1. Standardise ────────────────────────────────────────────────────
+        scaler      = StandardScaler()
+        data_scaled = scaler.fit_transform(data).astype(np.float32)
+
+        # ── 2. Scipy pdist with chunked tqdm progress ─────────────────────────
+        # scipy's pdist is a single C call so we can't track it mid-flight.
+        # Instead we split the row indices into chunks and call pdist on each
+        # block-row, accumulating the condensed vector ourselves.  This gives
+        # a meaningful progress bar while keeping all the speed of scipy.
+        
+        from scipy.spatial.distance import cdist
+
+        n_pairs  = N * (N - 1) // 2
+        dist_vec = np.empty(n_pairs, dtype=np.float32)
+
+        # Choose a chunk size that gives ~50 bar updates regardless of N
+        CHUNK = max(1, N // 50)
+
+        ptr = 0
+        print(f'  [{label}] Computing {N:,}×{N:,} distance matrix '
+              f'({n_pairs:,} pairs) with scipy cdist in row-chunks of {CHUNK} ...')
+
+        with tqdm(
+            total        = N,
+            desc         = f'  [{label}] pdist',
+            unit         = ' rows',
+            dynamic_ncols= True,
+            bar_format   = ('{l_bar}{bar}| {n_fmt}/{total_fmt} rows '
+                            '[{elapsed}<{remaining}, {rate_fmt}]'),
+        ) as pbar:
+            for chunk_start in range(0, N, CHUNK):
+                chunk_end   = min(chunk_start + CHUNK, N)
+                query_rows  = data_scaled[chunk_start:chunk_end]   # (C, D)
+
+                # Only compute distances to columns strictly right of the diagonal
+                # to fill the condensed vector in the correct scipy order.
+                for local_i, global_i in enumerate(range(chunk_start, chunk_end)):
+                    if global_i == N - 1:
+                        break   # last row has no right-of-diagonal entries
+                    right_cols  = data_scaled[global_i + 1:]       # (N-global_i-1, D)
+                    row_dists   = cdist(
+                        query_rows[local_i : local_i + 1],
+                        right_cols,
+                        metric = clustering_metric,
+                    )[0]
+                    n_vals      = len(row_dists)
+                    if clustering_metric == 'cityblock':
+                        dist_vec[ptr : ptr + n_vals] = row_dists / D
+                    else:
+                        dist_vec[ptr : ptr + n_vals] = row_dists
+                    ptr        += n_vals
+
+                pbar.update(chunk_end - chunk_start)
+                pbar.set_postfix(
+                    pairs_filled = f'{ptr:,}/{n_pairs:,}',
+                    pct          = f'{100 * ptr / n_pairs:.1f}%',
+                    refresh      = False,
+                )
+
+        assert ptr == n_pairs, f'Distance vector incomplete: {ptr} / {n_pairs}'
+
+        # ── 3. Linkage tree ───────────────────────────────────────────────────
+        print(f'  [{label}] Building linkage tree ...')
+        with tqdm(total=1, desc=f'  [{label}] linkage',
+                  bar_format='{l_bar}{bar}| {elapsed}') as pbar:
+            Z = linkage(dist_vec.astype(np.float64), method=method)
+            pbar.update(1)
+
+        # ── 4. Auto-select cutoff ─────────────────────────────────────────────
+        if cutoff is None:
+            merge_dists = Z[:, 2]
+            gaps        = np.diff(merge_dists)
+            elbow       = np.argmax(gaps)
+            cutoff      = float((merge_dists[elbow] + merge_dists[elbow + 1]) / 2)
+            print(f'  [{label}] Auto cutoff : {cutoff:.4f}  '
+                  f'(gap {merge_dists[elbow]:.4f} → {merge_dists[elbow+1]:.4f})')
+        else:
+            print(f'  [{label}] Using cutoff: {cutoff:.4f}')
+        cutoff_used = cutoff
+
+        # ── 5. Cut tree → labels ──────────────────────────────────────────────
+        labels     = fcluster(Z, t=cutoff, criterion='distance')
+        unique_cl  = np.unique(labels)
+        n_cls      = len(unique_cl)
+        print(f'  [{label}] {n_cls} clusters found')
+        for cl in unique_cl:
+            print(f'    Cluster {cl}: {np.sum(labels == cl):6d} profiles')
+
+        # ── 6. Colour palette (shared by both paths) ──────────────────────────────
+        cls_colors = plt.cm.tab10(np.linspace(0, 1, min(n_cls, 10)))
+        if n_cls > 10:
+            cls_colors = plt.cm.hsv(np.linspace(0, 0.9, n_cls))
+
+        # ── 7. Dendrogram ─────────────────────────────────────────────────────
+        if plot_dendogram:
+            print(f'  [{label}] Plotting dendrogram ...')
+            fig_d, axes_d = plt.subplots(1, 2, figsize=(16, 6),
+                                        gridspec_kw={'width_ratios': [3, 1]})
+            fig_d.suptitle(f'Hierarchical clustering — {label}', fontsize=12)
+
+            Z_ol = optimal_leaf_ordering(Z, dist_vec.astype(np.float64))
+            scipy_dendrogram(
+                Z_ol,
+                ax                    = axes_d[0],
+                truncate_mode         = 'lastp',
+                p                     = max_display,
+                color_threshold       = cutoff,
+                above_threshold_color = 'gray',
+                no_labels             = True,
+            )
+            axes_d[0].axhline(cutoff, color='red', linestyle='--',
+                            linewidth=1.5, label=f'cutoff = {cutoff:.3f}')
+            axes_d[0].set_xlabel('Profiles (truncated to last merges)')
+            axes_d[0].set_ylabel('Merge distance')
+            axes_d[0].set_title('Dendrogram')
+            axes_d[0].legend(fontsize=8)
+            axes_d[0].grid(True, alpha=0.2)
+
+            counts = [np.sum(labels == cl) for cl in unique_cl]
+            axes_d[1].barh(unique_cl, counts, color=cls_colors[:n_cls],
+                        edgecolor='k', linewidth=0.5)
+            axes_d[1].set_xlabel('Profiles per cluster')
+            axes_d[1].set_ylabel('Cluster label')
+            axes_d[1].set_title('Cluster sizes')
+            axes_d[1].set_yticks(unique_cl)
+            axes_d[1].grid(True, alpha=0.2, axis='x')
+
+            fig_d.tight_layout()
+            path_d = os.path.join(save_path, f'HC_Dendrogram_{label}.pdf')
+            fig_d.savefig(path_d, dpi=150, bbox_inches='tight')
+            plt.close(fig_d)
+            print(f'  [{label}] Saved dendrogram → {path_d}')
+
+    # ── 8. Corner scatter (always produced) ───────────────────────────────────
+    print(f'  [{label}] Plotting corner scatter ...')
+    fig_c, axes_c = plt.subplots(D, D, figsize=(3 * D, 3 * D))
+    if D == 1:
+        axes_c = np.array([[axes_c]])
+    elif D > 1:
+        axes_c = np.atleast_2d(axes_c)
+    fig_c.suptitle(f'Corner plot — {label}', fontsize=12, y=1.01)
+
+    for row in range(D):
+        for col in range(D):
+            ax = axes_c[row, col]
+            if row == col:
+                for ci, cl in enumerate(unique_cl):
+                    mask = labels == cl
+                    ax.hist(data[mask, row], bins=40, alpha=0.55,
+                            color=cls_colors[ci % len(cls_colors)],
+                            density=True, histtype='stepfilled', edgecolor='none')
+                ax.set_xlabel(feature_labels[row], fontsize=8)
+                for spine in ['top', 'left', 'right']:
+                    ax.spines[spine].set_visible(False)
+                ax.set_yticks([])
+                ax.tick_params(labelsize=7)
+            elif row > col:
+                step = max(1, N // n_subsample)
+                for ci, cl in enumerate(unique_cl):
+                    mask = labels == cl
+                    idx  = np.where(mask)[0][::step]
+                    ax.scatter(data[idx, col], data[idx, row],
+                               color=cls_colors[ci % len(cls_colors)],
+                               s=4, alpha=0.3, linewidths=0, rasterized=True)
+                if col == 0:
+                    ax.set_ylabel(feature_labels[row], fontsize=8)
+                if row == D - 1:
+                    ax.set_xlabel(feature_labels[col], fontsize=8)
+                ax.tick_params(labelsize=6)
+                ax.grid(True, alpha=0.15)
+            else:
+                ax.set_visible(False)
+
+    handles_c = [
+        plt.Line2D([0], [0], marker='o', color='w',
+                   markerfacecolor=cls_colors[ci % len(cls_colors)],
+                   markersize=7, label=f'Cluster {cl}')
+        for ci, cl in enumerate(unique_cl)
+    ]
+    fig_c.legend(handles=handles_c, loc='upper right', fontsize=8,
+                 framealpha=0.85, title='HC cluster', title_fontsize=8)
+    fig_c.tight_layout()
+    path_c = os.path.join(save_path, f'HC_Corner_{label}.pdf')
+    fig_c.savefig(path_c, dpi=150, bbox_inches='tight')
+    plt.close(fig_c)
+    print(f'  [{label}] Saved corner plot → {path_c}')
+
+    return labels, cutoff_used, Z
+
 @jit
 def calculate_annulus_overlap(r_planet, p, r_inner, r_outer):
     """
@@ -482,6 +747,33 @@ for model in models:
             assert ptrs[ib] == n_valid_per_b[ib], f"Pointer mismatch at b[{ib}]"
             #Reshape the xs
             xs_per_b[ib] = xs_per_b[ib][:, ::-1]
+        
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Optional subsampling — draw a fixed number of profiles per b
+        # This reduces memory and compute for PCA, clustering, and fitting.
+        # ─────────────────────────────────────────────────────────────────────────────
+        if subsample_profiles:
+            rng = np.random.default_rng(subsample_seed)
+            print(f'\nSUBSAMPLING: drawing {n_subsample_profiles} profiles per b '
+                  f'(seed={subsample_seed})')
+
+            for ib in range(N_bs_ps):
+                n_avail = n_valid_per_b[ib]
+                n_draw  = min(n_subsample_profiles, n_avail)
+
+                if n_draw < n_avail:
+                    idx = np.sort(rng.choice(n_avail, size=n_draw, replace=False))
+                    print(f'  b[{ib}]={float(bs[ib]):.3f}: {n_avail} → {n_draw} profiles')
+                else:
+                    idx = np.arange(n_avail)
+                    print(f'  b[{ib}]={float(bs[ib]):.3f}: {n_avail} profiles '
+                          f'(fewer than {n_subsample_profiles}, keeping all)')
+
+                pca_int_profile[ib] = pca_int_profile[ib][idx]
+                xs_per_b[ib]        = xs_per_b[ib][idx]
+                group_ids[ib]       = group_ids[ib][idx]
+                meta_per_b[ib]      = meta_per_b[ib][idx]
+                n_valid_per_b[ib]   = n_draw
 
         # ─────────────────────────────────────────────────────────────────────────────
         # PCA — one per b value
@@ -542,10 +834,9 @@ for model in models:
                     ax.grid(True, alpha=0.3)
 
                 fig_g.tight_layout()
-                plt.show()
-                # fig_g.savefig(save_data_path + f'Grazing_profiles_coloured_{model}.png',
-                #               dpi=150, bbox_inches='tight')
-                # plt.close(fig_g)
+                fig_g.savefig(save_data_path + f'Grazing_profiles_coloured_{model}.pdf',
+                              dpi=150, bbox_inches='tight')
+                plt.close(fig_g)
                 
         for ib in range(N_bs_ps):
             print(f'  Fitting PCA for b[{ib}]={float(bs[ib]):.3f} '
@@ -557,46 +848,61 @@ for model in models:
             print(f'    Variance captured: {np.sum(pca_b.explained_variance_ratio_)*100:.1f}%')
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # Find common group IDs valid across ALL b values
-        # These are the only profiles we can meaningfully compare across b
-        # ─────────────────────────────────────────────────────────────────────────────
-        print('FINDING COMMON PROFILES')
-        common_ids = set(group_ids[0])
-        for ib in range(1, N_bs_ps):
-            common_ids &= set(group_ids[ib])
-        common_ids = np.array(sorted(common_ids), dtype=np.int64)
-        n_common   = len(common_ids)
-        print(f'  Profiles valid for all b values: {n_common}')
-
-        # For each b, build index arrays mapping common_ids → row in pca_int_profile[ib]
-        # and a combined score matrix (n_common, N_bs_ps * n_components) for clustering
-        id_to_row = []
-        for ib in range(N_bs_ps):
-            sorter      = np.argsort(group_ids[ib])
-            rows        = sorter[np.searchsorted(group_ids[ib], common_ids, sorter=sorter)]
-            id_to_row.append(rows)
-
-        combined_scores = np.concatenate(
-            [profiles_pca[ib][id_to_row[ib]] for ib in range(N_bs_ps)],
-            axis=1
-        )  # (n_common, N_bs_ps * n_components)
-
-        # ─────────────────────────────────────────────────────────────────────────────
-        # Clustering on combined PCA space
+        # Clustering on combined PCA space — hierarchical (supervisor's method)
         # ─────────────────────────────────────────────────────────────────────────────
         print('CLUSTERING')
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-        cluster_labels = kmeans.fit_predict(combined_scores[:, :3])
 
-        distances_from_centers = kmeans.transform(combined_scores[:, :3])
-        typical_common_idx     = int(np.argmin(np.min(distances_from_centers, axis=1)))
+        # Cluster independently per b value
+        cluster_labels_per_b = []
+        typical_idx_per_b = []
+        outlier_indices_per_b = []
 
-        outlier_common_indices = []
-        for cluster_id in range(n_clusters):
-            cmask     = cluster_labels == cluster_id
-            cdists    = distances_from_centers[cmask, cluster_id]
-            outlier_common_indices.append(int(np.where(cmask)[0][np.argmax(cdists)]))
+        for ib in range(N_bs_ps):
+            print(f'  Clustering b[{ib}]={float(bs[ib]):.3f} on {n_valid_per_b[ib]} profiles ...')
 
+            hc_labels_ib, hc_cutoff_ib, Z_ib = hierarchical_clustering(
+                data           = profiles_pca[ib],
+                label          = f'PCA_b{ib}_{model}',
+                save_path      = save_data_path,
+                feature_labels = [f'PC{k+1}' for k in range(n_components)],
+                cutoff         = 0.3,
+                clustering_metric = 'cityblock',
+                method= 'single'
+            )
+
+            # Convert to 0-indexed
+            cl_labels_ib = hc_labels_ib - 1
+            unique_cl_ib = np.unique(cl_labels_ib)
+            cluster_labels_per_b.append(cl_labels_ib)
+
+            # Find typical profile: closest to its cluster's centroid (overall closest)
+            typical_idx_ib = None
+            min_dist = np.inf
+            for cl in unique_cl_ib:
+                mask = cl_labels_ib == cl
+                members = profiles_pca[ib][mask]
+                centroid = members.mean(axis=0)
+                dists = np.linalg.norm(members - centroid, axis=1)
+                closest = int(np.where(mask)[0][np.argmin(dists)])
+                if dists.min() < min_dist:
+                    min_dist = dists.min()
+                    typical_idx_ib = closest
+            typical_idx_per_b.append(typical_idx_ib)
+
+            # Find outlier profiles: furthest from centroid in each cluster
+            outlier_idx_ib = []
+            for cl in unique_cl_ib:
+                mask = cl_labels_ib == cl
+                members = profiles_pca[ib][mask]
+                centroid = members.mean(axis=0)
+                dists = np.linalg.norm(members - centroid, axis=1)
+                outlier_idx_ib.append(int(np.where(mask)[0][np.argmax(dists)]))
+            outlier_indices_per_b.append(outlier_idx_ib)
+
+        # For downstream code, define n_clusters from the first b value
+        # (each b may have a different number of clusters)
+        n_clusters_per_b = [len(np.unique(cl)) for cl in cluster_labels_per_b]
+        
         # ─────────────────────────────────────────────────────────────────────────────
         # Figure 1: one row per b — scree, cumulative variance, eigen profiles
         # ─────────────────────────────────────────────────────────────────────────────
@@ -646,50 +952,142 @@ for model in models:
         plt.close(fig1)
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # Figure 2: combined PCA scatter + typical/outlier profiles
-        # Top row: PCA scatter per b coloured by cluster
-        # Bottom rows: typical and outlier profiles per b
+        # Figure 2a: Corner-style PCA scatter across all PC pairs, coloured by cluster
+        # One figure per b value, grid of (n_components x n_components) panels
         # ─────────────────────────────────────────────────────────────────────────────
-        print('    FIGURE 2')
-        n_specials  = 1 + n_clusters   # typical + one outlier per cluster
-        fig2, axes2 = plt.subplots(1 + N_bs_ps, n_specials,
-                                    figsize=(5 * n_specials, 4 * (1 + N_bs_ps)),
-                                    sharey='row')
-
-        # Top row: PCA scatter (PC1 vs PC2) per b, coloured by cluster label
-        for ib in range(N_bs_ps):
-            ax = axes2[0, ib] if n_specials > 1 else axes2[0]
-            sc = ax.scatter(profiles_pca[ib][id_to_row[ib], 0],
-                            profiles_pca[ib][id_to_row[ib], 1],
-                            c=cluster_labels, cmap='viridis', s=15, alpha=0.5)
-            ax.set_xlabel(f'PC1 b={float(bs[ib]):.2f}')
-            ax.set_ylabel('PC2')
-            ax.set_title(f'PCA space b={float(bs[ib]):.3f}')
-            plt.colorbar(sc, ax=ax, label='Cluster')
-            ax.grid(True, alpha=0.3)
-
-        # Hide unused top-row panels
-        for col in range(N_bs_ps, n_specials):
-            axes2[0, col].set_visible(False)
-
-        # Bottom N_bs_ps rows: one special profile per column, one b per row
-        special_common_indices = [typical_common_idx] + outlier_common_indices
-        special_labels         = ['Typical'] + [f'Outlier {c}' for c in range(n_clusters)]
-        special_colors         = ['blue'] + ['red'] * n_clusters
+        print('    FIGURE 2a - PCA corner scatter')
 
         for ib in range(N_bs_ps):
-            rows_ib = id_to_row[ib]
+            scores_ib = profiles_pca[ib]  # (n_valid_per_b[ib], n_components)
+            cl_labels_ib = cluster_labels_per_b[ib]
+            unique_cl_ib = np.unique(cl_labels_ib)
+            n_cl_ib = len(unique_cl_ib)
+
+            cluster_cmap_ib = plt.cm.get_cmap('tab10', n_cl_ib)
+            cluster_colors_ib = [cluster_cmap_ib(c) for c in range(n_cl_ib)]
+
+            # Special profiles for this b
+            special_indices_ib = [typical_idx_per_b[ib]] + outlier_indices_per_b[ib]
+            special_labels_ib  = ['Typical'] + [f'Outlier {c}' for c in range(len(outlier_indices_per_b[ib]))]
+            special_colors_ib  = ['blue'] + ['red'] * len(outlier_indices_per_b[ib])
+
+            fig2a, axes2a = plt.subplots(
+                n_components, n_components,
+                figsize=(3 * n_components, 3 * n_components)
+            )
+            fig2a.suptitle(
+                f'PCA cluster structure — b = {float(bs[ib]):.3f}',
+                fontsize=12, y=1.01
+            )
+
+            for row in range(n_components):
+                for col in range(n_components):
+                    ax = axes2a[row, col]
+
+                    if row == col:
+                        for ci, cl in enumerate(unique_cl_ib):
+                            cmask = cl_labels_ib == cl
+                            ax.hist(
+                                scores_ib[cmask, row],
+                                bins=30, alpha=0.5,
+                                color=cluster_colors_ib[ci],
+                                label=f'C{cl}',
+                                density=True,
+                                linewidth=0.8,
+                                edgecolor='none',
+                            )
+                        ax.set_xlabel(f'PC{row+1}', fontsize=8)
+                        ax.tick_params(labelsize=7)
+                        for spine in ['top', 'left', 'right']:
+                            ax.spines[spine].set_visible(False)
+                        ax.set_yticks([])
+
+                    elif row > col:
+                        for ci, cl in enumerate(unique_cl_ib):
+                            cmask = cl_labels_ib == cl
+                            ax.scatter(
+                                scores_ib[cmask, col],
+                                scores_ib[cmask, row],
+                                color=cluster_colors_ib[ci],
+                                s=6, alpha=0.35,
+                                linewidths=0,
+                                label=f'C{cl}',
+                                rasterized=True,
+                            )
+                        for cidx, slabel, scol in zip(
+                                special_indices_ib, special_labels_ib, special_colors_ib):
+                            ax.scatter(
+                                scores_ib[cidx, col],
+                                scores_ib[cidx, row],
+                                color=scol,
+                                s=60, zorder=10,
+                                marker='*' if slabel == 'Typical' else 'D',
+                                edgecolors='k', linewidths=0.5,
+                                label=slabel,
+                            )
+                        if col == 0:
+                            ax.set_ylabel(f'PC{row+1}', fontsize=8)
+                        if row == n_components - 1:
+                            ax.set_xlabel(f'PC{col+1}', fontsize=8)
+                        ax.tick_params(labelsize=6)
+                        ax.grid(True, alpha=0.2)
+
+                    else:
+                        ax.set_visible(False)
+
+            last_scatter_ax = axes2a[n_components - 1, n_components - 2]
+            handles, lbls = last_scatter_ax.get_legend_handles_labels()
+            seen = {}
+            for h, l in zip(handles, lbls):
+                if l not in seen:
+                    seen[l] = h
+            fig2a.legend(
+                seen.values(), seen.keys(),
+                loc='upper right',
+                fontsize=8,
+                markerscale=1.5,
+                framealpha=0.8,
+            )
+
+            fig2a.tight_layout()
+            fig2a.savefig(
+                save_data_path + f'PCA_Corner_Scatter_{model}_b{ib}.png',
+                dpi=150, bbox_inches='tight'
+            )
+            plt.close(fig2a)
+            print(f'      Saved PCA corner scatter for b[{ib}]={float(bs[ib]):.3f}')
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Figure 2b: typical and outlier profiles
+        # Rows = b values, columns = special profiles (typical + outliers)
+        # ─────────────────────────────────────────────────────────────────────────────
+        print('    FIGURE 2b - Mode and outlier profiles')
+
+        # Use maximum number of outliers across all b for column count
+        max_n_outliers = max(len(ol) for ol in outlier_indices_per_b)
+        n_specials = 1 + max_n_outliers
+
+        fig2b, axes2b = plt.subplots(N_bs_ps, n_specials,
+                                     figsize=(5 * n_specials, 4 * N_bs_ps),
+                                     sharey='row')
+        if N_bs_ps == 1:
+            axes2b = axes2b[np.newaxis, :]
+        if n_specials == 1:
+            axes2b = axes2b[:, np.newaxis]
+
+        for ib in range(N_bs_ps):
+            special_indices_ib = [typical_idx_per_b[ib]] + outlier_indices_per_b[ib]
+            special_labels_ib  = ['Typical'] + [f'Outlier {c}' for c in range(len(outlier_indices_per_b[ib]))]
+            special_colors_ib  = ['blue'] + ['red'] * len(outlier_indices_per_b[ib])
+
             for col, (cidx, slabel, scol) in enumerate(
-                    zip(special_common_indices, special_labels, special_colors)):
-                ax = axes2[1 + ib, col]
-                # Background: all profiles at this b (subsampled)
+                    zip(special_indices_ib, special_labels_ib, special_colors_ib)):
+                ax = axes2b[ib, col]
                 n_v = n_valid_per_b[ib]
                 for nval in range(0, n_v, max(1, n_v // 200)):
                     ax.plot(xs_per_b[ib][nval], pca_int_profile[ib][nval],
                             alpha=0.15, color='gray', linewidth=0.3)
-                # Highlighted profile
-                row_in_b = rows_ib[cidx]
-                ax.plot(xs_per_b[ib][row_in_b], pca_int_profile[ib][row_in_b],
+                ax.plot(xs_per_b[ib][cidx], pca_int_profile[ib][cidx],
                         color=scol, linewidth=2, label=slabel, zorder=10)
                 ax.set_xlabel('$r/R_\\star$')
                 ax.set_ylabel('Norm. Intensity')
@@ -697,9 +1095,13 @@ for model in models:
                 ax.legend(fontsize=7)
                 ax.grid(True, alpha=0.3)
 
-        fig2.tight_layout()
-        fig2.savefig(save_data_path + 'Mode_and_Outliers.png', dpi=150, bbox_inches='tight')
-        plt.close(fig2)
+            # Hide unused columns if this b has fewer outliers
+            for col in range(len(special_indices_ib), n_specials):
+                axes2b[ib, col].set_visible(False)
+
+        fig2b.tight_layout()
+        fig2b.savefig(save_data_path + 'Mode_and_Outliers.png', dpi=150, bbox_inches='tight')
+        plt.close(fig2b)
 
         # ─────────────────────────────────────────────────────────────────────────────
         # Figure 3: reconstruction quality for the typical profile — one col per b
@@ -713,7 +1115,7 @@ for model in models:
                         hspace=0.05, wspace=0.3)
 
         for col_ib, ib in enumerate(range(N_bs_ps)):
-            row_in_b = id_to_row[ib][typical_common_idx]
+            row_in_b = typical_idx_per_b[ib]
             original = pca_int_profile[ib][row_in_b]
             x_orig   = xs_per_b[ib][row_in_b]
 
@@ -754,52 +1156,75 @@ for model in models:
         print(f"\n=== PCA Analysis Summary ===")
         for ib in range(N_bs_ps):
             print(f"  b[{ib}]={float(bs[ib]):.3f}: "
-                f"{np.sum(pcas[ib].explained_variance_ratio_)*100:.1f}% variance in {n_components} PCs")
-        print(f"Common profiles (valid for all b): {n_common}")
+                f"{np.sum(pcas[ib].explained_variance_ratio_)*100:.1f}% variance in {n_components} PCs, "
+                f"{n_valid_per_b[ib]} valid profiles")
 
-        # Save one profile vector per b for each special profile
+        # Save one profile vector per b for typical and outlier profiles
         for ib in range(N_bs_ps):
-            row_typical = id_to_row[ib][typical_common_idx]
+            row_typical = typical_idx_per_b[ib]
             np.save(save_data_path + f'mode_intensity_profile_{model}_b{ib}.npy',
                     pca_int_profile[ib][row_typical])
             np.save(save_data_path + f'mode_rs_{model}_b{ib}.npy',
                     xs_per_b[ib][row_typical])
-            for i_save, cidx in enumerate(outlier_common_indices):
-                row_out = id_to_row[ib][cidx]
+            for i_save, cidx in enumerate(outlier_indices_per_b[ib]):
                 np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}_b{ib}.npy',
-                        pca_int_profile[ib][row_out])
+                        pca_int_profile[ib][cidx])
                 np.save(save_data_path + f'outlier{i_save+1}_rs_{model}_b{ib}.npy',
-                        xs_per_b[ib][row_out])
+                        xs_per_b[ib][cidx])
 
-        # Also build the flat lists needed for Figure 4
-        typical_profile = [pca_int_profile[ib][id_to_row[ib][typical_common_idx]] for ib in range(N_bs_ps)]
-        typical_xs      = [xs_per_b[ib]       [id_to_row[ib][typical_common_idx]] for ib in range(N_bs_ps)]
-        outlier_profiles = [[pca_int_profile[ib][id_to_row[ib][cidx]] for ib in range(N_bs_ps)]
-                            for cidx in outlier_common_indices]
-        outlier_xs       = [[xs_per_b[ib]       [id_to_row[ib][cidx]] for ib in range(N_bs_ps)]
-                            for cidx in outlier_common_indices]
+        # Build the flat lists needed for Figure 4
+        typical_profile = [pca_int_profile[ib][typical_idx_per_b[ib]] for ib in range(N_bs_ps)]
+        typical_xs      = [xs_per_b[ib][typical_idx_per_b[ib]] for ib in range(N_bs_ps)]
+        outlier_profiles = []
+        outlier_xs       = []
+        # Use max number of outliers; pad with None for b values with fewer clusters
+        max_n_outliers = max(len(ol) for ol in outlier_indices_per_b)
+        for i_out in range(max_n_outliers):
+            prof_list = []
+            xs_list   = []
+            for ib in range(N_bs_ps):
+                if i_out < len(outlier_indices_per_b[ib]):
+                    cidx = outlier_indices_per_b[ib][i_out]
+                    prof_list.append(pca_int_profile[ib][cidx])
+                    xs_list.append(xs_per_b[ib][cidx])
+                else:
+                    prof_list.append(None)
+                    xs_list.append(None)
+            outlier_profiles.append(prof_list)
+            outlier_xs.append(xs_list)
         print(f"Saved profiles to {save_data_path}")
 
     elif PCA_mode == 'load':
         b_colors  = plt.cm.plasma(np.linspace(0.1, 0.9, N_bs_ps))
 
-        # Load one profile per b per special case
         typical_profile = [np.load(save_data_path + f'mode_intensity_profile_{model}_b{ib}.npy')
                            for ib in range(N_bs_ps)]
         typical_xs      = [np.load(save_data_path + f'mode_rs_{model}_b{ib}.npy')
                            for ib in range(N_bs_ps)]
 
+        # Discover how many outlier files exist per b
         outlier_profiles = []
         outlier_xs       = []
-        for i_save in range(n_clusters):
-            outlier_profiles.append(
-                [np.load(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}_b{ib}.npy')
-                 for ib in range(N_bs_ps)]
-            )
-            outlier_xs.append(
-                [np.load(save_data_path + f'outlier{i_save+1}_rs_{model}_b{ib}.npy')
-                 for ib in range(N_bs_ps)]
-            )
+        i_save = 0
+        while True:
+            path_check = save_data_path + f'outlier{i_save+1}_intensity_profile_{model}_b0.npy'
+            if not os.path.exists(path_check):
+                break
+            prof_list = []
+            xs_list   = []
+            for ib in range(N_bs_ps):
+                p_path = save_data_path + f'outlier{i_save+1}_intensity_profile_{model}_b{ib}.npy'
+                x_path = save_data_path + f'outlier{i_save+1}_rs_{model}_b{ib}.npy'
+                if os.path.exists(p_path):
+                    prof_list.append(np.load(p_path))
+                    xs_list.append(np.load(x_path))
+                else:
+                    prof_list.append(None)
+                    xs_list.append(None)
+            outlier_profiles.append(prof_list)
+            outlier_xs.append(xs_list)
+            i_save += 1
+        n_clusters = len(outlier_profiles) if outlier_profiles else 1
         print(f"\nLoaded profiles from {save_data_path}")
 
     else:
@@ -823,10 +1248,10 @@ for model in models:
 
     # Bundle all special profiles: list of (label, profiles_per_b, xs_per_b)
     specials = (
-        [('mode', typical_profile, typical_xs)]
-        + [(f'outlier{i+1}', outlier_profiles[i], outlier_xs[i])
-           for i in range(n_clusters)]
-    )
+            [('mode', typical_profile, typical_xs)]
+            + [(f'outlier{i+1}', outlier_profiles[i], outlier_xs[i])
+            for i in range(len(outlier_profiles))]
+        )
 
     for label, prof_per_b, rps_per_b in specials:
 
@@ -842,6 +1267,12 @@ for model in models:
             mus_ib  = np.array(rps_per_b[ib])   # (N_chords,)  mu from star centre
             prof_ib = np.array(prof_per_b[ib])  # (N_chords,)  normalised intensity
 
+            # Skip if this b has no profile for this outlier
+            if mus_ib is None or prof_ib is None:
+                axes4[ib, 0].set_visible(False)
+                axes4[ib, 1].set_visible(False)
+                continue
+            
             # ── Fit ───────────────────────────────────────────────────────────
             params = Parameters()
             for ip in range(4):
@@ -889,3 +1320,189 @@ for model in models:
             dpi=150, bbox_inches='tight'
         )
         plt.close(fig4)
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Figure 5: Fit ALL profiles with 4th-order NLLD and make corner plots
+    # One corner plot per b value
+    # ─────────────────────────────────────────────────────────────────────────────
+    print('    FIGURE 5 - Fitting ALL profiles with 4th-order NLLD')
+
+    # For each b value, fit every valid profile and collect coefficients
+    all_coeffs_per_b = []   # list of (n_profs, 4) arrays
+
+    if All_Corner == 'build':
+        for ib in tqdm(range(N_bs_ps)):
+            n_profs = pca_int_profile[ib].shape[0]
+            coeffs_ib = np.zeros((n_profs, 4), dtype=np.float64)
+            print(f'  Fitting {n_profs} profiles for b[{ib}]={float(bs[ib]):.3f} ...')
+
+            for idx in tqdm(range(n_profs)):
+                mus_idx  = xs_per_b[ib][idx]
+                prof_idx = pca_int_profile[ib][idx]
+
+                # Skip profiles that are degenerate / all-zero
+                if np.all(np.abs(prof_idx) < 1e-10):
+                    coeffs_ib[idx] = np.nan
+                    continue
+
+                params = Parameters()
+                for ip in range(4):
+                    params.add(f'c{ip+1}', value=np.random.uniform(0, 1))
+
+                try:
+                    result = minimize(residual_fn, params, args=(mus_idx, prof_idx))
+                    coeffs_ib[idx] = [result.params[f'c{ic+1}'].value for ic in range(4)]
+                except Exception:
+                    coeffs_ib[idx] = np.nan
+
+            all_coeffs_per_b.append(coeffs_ib)
+            np.save(save_data_path + f'all_coeffs_{model}_b{ib}.npy', coeffs_ib)
+
+    # Load intensity profiles grid
+    elif All_Corner == 'load':
+        for ib in tqdm(range(N_bs_ps)):
+            coeffs_ib = np.load(save_data_path + f'all_coeffs_{model}_b{ib}.npy')
+            all_coeffs_per_b.append(coeffs_ib)
+
+    else:
+        raise KeyboardInterrupt('Wrong corner plot data mode')
+
+    print('  Done fitting. Now making corner plots...')
+
+    # ── Corner plots ──────────────────────────────────────────────────────────────
+    # Stack all b-value arrays into a single (N_total, 4) array
+    # FIX 1: convert list → 2-D numpy array
+    corner_data = np.vstack(all_coeffs_per_b)          # shape (N_total, 4)
+
+    # FIX 2: drop rows where ANY coefficient is NaN (failed fits / degenerate profiles)
+    valid_mask  = ~np.any(np.isnan(corner_data), axis=1)
+    corner_data = corner_data[valid_mask]
+
+    print(f'  Corner plot for {corner_data.shape[0]} valid profiles')
+
+    # columns are c1, c2, c3, c4
+    labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
+
+    # FIX 3: use corner_data (numpy array) for percentile ranges
+    ranges = [
+        (np.percentile(corner_data[:, ic], 1),
+        np.percentile(corner_data[:, ic], 99))
+        for ic in range(4)
+    ]
+    
+    # Create the corner plot
+    fig_corner = corner.corner(
+        corner_data,
+        labels=labels,
+        range=ranges,
+        bins=50,
+        smooth=1.0,
+        smooth1d=1.0,
+        plot_datapoints=True,
+        plot_density=False,
+        fill_contours=False,
+        levels=(0.5, 0.68, 0.95, 0.99),
+        hist_kwargs={'color': 'black', 'linewidth': 1.5},
+        label_kwargs={'fontsize': 13},
+        title_kwargs={'fontsize': 11},
+        show_titles=False,
+        data_kwargs={'alpha': 0.2, 'ms': 1.5, 'color': 'black'},
+        contourf_kwargs={'alpha': 0.5},
+        contour_kwargs={'colors': ['brown', 'red', 'orange', 'yellow']},
+    )
+
+    # Remove spines on diagonal histograms
+    ndim = corner_data.shape[1]
+    for i in range(ndim):
+        ax = fig_corner.axes[i * ndim + i]
+        ax.spines['top'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+    # FIX 5: merge f-strings into one (was two separate string literals with no separator)
+    fig_corner.suptitle(
+        f'4th-order NLLD coefficients',
+        fontsize=13, y=1.02
+    )
+
+    fig_corner.savefig(
+        save_data_path + f'Corner_NLLD_{model}.png',
+        dpi=150, bbox_inches='tight'
+    )
+    plt.close(fig_corner)
+    print(f'    Saved corner plot')
+
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Mode identification in coefficient space — hierarchical clustering
+    # ─────────────────────────────────────────────────────────────────────────────
+    print('\n=== MODE IDENTIFICATION IN COEFFICIENT SPACE ===')
+
+    # ── Coefficient space ─────────────────────────────────────────────────────
+    # Returns 1-indexed labels; we keep them 1-indexed throughout this block
+    # to match the printed summaries and saved filenames.
+    mode_labels_corner, _, _ = hierarchical_clustering(
+        data           = corner_data,
+        label          = f'Coefficients_{model}',
+        save_path      = save_data_path,
+        feature_labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$'],
+        cutoff         = None,   # set a float once you've inspected the dendrogram
+        clustering_metric = 'euclidean'
+    )
+    # mode_labels_corner : (N_valid,)  integers 1 … N_MODES_FOUND
+    N_MODES     = len(np.unique(mode_labels_corner))
+    MODE_COLORS = plt.cm.tab10(np.linspace(0, 1, min(N_MODES, 10)))
+
+    for m in np.unique(mode_labels_corner):
+        mask_m = mode_labels_corner == m
+        print(
+            f'  Mode {m}: n={mask_m.sum():5d}  '
+            f'c=[{corner_data[mask_m,0].mean():.3f}, '
+            f'{corner_data[mask_m,1].mean():.3f}, '
+            f'{corner_data[mask_m,2].mean():.3f}, '
+            f'{corner_data[mask_m,3].mean():.3f}]'
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Propagate mode labels back onto every PCA score in the common-profile set.
+    # This block is unchanged in logic — it only needs labels from any clustering
+    # source, so hierarchical labels drop straight in.
+    # ─────────────────────────────────────────────────────────────────────────────
+    block_sizes   = [len(c) for c in all_coeffs_per_b]
+    block_offsets = np.concatenate([[0], np.cumsum(block_sizes)])
+    full_stacked  = np.vstack(all_coeffs_per_b)
+    valid_rows    = np.where(~np.any(np.isnan(full_stacked), axis=1))[0]
+
+    mode_per_b_profile = []
+
+    for ib in range(N_bs_ps):
+        n_profs        = block_sizes[ib]
+        global_rows_ib = np.arange(block_offsets[ib], block_offsets[ib] + n_profs)
+        pos_in_valid   = np.searchsorted(valid_rows, global_rows_ib)
+        pos_in_valid   = np.clip(pos_in_valid, 0, len(valid_rows) - 1)
+        matched        = valid_rows[pos_in_valid] == global_rows_ib
+
+        labels_ib          = np.full(n_profs, -1, dtype=int)
+        labels_ib[matched] = mode_labels_corner[pos_in_valid[matched]]
+        mode_per_b_profile.append(labels_ib)
+
+    # ── PCA space coloured by coefficient-space mode (one figure per b) ──────
+    for ib in range(N_bs_ps):
+        hierarchical_clustering(
+            data           = profiles_pca[ib],
+            label          = f'PCA_byMode_{model}_b{ib}',
+            save_path      = save_data_path,
+            feature_labels = [f'PC{k+1}' for k in range(n_components)],
+            cutoff         = None,
+            # Pass the back-propagated coefficient-space labels as an override
+            # so the corner plot colours come from c-space, not a fresh PCA cluster.
+            external_labels = mode_per_b_profile[ib],
+            clustering_metric = 'euclidean'
+        )
+
+    # ── Save ─────────────────────────────────────────────────────────────────
+    np.save(save_data_path + f'mode_labels_corner_{model}.npy', mode_labels_corner)
+    for ib in range(N_bs_ps):
+        np.save(save_data_path + f'mode_labels_pca_{model}_b{ib}.npy',
+                mode_per_b_profile[ib])
+    print(f'  Saved mode label arrays to {save_data_path}')
