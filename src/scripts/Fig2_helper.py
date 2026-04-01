@@ -26,7 +26,6 @@ from jax import jit, vmap
 import exotic_ld as el
 import pickle
 from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
 from lmfit import minimize, Parameters
 import gc
 import matplotlib.cm as cm
@@ -38,6 +37,7 @@ from scipy.cluster.hierarchy import (linkage, fcluster,
                                         dendrogram as scipy_dendrogram,
                                         optimal_leaf_ordering)
 from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import cdist
 
 ######################################
 ########## Hyper-parameters ##########
@@ -114,7 +114,7 @@ n_clusters = 5
 
 wav_region = [6000, 53000] #0.6 - 5.3 micron
 
-intr_prof_mode = 'load' # 'build' or 'load'
+intr_prof_mode = 'build' # 'build' or 'load'
 PCA_mode = 'build'
 All_Corner = 'build'
 
@@ -130,7 +130,7 @@ excluded_bp_pairs = [
 # before running PCA, clustering, fitting, etc.
 # Set to False to use all valid profiles.
 subsample_profiles = True
-n_subsample_profiles = 10000
+n_subsample_profiles = 100000
 subsample_seed = 42  # for reproducibility
 
 plot_dendogram = False
@@ -189,6 +189,11 @@ def hierarchical_clustering(
         Z           = None
         print(f'  [{label}] External labels: {n_cls} modes, '
               f'{valid_ext.sum():,} valid profiles')
+        
+        # ── 6. Colour palette (shared by both paths) ──────────────────────────────
+        cls_colors = plt.cm.tab10(np.linspace(0, 1, min(n_cls, 10)))
+        if n_cls > 10:
+            cls_colors = plt.cm.hsv(np.linspace(0, 0.9, n_cls))
 
     else:
         # ── 1. Standardise ────────────────────────────────────────────────────
@@ -201,8 +206,6 @@ def hierarchical_clustering(
         # block-row, accumulating the condensed vector ourselves.  This gives
         # a meaningful progress bar while keeping all the speed of scipy.
         
-        from scipy.spatial.distance import cdist
-
         n_pairs  = N * (N - 1) // 2
         dist_vec = np.empty(n_pairs, dtype=np.float32)
 
@@ -776,12 +779,9 @@ for model in models:
                 n_valid_per_b[ib]   = n_draw
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # PCA — one per b value
+        # Plot showing dependence of intensity profiles on other parameters
         # ─────────────────────────────────────────────────────────────────────────────
-        print('PCA ANALYSIS')
-        pcas         = []
-        profiles_pca = []   # PCA scores per b: list of (n_valid_ib, n_components)
-
+        print('RESIDUAL PLOTTING')
         for ib in range(N_bs_ps):
             if ib == N_bs_ps - 1:  # grazing case
 
@@ -837,6 +837,13 @@ for model in models:
                 fig_g.savefig(save_data_path + f'Grazing_profiles_coloured_{model}.pdf',
                               dpi=150, bbox_inches='tight')
                 plt.close(fig_g)
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # PCA — one per b value
+        # ─────────────────────────────────────────────────────────────────────────────
+        print('PCA ANALYSIS')
+        pcas         = []
+        profiles_pca = []   # PCA scores per b: list of (n_valid_ib, n_components)
                 
         for ib in range(N_bs_ps):
             print(f'  Fitting PCA for b[{ib}]={float(bs[ib]):.3f} '
@@ -865,9 +872,9 @@ for model in models:
                 label          = f'PCA_b{ib}_{model}',
                 save_path      = save_data_path,
                 feature_labels = [f'PC{k+1}' for k in range(n_components)],
-                cutoff         = 0.3,
                 clustering_metric = 'cityblock',
-                method= 'single'
+                method= 'single',
+                cutoff = [0.3, 0.3, 0.3, 0.4, 0.3][ib]
             )
 
             # Convert to 0-indexed
@@ -1264,14 +1271,15 @@ for model in models:
         fig4.suptitle(f'4th Order NLLD Fit — {label}', fontsize=13)
 
         for ib in range(N_bs_ps):
-            mus_ib  = np.array(rps_per_b[ib])   # (N_chords,)  mu from star centre
-            prof_ib = np.array(prof_per_b[ib])  # (N_chords,)  normalised intensity
-
+            
             # Skip if this b has no profile for this outlier
-            if mus_ib is None or prof_ib is None:
+            if rps_per_b[ib] is None or prof_per_b[ib] is None:
                 axes4[ib, 0].set_visible(False)
                 axes4[ib, 1].set_visible(False)
                 continue
+
+            mus_ib  = np.array(rps_per_b[ib])
+            prof_ib = np.array(prof_per_b[ib])
             
             # ── Fit ───────────────────────────────────────────────────────────
             params = Parameters()
@@ -1446,8 +1454,9 @@ for model in models:
         label          = f'Coefficients_{model}',
         save_path      = save_data_path,
         feature_labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$'],
-        cutoff         = None,   # set a float once you've inspected the dendrogram
-        clustering_metric = 'euclidean'
+        cutoff         = 0.055,
+        clustering_metric = 'cityblock',
+        method = 'single'
     )
     # mode_labels_corner : (N_valid,)  integers 1 … N_MODES_FOUND
     N_MODES     = len(np.unique(mode_labels_corner))
@@ -1497,7 +1506,8 @@ for model in models:
             # Pass the back-propagated coefficient-space labels as an override
             # so the corner plot colours come from c-space, not a fresh PCA cluster.
             external_labels = mode_per_b_profile[ib],
-            clustering_metric = 'euclidean'
+            clustering_metric = 'cityblock',
+            method = 'single'
         )
 
     # ── Save ─────────────────────────────────────────────────────────────────

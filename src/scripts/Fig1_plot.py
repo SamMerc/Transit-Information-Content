@@ -16,6 +16,7 @@ print(f"JAX devices: {jax.devices()}")
 print(f"Default backend: {jax.default_backend()}")
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = "Arial"
 from jaxoplanet.orbits.keplerian import System, Central
 import astropy.units as u
 from astropy.constants import G
@@ -32,7 +33,7 @@ from multiprocessing import Pool, cpu_count
 import gc
 import corner
 from matplotlib.patches import Patch
-
+from scipy.optimize import curve_fit
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -92,7 +93,7 @@ num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2)
                         (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
 
 #%% Location of MCMC results and where plot will be output
-raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig1_Storage/'
+raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/New/'
 
 #%% Model parameters
 mod_prop = {
@@ -201,9 +202,9 @@ def load_result(args):
     - Returns good_steps_mask (n_walkers, n_steps_post) for fine-grained use
     """
     raw_save_dir, PLD_order, model_scatter, seed, return_full = args
-    print(f"  Processing PLD{PLD_order}, scatter{np.floor(model_scatter)}, seed{seed}...")
+    print(f"  Processing PLD{PLD_order}, scatter{model_scatter:.3f}, seed{seed}...")
     try:
-        path_base = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/'
+        path_base = f'{raw_save_dir}PLD_{PLD_order}/{model_scatter:.3f}ppm/Seed{seed}/'
 
         # Load with memory mapping
         raw_chain = np.load(path_base + 'chains.npy', mmap_mode='r')
@@ -302,7 +303,7 @@ def load_result(args):
                     False, None, None, None, None)
 
     except Exception as e:
-        print(f"Error loading PLD{PLD_order}, scatter{model_scatter}, seed{seed}: {e}")
+        print(f"Error loading PLD{PLD_order}, scatter{model_scatter:.3f}, seed{seed}: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -331,9 +332,9 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_steps_mask,
     n_steps_post = n_steps - nburn
 
     # Create output directory
-    diag_dir = f'{raw_save_dir}PLD_{PLD_order}/{np.floor(model_scatter)}ppm/Seed{seed}/diagnostics/'
+    diag_dir = f'{raw_save_dir}PLD_{PLD_order}/{model_scatter:.3f}ppm/Seed{seed}/diagnostics/'
     os.makedirs(diag_dir, exist_ok=True)
-    print(f"    Generating diagnostics for PLD{PLD_order}, scatter{model_scatter}, seed{seed}")
+    print(f"    Generating diagnostics for PLD{PLD_order}, scatter{model_scatter:.3f}, seed{seed}")
 
     # =========================================================================
     # DERIVE PER-WALKER SUMMARY FROM 2D MASK (for colouring traces)
@@ -434,7 +435,7 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_steps_mask,
         if i == 0:
             ax_hist.legend(fontsize=7)
 
-    fig_trace.suptitle(f'Trace Plots - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}',
+    fig_trace.suptitle(f'Trace Plots - PLD{PLD_order}, scatter={model_scatter:.3f}, seed={seed}',
                        fontsize=12)
     plt.savefig(os.path.join(diag_dir, 'trace.pdf'), dpi=150, bbox_inches='tight')
     plt.close(fig_trace)
@@ -460,7 +461,7 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_steps_mask,
     ax_chi2.set_ylabel('Chi-squared', fontsize=10)
     ax_chi2.grid(True, alpha=0.3)
     ax_chi2.legend(loc='upper right')
-    ax_chi2.set_title(f'Chi2 Evolution - PLD{PLD_order}, scatter={model_scatter:.1f}, seed={seed}',
+    ax_chi2.set_title(f'Chi2 Evolution - PLD{PLD_order}, scatter={model_scatter:.3f}, seed={seed}',
                       fontsize=12)
     plt.tight_layout()
     plt.savefig(os.path.join(diag_dir, 'chi2.pdf'), dpi=150, bbox_inches='tight')
@@ -563,7 +564,7 @@ def plot_diagnostics(full_chain, full_logprob, full_chi2, good_steps_mask,
         ax_post.spines["left"].set_visible(False)
 
     title_text = (
-        f'Corner Plot - PLD{PLD_order}, scatter={model_scatter:.1f} ppm, seed={seed}\n'
+        f'Corner Plot - PLD{PLD_order}, scatter={model_scatter:.3f} ppm, seed={seed}\n'
         f'BLACK: Pre-filtering ({n_walkers} walkers, {len(samples_pre)} pairs) - A = {amp_factor_pre:.2f}\n'
         f'RED: Post-filtering ({n_good_pairs} pairs, {n_fully_good} full + {n_partial} partial walkers) - A = {amp_factor_post:.2f}\n'
         f'Improvement: {((amp_factor_pre - amp_factor_post) / amp_factor_pre * 100):.1f}% reduction in A'
@@ -644,8 +645,7 @@ if __name__ == '__main__':
     #####################
     #### Optimization ###
     #####################
-    model_scatters = [0.1, 1, 10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127,
-                    129.1549665014884, 215.44346900318823, 359.38136638046257, 599.4842503189409, 1000.0, 3000.0, 10000.0, 30000.0]
+    model_scatters = jnp.logspace(-2, 5, 15).tolist() + [16.0, 27.0, 46.0, 77.0, 129.0, 215.0, 359.0, 599.0]
     seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
     PLD_orders = [2, 3, 4]
 
@@ -781,7 +781,7 @@ if __name__ == '__main__':
     t_plot_start = time.time()
 
     PLD_order = 3
-    model_scatter = 359.38136638046257
+    model_scatter = 316.2279357910156
     seed = 100
     #Setting base LDCs
     init_PLD_coeffs = [0.1, 0.2, 0.4]
@@ -799,7 +799,7 @@ if __name__ == '__main__':
     noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
 
     #Loading MCMC results
-    raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy')
+    raw_chain = jnp.load(raw_save_dir+f'PLD_{PLD_order}/{model_scatter:.3f}ppm/Seed{seed}/chains.npy')
 
     #Burning chains
     burnt_chains = jnp.copy(raw_chain[:, fixed_args['nburn']:, :])
@@ -849,12 +849,68 @@ if __name__ == '__main__':
     fit_colors = ['blue', 'green', 'salmon']
     fit_labels = ['2nd order LD', '3rd order LD', '4th order LD']
 
-    #Define the model scatter values to use for the asymptote calculation
-    asymp_scatters = [10, 16.68100537200059, 27.825594022071243, 46.41588833612777, 77.4263682681127, 129.1549665014884]
+    def piecewise_log_linear(log_x, log_x_break, slope, log_A_asym):
+        """
+        Piecewise linear model in log-log space with one flat (slope=0) piece.
+
+        Left piece  (log_x <= log_x_break): flat at log_A_asym
+        Right piece (log_x >  log_x_break): slope * (log_x - log_x_break) + log_A_asym
+
+        Continuity is enforced by construction at the breakpoint.
+        """
+        return np.where(
+            log_x <= log_x_break,
+            log_A_asym,
+            slope * (log_x - log_x_break) + log_A_asym
+        )
+
+    # --- Fit asymptotes automatically for each PLD order ---
     asymp_amp_factor = np.zeros(len(PLD_orders), dtype=float)
     asymp_bias = np.zeros(len(PLD_orders), dtype=float)
 
-    plt.rcParams["font.family"] = "Arial"
+    for ipld, PLD_order in enumerate(PLD_orders):
+
+        # Collect per-scatter medians
+        scatter_vals = []
+        median_amps  = []
+
+        for model_scatter in model_scatters:
+            amp_arr = cached_data['amp_factors'][PLD_order][model_scatter]
+            if len(amp_arr) > 0:
+                scatter_vals.append(model_scatter)
+                median_amps.append(np.median(amp_arr))
+
+        scatter_vals = np.array(scatter_vals)
+        median_amps  = np.array(median_amps)
+
+        log_scatter = np.log10(scatter_vals)
+        log_amps    = np.log10(median_amps)
+
+        # Initial guesses:
+        #   - break near the middle of the scatter range
+        #   - negative slope for the right (noise-limited) piece
+        #   - asymptote at the maximum observed amp factor (leftmost plateau)
+        p0     = [np.median(log_scatter), -1.0, np.max(log_amps)]
+        # Constrain slope <= 0 so the right piece is non-increasing
+        bounds = (
+            [log_scatter.min(), -np.inf, -np.inf],
+            [log_scatter.max(),  0.0,     np.inf]
+        )
+
+        try:
+            popt, _ = curve_fit(
+                piecewise_log_linear, log_scatter, log_amps,
+                p0=p0, bounds=bounds, maxfev=10000
+            )
+            _, _, log_A_asym = popt
+            asymp_amp_factor[ipld] = 10**log_A_asym
+
+            print(f"PLD{PLD_order}: A_asym = {asymp_amp_factor[ipld]:.3f}")
+
+        except RuntimeError as e:
+            print(f"  WARNING — fit failed for PLD{PLD_order}: {e}. Using low-scatter fallback.")
+            n_low = max(1, len(scatter_vals) // 3)
+            asymp_amp_factor[ipld] = np.median(median_amps[:n_low])
 
     #Loop over LD models
     for ipld, (PLD_order, fit_color) in enumerate(zip(PLD_orders, fit_colors)):
@@ -878,15 +934,6 @@ if __name__ == '__main__':
                     capprops=dict(color=fit_color, linewidth=1.5),
                     flierprops=dict(marker='o', color=fit_color, markersize=5, alpha=0.5),
                     showfliers=False)
-            
-            #Add to the asymptote value
-            if model_scatter in asymp_scatters:
-                asymp_amp_factor[ipld] += np.median(amp_factors)
-                asymp_bias[ipld]       += np.median(biases)
-
-    # Normalize the asymptote values to get averages
-    asymp_amp_factor /= len(asymp_scatters)
-    asymp_bias /= len(asymp_scatters)
 
     # Styling
     ax_right.set_xscale('log')
@@ -895,8 +942,8 @@ if __name__ == '__main__':
     ax_right.set_ylabel(r'Amplification Factor ($A$)', fontsize=12)
     ax_right.tick_params(axis='x', labelsize=12)
     ax_right.tick_params(axis='y', labelsize=12)
-    ax_right.set_xticks([0.1, 1, 10, 100, 1000, 10000], labels = [0.1, 1, 10, 100, 1000, 10000])
-    ax_right.set_xlim([0.08, 50000])
+    ax_right.set_xticks([0.01, 0.1, 1, 10, 100, 1000, 10000, 100000], labels = [0.01, 0.1, 1, 10, 100, 1000, 10000, 100000])
+    ax_right.set_xlim([0.008, 500000])
     ax_right.set_yticks([1, 10], labels = [1, 10])
     ax_right.grid(which='both', linestyle='--', alpha=0.5)
     ax_right.set_ylim([0.85, 60])
