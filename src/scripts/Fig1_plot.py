@@ -943,13 +943,13 @@ if __name__ == '__main__':
     ax_right.tick_params(axis='x', labelsize=12)
     ax_right.tick_params(axis='y', labelsize=12)
     ax_right.set_xticks([0.01, 0.1, 1, 10, 100, 1000, 10000, 100000], labels = [0.01, 0.1, 1, 10, 100, 1000, 10000, 100000])
-    ax_right.set_xlim([0.008, 500000])
+    ax_right.set_xlim([0.008, 70000])
     ax_right.set_yticks([1, 10], labels = [1, 10])
     ax_right.grid(which='both', linestyle='--', alpha=0.5)
     ax_right.set_ylim([0.85, 60])
 
     # --- Gradient Transition Region with log-aware fading ---
-    x_min, x_max = 2, 10000
+    x_min, x_max = 50, 20000
     y_min, y_max = ax_right.get_ylim()
 
     # resolution in x
@@ -972,27 +972,27 @@ if __name__ == '__main__':
                 shading='auto', cmap='Greys', alpha=alpha_2d, zorder=0)
 
     ax_right.axhline(np.sqrt(3), color='k', linestyle='dashed')
-    ax_right.text(0.13, np.sqrt(3) - 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
-    ax_right.text(100, 50, 'Transition region', fontsize=12, color='black')
+    ax_right.text(0.4, np.sqrt(3) - 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
+    ax_right.text(200, 50, 'Transition region', fontsize=12, color='black')
     ax_right.text(9000, 50, 'Noise limited', fontsize=12, color='black')
     ax_right.text(0.13, 50, 'Model (i.e. degeneracy) limited', fontsize=12, color='black')
 
     # Add arrows from "Transition Region" to the other two regions
     ax_right.annotate("",
                 xy=(8200, 52), xycoords="data",   # Noise Limited
-                xytext=(750, 52), textcoords="data",  # Transition Region
+                xytext=(2100, 52), textcoords="data",  # Transition Region
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
     ax_right.annotate("",
-                xy=(5, 52), xycoords="data",   # Degeneracy Limited
-                xytext=(80, 52), textcoords="data",  # Transition Region
+                xy=(10, 52), xycoords="data",   # Degeneracy Limited
+                xytext=(180, 52), textcoords="data",  # Transition Region
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
     # --- Asymptote lines with fading into transition region ---
-    for idx, (y_asym, bias_asym, x_fade_min, x_fade_max, asym_color, text_loc) in enumerate(zip(asymp_amp_factor, asymp_bias*1e6, [10, 1, 0.5], [130, 20, 8], fit_colors, [2., 0.13, 0.13])):
+    for idx, (y_asym, x_fade_min, x_fade_max, asym_color, text_loc) in enumerate(zip(asymp_amp_factor, [10, 1, 0.5], [10000, 1000, 100], fit_colors, [2., 0.13, 0.13])):
 
         # log-spaced x for the line
-        x_line = np.logspace(np.log10(0.08), np.log10(x_fade_max), 500)
+        x_line = np.logspace(np.log10(0.008), np.log10(x_fade_max), 500)
         y_line = np.full_like(x_line, y_asym)
 
         # Compute alpha: 1 (solid) on left, fade to 0 in transition region
@@ -1011,8 +1011,8 @@ if __name__ == '__main__':
         lc = LineCollection(segments, colors=[(base_color[0], base_color[1], base_color[2], a) for a in alphas[:-1]], linewidths=2, zorder=1)
         ax_right.add_collection(lc)
 
-        if idx==0:ax_right.text(text_loc, y_asym + (y_asym/6), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}ppm', fontsize=12, color=asym_color)
-        else:ax_right.text(text_loc, y_asym - (y_asym/5), f'asymptote @ A = {y_asym:.0f}, Bias = {bias_asym:.0f}ppm', fontsize=12, color=asym_color)
+        if idx==0:ax_right.text(text_loc, y_asym + (y_asym/6), f'asymptote @ A = {y_asym:.0f}', fontsize=12, color=asym_color)
+        else:ax_right.text(text_loc, y_asym - (y_asym/5), f'asymptote @ A = {y_asym:.0f}', fontsize=12, color=asym_color)
     print(f"\nPlotting complete in {time.time() - t_plot_start:.2f} seconds")
 
     plt.savefig(raw_save_dir+'Fig1_opt.png')
