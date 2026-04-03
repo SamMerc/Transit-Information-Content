@@ -114,7 +114,7 @@ n_clusters = 5
 
 wav_region = [6000, 53000] #0.6 - 5.3 micron
 
-intr_prof_mode = 'build' # 'build' or 'load'
+intr_prof_mode = 'load' # 'build' or 'load'
 PCA_mode = 'build'
 All_Corner = 'build'
 
@@ -1211,6 +1211,10 @@ for model in models:
             outlier_xs.append(xs_list)
         print(f"Saved profiles to {save_data_path}")
 
+        # Save metadata arrays for each b (needed for coloured corner plots)
+        for ib in range(N_bs_ps):
+            np.save(save_data_path + f'meta_{model}_b{ib}.npy', meta_per_b[ib])
+
     elif PCA_mode == 'load':
         b_colors  = plt.cm.plasma(np.linspace(0.1, 0.9, N_bs_ps))
 
@@ -1218,6 +1222,10 @@ for model in models:
                            for ib in range(N_bs_ps)]
         typical_xs      = [np.load(save_data_path + f'mode_rs_{model}_b{ib}.npy')
                            for ib in range(N_bs_ps)]
+        
+        # Load metadata arrays
+        meta_per_b = [np.load(save_data_path + f'meta_{model}_b{ib}.npy')
+                      for ib in range(N_bs_ps)]
 
         # Discover how many outlier files exist per b
         outlier_profiles = []
@@ -1343,7 +1351,7 @@ for model in models:
     # Figure 5: Fit ALL profiles with 4th-order NLLD and make corner plots
     # One corner plot per b value
     # ─────────────────────────────────────────────────────────────────────────────
-    print('    FIGURE 5 - Fitting ALL profiles with 4th-order NLLD')
+    print('Fitting ALL profiles with 4th-order NLLD','\n')
 
     # For each b value, fit every valid profile and collect coefficients
     all_coeffs_per_b = []   # list of (n_profs, 4) arrays
@@ -1388,9 +1396,17 @@ for model in models:
     print('  Done fitting. Now making corner plots...')
 
     # ── Corner plots ──────────────────────────────────────────────────────────────
-    # Stack all b-value arrays into a single (N_total, 4) array
-    # FIX 1: convert list → 2-D numpy array
-    corner_data = np.vstack(all_coeffs_per_b)          # shape (N_total, 4)
+    # Stack all b-value arrays and append the impact parameter as a 5th column
+    # so that corner_data has shape (N_total, 5): [c1, c2, c3, c4, b]
+    print('    FIGURE 5a - All coefficients with density corner plot')
+
+    corner_pieces = []
+    for ib in range(N_bs_ps):
+        n_profs = all_coeffs_per_b[ib].shape[0]
+        b_col   = np.full((n_profs, 1), float(bs[ib]))
+        corner_pieces.append(np.hstack([all_coeffs_per_b[ib], b_col]))
+
+    corner_data = np.vstack(corner_pieces)                 # shape (N_total, 5)
 
     # FIX 2: drop rows where ANY coefficient is NaN (failed fits / degenerate profiles)
     valid_mask  = ~np.any(np.isnan(corner_data), axis=1)
@@ -1398,14 +1414,14 @@ for model in models:
 
     print(f'  Corner plot for {corner_data.shape[0]} valid profiles')
 
-    # columns are c1, c2, c3, c4
-    labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
+    # columns are c1, c2, c3, c4, b
+    labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$', r'$b$']
 
     # FIX 3: use corner_data (numpy array) for percentile ranges
     ranges = [
         (np.percentile(corner_data[:, ic], 1),
         np.percentile(corner_data[:, ic], 99))
-        for ic in range(4)
+        for ic in range(5)
     ]
     
     # Create the corner plot
@@ -1439,7 +1455,7 @@ for model in models:
 
     # FIX 5: merge f-strings into one (was two separate string literals with no separator)
     fig_corner.suptitle(
-        f'4th-order NLLD coefficients',
+        f'4th-order NLLD coefficients + Impact parameter',
         fontsize=13, y=1.02
     )
 
@@ -1450,6 +1466,484 @@ for model in models:
     plt.close(fig_corner)
     print(f'    Saved corner plot')
 
+
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Figure 5b: 5D corner plot coloured by impact parameter
+    # ─────────────────────────────────────────────────────────────────────────────
+    print('    FIGURE 5b - Corner plot coloured by impact parameter')
+
+    # The impact parameter lives in the 5th column (index 4) of corner_data
+    b_values = corner_data[:, 4]
+
+    # Build a colour array: one RGBA per profile, mapped from b
+    cmap_b  = plt.cm.viridis
+    norm_b  = mcolors.Normalize(vmin=b_values.min(), vmax=b_values.max())
+    point_colors = cmap_b(norm_b(b_values))  # (N_valid, 4) RGBA
+
+    # Percentile ranges (same as before)
+    ranges_5d = [
+        (np.percentile(corner_data[:, ic], 1),
+         np.percentile(corner_data[:, ic], 99))
+        for ic in range(5)
+    ]
+
+    labels_5d = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$', r'$b$']
+
+    # ── First pass: create the corner figure with histograms only ─────────────
+    #    We suppress the default scatter so we can draw our own coloured version.
+    fig_corner_b = corner.corner(
+        corner_data,
+        labels=labels_5d,
+        range=ranges_5d,
+        bins=50,
+        smooth1d=1.0,
+        plot_datapoints=False,       # we will add our own coloured scatter
+        plot_density=False,
+        fill_contours=False,
+        no_fill_contours=True,
+        levels=(0.5, 0.68, 0.95, 0.99),
+        hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
+        label_kwargs={'fontsize': 13},
+        title_kwargs={'fontsize': 11},
+        show_titles=False,
+        contour_kwargs={'colors': 'none'},   # hide contour lines
+    )
+
+    ndim_5d = corner_data.shape[1]
+    axes_cb = np.array(fig_corner_b.axes).reshape(ndim_5d, ndim_5d)
+
+    # ── Second pass: coloured scatter in lower-triangle panels ────────────────
+    # Subsample for readability if the dataset is very large
+    max_scatter = 40_000
+    if len(corner_data) > max_scatter:
+        rng_cb   = np.random.default_rng(42)
+        idx_sub  = np.sort(rng_cb.choice(len(corner_data), size=max_scatter, replace=False))
+    else:
+        idx_sub = np.arange(len(corner_data))
+
+    # Sort by b so that the highest-b points are drawn on top (most visible)
+    order = np.argsort(b_values[idx_sub])
+    idx_sub = idx_sub[order]
+
+    for row in range(ndim_5d):
+        for col in range(row):
+            ax = axes_cb[row, col]
+            ax.scatter(
+                corner_data[idx_sub, col],
+                corner_data[idx_sub, row],
+                c=b_values[idx_sub],
+                cmap=cmap_b,
+                norm=norm_b,
+                s=1.5,
+                alpha=0.35,
+                linewidths=0,
+                rasterized=True,
+            )
+
+    # ── Coloured histograms on the diagonal ───────────────────────────────────
+    # Overwrite the grey histograms with stacked per-b histograms
+    unique_bs = np.unique(b_values)
+    for d in range(ndim_5d):
+        ax = axes_cb[d, d]
+        ax.clear()
+        for bval in unique_bs:
+            mask_bval = b_values == bval
+            ax.hist(
+                corner_data[mask_bval, d],
+                bins=50,
+                range=ranges_5d[d],
+                alpha=0.55,
+                color=cmap_b(norm_b(bval)),
+                density=True,
+                histtype='stepfilled',
+                edgecolor='none',
+                label=f'b={bval:.2f}',
+            )
+        ax.set_xlim(ranges_5d[d])
+        ax.set_yticks([])
+        for spine in ['top', 'left', 'right']:
+            ax.spines[spine].set_visible(False)
+        if d == ndim_5d - 1:
+            ax.set_xlabel(labels_5d[d], fontsize=13)
+
+    # ── Restore axis labels that corner.corner normally sets ──────────────────
+    for row in range(ndim_5d):
+        for col in range(row):
+            ax = axes_cb[row, col]
+            if col == 0:
+                ax.set_ylabel(labels_5d[row], fontsize=13)
+            if row == ndim_5d - 1:
+                ax.set_xlabel(labels_5d[col], fontsize=13)
+            ax.tick_params(labelsize=8)
+            ax.grid(True, alpha=0.15)
+
+    # ── Colorbar ──────────────────────────────────────────────────────────────
+    # Place the colorbar in the upper-right empty region of the corner grid
+    # Create a new axes spanning roughly the top-right quarter
+    cbar_ax = fig_corner_b.add_axes([0.72, 0.72, 0.025, 0.20])  # [left, bottom, width, height]
+    sm = cm.ScalarMappable(cmap=cmap_b, norm=norm_b)
+    sm.set_array([])
+    cbar = fig_corner_b.colorbar(sm, cax=cbar_ax)
+    cbar.set_label(r'Impact parameter $b$', fontsize=13)
+    cbar.ax.tick_params(labelsize=10)
+
+    # If b takes only discrete values, set the ticks explicitly
+    if len(unique_bs) <= 15:
+        cbar.set_ticks(unique_bs)
+        cbar.set_ticklabels([f'{bv:.2f}' for bv in unique_bs])
+
+    fig_corner_b.suptitle(
+        f'4th-order NLLD coefficients coloured by impact parameter — {model}',
+        fontsize=13, y=1.02,
+    )
+
+    fig_corner_b.savefig(
+        save_data_path + f'Corner_NLLD_byB_{model}.png',
+        dpi=150, bbox_inches='tight',
+    )
+    plt.close(fig_corner_b)
+    print(f'    Saved b-coloured corner plot')
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Build corner_meta — physical parameter values for every row in corner_data
+    # Columns: [p, Teff, logg, metallicity]
+    # ─────────────────────────────────────────────────────────────────────────────
+    T_vals_arr = np.linspace(Teffs[model][0],        Teffs[model][1],        N_star)
+    g_vals_arr = np.linspace(loggs[model][0],         loggs[model][1],         N_star)
+    m_vals_arr = np.linspace(metallicitys[model][0],  metallicitys[model][1],  N_star)
+    p_vals_arr = np.array(ps)
+
+    meta_pieces = []
+    for ib in range(N_bs_ps):
+        meta_ib = meta_per_b[ib]  # (n_profs, 5): columns [ip, i, j, k, iw]
+        phys_ib = np.column_stack([
+            p_vals_arr[meta_ib[:, 0]],    # p
+            T_vals_arr[meta_ib[:, 1]],    # Teff
+            g_vals_arr[meta_ib[:, 2]],    # logg
+            m_vals_arr[meta_ib[:, 3]],    # metallicity
+        ])                                 # (n_profs, 4)
+        meta_pieces.append(phys_ib)
+
+    corner_meta = np.vstack(meta_pieces)   # (N_total, 4)
+    corner_meta = corner_meta[valid_mask]  # same valid_mask used for corner_data
+
+    meta_col_names  = [r'$p$', r'$T_{\rm eff}$ (K)', r'$\log\,g$', r'[M/H]']
+    meta_col_keys   = ['p', 'Teff', 'logg', 'MH']
+    meta_cmaps      = [plt.cm.plasma, plt.cm.inferno, plt.cm.cividis, plt.cm.coolwarm]
+
+    # ── Wavelength value for every row in corner_data ─────────────────────────
+    # meta_per_b[ib][:, 4] is the wavelength index iw into the filtered
+    # wavelength grid.  All (i,j,k) combinations share the same grid for a
+    # given model, so we use wavs_ref as the look-up table.
+    wavs_ref = np.array(gen_dict['stellar_wavelengths'][model][0, 0, 0])  # (n_wav,)
+
+    wav_pieces = []
+    for ib in range(N_bs_ps):
+        meta_ib = meta_per_b[ib]          # (n_profs, 5): [ip, i, j, k, iw]
+        wav_pieces.append(wavs_ref[meta_ib[:, 4]])   # (n_profs,)
+
+    corner_wav = np.concatenate(wav_pieces)            # (N_total,)
+    corner_wav = corner_wav[valid_mask]                # same mask as corner_data
+
+    # Convert from Angstroms to microns for a cleaner colorbar
+    corner_wav_um = corner_wav / 1e4
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Figures 5c–5f: 5D corner plots coloured by p, Teff, logg, metallicity
+    # ─────────────────────────────────────────────────────────────────────────────
+    for imeta in range(4):                      # loop over p, Teff, logg, [M/H]
+        col_vals   = corner_meta[:, imeta]
+        col_label  = meta_col_names[imeta]
+        col_key    = meta_col_keys[imeta]
+        col_cmap   = meta_cmaps[imeta]
+        col_norm   = mcolors.Normalize(vmin=col_vals.min(), vmax=col_vals.max())
+
+        print(f'    FIGURE 5{chr(99 + imeta)} - Corner plot coloured by {col_key}')
+
+        # ── Base corner figure (histograms only) ─────────────────────────────
+        fig_cm = corner.corner(
+            corner_data,
+            labels=labels_5d,
+            range=ranges_5d,
+            bins=50,
+            smooth1d=1.0,
+            plot_datapoints=False,
+            plot_density=False,
+            fill_contours=False,
+            no_fill_contours=True,
+            levels=(0.5, 0.68, 0.95, 0.99),
+            hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
+            label_kwargs={'fontsize': 13},
+            title_kwargs={'fontsize': 11},
+            show_titles=False,
+            contour_kwargs={'colors': 'none'},
+        )
+
+        axes_cm = np.array(fig_cm.axes).reshape(ndim_5d, ndim_5d)
+
+        # ── Coloured scatter in lower-triangle panels ────────────────────────
+        max_scatter = 40_000
+        if len(corner_data) > max_scatter:
+            rng_cm  = np.random.default_rng(42)
+            idx_sub = np.sort(rng_cm.choice(len(corner_data),
+                                            size=max_scatter, replace=False))
+        else:
+            idx_sub = np.arange(len(corner_data))
+
+        # Sort so highest colour values render on top
+        order = np.argsort(col_vals[idx_sub])
+        idx_sub = idx_sub[order]
+
+        for row in range(ndim_5d):
+            for col in range(row):
+                ax = axes_cm[row, col]
+                ax.scatter(
+                    corner_data[idx_sub, col],
+                    corner_data[idx_sub, row],
+                    c=col_vals[idx_sub],
+                    cmap=col_cmap,
+                    norm=col_norm,
+                    s=1.5,
+                    alpha=0.35,
+                    linewidths=0,
+                    rasterized=True,
+                )
+
+        # ── Coloured diagonal histograms ─────────────────────────────────────
+        # Bin the colour variable into n_hist_bins groups for stacked histograms
+        unique_vals = np.unique(col_vals)
+        if len(unique_vals) <= 20:
+            hist_bins_vals = unique_vals          # discrete values (e.g. 5 p values)
+        else:
+            n_hist_bins = 8
+            hist_bins_vals = np.linspace(col_vals.min(), col_vals.max(),
+                                         n_hist_bins + 1)
+            # Use bin centres as representative values
+            hist_bins_vals = 0.5 * (hist_bins_vals[:-1] + hist_bins_vals[1:])
+
+        for d in range(ndim_5d):
+            ax = axes_cm[d, d]
+            ax.clear()
+
+            if len(unique_vals) <= 20:
+                # One histogram per unique value
+                for uv in unique_vals:
+                    mask_uv = col_vals == uv
+                    ax.hist(
+                        corner_data[mask_uv, d],
+                        bins=50,
+                        range=ranges_5d[d],
+                        alpha=0.55,
+                        color=col_cmap(col_norm(uv)),
+                        density=True,
+                        histtype='stepfilled',
+                        edgecolor='none',
+                    )
+            else:
+                # Bin into groups
+                edges = np.linspace(col_vals.min(), col_vals.max(),
+                                    len(hist_bins_vals) + 1)
+                for ibin, centre in enumerate(hist_bins_vals):
+                    mask_bin = ((col_vals >= edges[ibin]) &
+                                (col_vals < edges[ibin + 1]))
+                    if ibin == len(hist_bins_vals) - 1:
+                        mask_bin |= (col_vals == edges[ibin + 1])
+                    if mask_bin.sum() == 0:
+                        continue
+                    ax.hist(
+                        corner_data[mask_bin, d],
+                        bins=50,
+                        range=ranges_5d[d],
+                        alpha=0.55,
+                        color=col_cmap(col_norm(centre)),
+                        density=True,
+                        histtype='stepfilled',
+                        edgecolor='none',
+                    )
+
+            ax.set_xlim(ranges_5d[d])
+            ax.set_yticks([])
+            for spine in ['top', 'left', 'right']:
+                ax.spines[spine].set_visible(False)
+            if d == ndim_5d - 1:
+                ax.set_xlabel(labels_5d[d], fontsize=13)
+
+        # ── Restore axis labels ──────────────────────────────────────────────
+        for row in range(ndim_5d):
+            for col in range(row):
+                ax = axes_cm[row, col]
+                if col == 0:
+                    ax.set_ylabel(labels_5d[row], fontsize=13)
+                if row == ndim_5d - 1:
+                    ax.set_xlabel(labels_5d[col], fontsize=13)
+                ax.tick_params(labelsize=8)
+                ax.grid(True, alpha=0.15)
+
+        # ── Colorbar ─────────────────────────────────────────────────────────
+        cbar_ax = fig_cm.add_axes([0.72, 0.72, 0.025, 0.20])
+        sm_cm   = cm.ScalarMappable(cmap=col_cmap, norm=col_norm)
+        sm_cm.set_array([])
+        cbar_cm = fig_cm.colorbar(sm_cm, cax=cbar_ax)
+        cbar_cm.set_label(col_label, fontsize=13)
+        cbar_cm.ax.tick_params(labelsize=10)
+
+        # For discrete parameters, set ticks explicitly
+        if len(unique_vals) <= 15:
+            cbar_cm.set_ticks(unique_vals)
+            if col_key == 'Teff':
+                cbar_cm.set_ticklabels([f'{v:.0f}' for v in unique_vals])
+            elif col_key == 'p':
+                cbar_cm.set_ticklabels([f'{v:.4f}' for v in unique_vals])
+            else:
+                cbar_cm.set_ticklabels([f'{v:.2f}' for v in unique_vals])
+
+        fig_cm.suptitle(
+            f'4th-order NLLD coefficients coloured by {col_label} — {model}',
+            fontsize=13, y=1.02,
+        )
+
+        fig_cm.savefig(
+            save_data_path + f'Corner_NLLD_by{col_key}_{model}.png',
+            dpi=150, bbox_inches='tight',
+        )
+        plt.close(fig_cm)
+        print(f'    Saved {col_key}-coloured corner plot')
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Figure 5g: 5D corner plot coloured by wavelength
+    # ─────────────────────────────────────────────────────────────────────────────
+    print('    FIGURE 5g - Corner plot coloured by wavelength')
+
+    wav_cmap  = plt.cm.turbo
+    wav_norm  = mcolors.Normalize(vmin=corner_wav_um.min(),
+                                  vmax=corner_wav_um.max())
+
+    # ── Base corner figure (histograms only) ─────────────────────────────────
+    fig_wav = corner.corner(
+        corner_data,
+        labels=labels_5d,
+        range=ranges_5d,
+        bins=50,
+        smooth1d=1.0,
+        plot_datapoints=False,
+        plot_density=False,
+        fill_contours=False,
+        no_fill_contours=True,
+        levels=(0.5, 0.68, 0.95, 0.99),
+        hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
+        label_kwargs={'fontsize': 13},
+        title_kwargs={'fontsize': 11},
+        show_titles=False,
+        contour_kwargs={'colors': 'none'},
+    )
+
+    axes_wav = np.array(fig_wav.axes).reshape(ndim_5d, ndim_5d)
+
+    # ── Coloured scatter in lower-triangle panels ────────────────────────────
+    max_scatter_wav = 40_000
+    if len(corner_data) > max_scatter_wav:
+        rng_wav  = np.random.default_rng(42)
+        idx_sub_wav = np.sort(rng_wav.choice(len(corner_data),
+                                             size=max_scatter_wav, replace=False))
+    else:
+        idx_sub_wav = np.arange(len(corner_data))
+
+    # Sort so longest wavelengths render on top
+    order_wav   = np.argsort(corner_wav_um[idx_sub_wav])
+    idx_sub_wav = idx_sub_wav[order_wav]
+
+    for row in range(ndim_5d):
+        for col in range(row):
+            ax = axes_wav[row, col]
+            ax.scatter(
+                corner_data[idx_sub_wav, col],
+                corner_data[idx_sub_wav, row],
+                c=corner_wav_um[idx_sub_wav],
+                cmap=wav_cmap,
+                norm=wav_norm,
+                s=1.5,
+                alpha=0.35,
+                linewidths=0,
+                rasterized=True,
+            )
+
+    # ── Coloured diagonal histograms ─────────────────────────────────────────
+    # Wavelength is (quasi-)continuous, so bin into groups for the histograms
+    n_wav_hist_bins = 10
+    wav_edges  = np.linspace(corner_wav_um.min(), corner_wav_um.max(),
+                             n_wav_hist_bins + 1)
+    wav_centres = 0.5 * (wav_edges[:-1] + wav_edges[1:])
+
+    for d in range(ndim_5d):
+        ax = axes_wav[d, d]
+        ax.clear()
+
+        for ibin, centre in enumerate(wav_centres):
+            mask_bin = ((corner_wav_um >= wav_edges[ibin]) &
+                        (corner_wav_um < wav_edges[ibin + 1]))
+            if ibin == n_wav_hist_bins - 1:          # include right edge
+                mask_bin |= (corner_wav_um == wav_edges[ibin + 1])
+            if mask_bin.sum() == 0:
+                continue
+            ax.hist(
+                corner_data[mask_bin, d],
+                bins=50,
+                range=ranges_5d[d],
+                alpha=0.55,
+                color=wav_cmap(wav_norm(centre)),
+                density=True,
+                histtype='stepfilled',
+                edgecolor='none',
+            )
+
+        ax.set_xlim(ranges_5d[d])
+        ax.set_yticks([])
+        for spine in ['top', 'left', 'right']:
+            ax.spines[spine].set_visible(False)
+        if d == ndim_5d - 1:
+            ax.set_xlabel(labels_5d[d], fontsize=13)
+
+    # ── Restore axis labels ──────────────────────────────────────────────────
+    for row in range(ndim_5d):
+        for col in range(row):
+            ax = axes_wav[row, col]
+            if col == 0:
+                ax.set_ylabel(labels_5d[row], fontsize=13)
+            if row == ndim_5d - 1:
+                ax.set_xlabel(labels_5d[col], fontsize=13)
+            ax.tick_params(labelsize=8)
+            ax.grid(True, alpha=0.15)
+
+    # ── Colorbar ─────────────────────────────────────────────────────────────
+    cbar_ax_wav = fig_wav.add_axes([0.72, 0.72, 0.025, 0.20])
+    sm_wav      = cm.ScalarMappable(cmap=wav_cmap, norm=wav_norm)
+    sm_wav.set_array([])
+    cbar_wav    = fig_wav.colorbar(sm_wav, cax=cbar_ax_wav)
+    cbar_wav.set_label(r'Wavelength ($\mu$m)', fontsize=13)
+    cbar_wav.ax.tick_params(labelsize=10)
+
+    # Nice tick spacing: every 0.5 µm
+    wav_tick_step = 0.5
+    wav_ticks = np.arange(
+        np.ceil(corner_wav_um.min() / wav_tick_step) * wav_tick_step,
+        corner_wav_um.max() + wav_tick_step / 2,
+        wav_tick_step,
+    )
+    cbar_wav.set_ticks(wav_ticks)
+    cbar_wav.set_ticklabels([f'{t:.1f}' for t in wav_ticks])
+
+    fig_wav.suptitle(
+        f'4th-order NLLD coefficients coloured by wavelength — {model}',
+        fontsize=13, y=1.02,
+    )
+
+    fig_wav.savefig(
+        save_data_path + f'Corner_NLLD_byWav_{model}.png',
+        dpi=150, bbox_inches='tight',
+    )
+    plt.close(fig_wav)
+    print(f'    Saved wavelength-coloured corner plot')
 
     # ─────────────────────────────────────────────────────────────────────────────
     # Mode identification in coefficient space — hierarchical clustering
@@ -1463,7 +1957,7 @@ for model in models:
         data           = corner_data,
         label          = f'Coefficients_{model}',
         save_path      = save_data_path,
-        feature_labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$'],
+        feature_labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$', r'$b$'],
         cutoff         = 75,
         clustering_metric = 'mahalanobis',
         method = 'ward'
@@ -1480,6 +1974,7 @@ for model in models:
             f'{corner_data[mask_m,1].mean():.3f}, '
             f'{corner_data[mask_m,2].mean():.3f}, '
             f'{corner_data[mask_m,3].mean():.3f}]'
+            f'{corner_data[mask_m,4].mean():.3f}]'
         )
 
     # ─────────────────────────────────────────────────────────────────────────────
