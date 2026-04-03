@@ -2420,3 +2420,1036 @@ for model in models:
         np.save(save_data_path + f'mode_labels_pca_{model}_b{ib}.npy',
                 mode_per_b_profile[ib])
     print(f'  Saved mode label arrays to {save_data_path}')
+
+    # ═════════════════════════════════════════════════════════════════════════════
+    # DEDICATED ANALYSIS BLOCK: b = 0, p = 0.1
+    # — Collect profiles, PCA, hierarchical clustering, 4th-order NLLD fits,
+    #   corner plot of coefficients, and save everything.
+    # ═════════════════════════════════════════════════════════════════════════════
+    print('\n' + '=' * 80)
+    print('  DEDICATED ANALYSIS: b = 0, p = 1e-1')
+    print('=' * 80)
+
+    # ── 0. Identify the target indices ───────────────────────────────────────
+    target_b_val = 0.0
+    target_p_val = 1e-1
+    target_ib    = int(np.argmin(np.abs(np.array(bs) - target_b_val)))
+    target_ip    = int(np.argmin(np.abs(np.array(ps) - target_p_val)))
+
+    print(f'  Target b = {target_b_val}  →  ib = {target_ib}  '
+          f'(actual b = {float(bs[target_ib]):.4f})')
+    print(f'  Target p = {target_p_val}  →  ip = {target_ip}  '
+          f'(actual p = {float(ps[target_ip]):.6f})')
+
+    bp_save_path = os.path.join(save_data_path, 'b0_p0.1_analysis/')
+    if not os.path.exists(bp_save_path):
+        os.makedirs(bp_save_path)
+
+    # ── 1. Collect every valid intensity profile for this (b, p) pair ────────
+    print('  Collecting profiles …')
+
+    bp_profiles_list = []
+    bp_xs_list       = []
+    bp_meta_list     = []          # columns: [i_Teff, j_logg, k_met, iw]
+
+    T_vals_bp = np.linspace(Teffs[model][0],        Teffs[model][1],        N_star)
+    g_vals_bp = np.linspace(loggs[model][0],         loggs[model][1],         N_star)
+    m_vals_bp = np.linspace(metallicitys[model][0],  metallicitys[model][1],  N_star)
+    wavs_ref_bp = np.array(gen_dict['stellar_wavelengths'][model][0, 0, 0])
+
+    for i in range(N_star):
+        for j in range(N_star):
+            for k in range(N_star):
+                entry      = np.array(
+                    gen_dict['local_intensity_profiles'][model][i, j, k]
+                )                                                          # (n_bs, n_ps, n_wav, N_chords)
+                mask_entry = gen_dict['intensity_profiles_mask'][model][i, j, k]  # (n_bs, n_ps, n_wav)
+
+                # Exclude specific (b, p) pairs if requested
+                for ib_excl, ip_excl in excluded_bp_pairs:
+                    mask_entry[ib_excl, ip_excl, :] = False
+
+                profs_ijk = entry[target_ib, target_ip]                    # (n_wav, N_chords)
+                mask_ijk  = mask_entry[target_ib, target_ip]               # (n_wav,)
+
+                n_valid_ijk = int(np.sum(mask_ijk))
+                if n_valid_ijk == 0:
+                    continue
+
+                valid_profs = profs_ijk[mask_ijk]                          # (n_valid_ijk, N_chords)
+                bp_profiles_list.append(valid_profs)
+
+                # x-values (mu-like, center→limb after reversal)
+                rps_row = np.array(
+                    gen_dict['local_rps'][model][i, j, k, target_ib, target_ip]
+                )[::-1]                                                    # (N_chords,)
+                bp_xs_list.append(
+                    np.tile(rps_row, (n_valid_ijk, 1))
+                )
+
+                # Metadata: Teff index, logg index, met index, wavelength index
+                wav_idx = np.where(mask_ijk)[0].astype(np.int32)
+                meta_block = np.column_stack([
+                    np.full(n_valid_ijk, i, dtype=np.int32),
+                    np.full(n_valid_ijk, j, dtype=np.int32),
+                    np.full(n_valid_ijk, k, dtype=np.int32),
+                    wav_idx,
+                ])
+                bp_meta_list.append(meta_block)
+
+    bp_profiles = np.vstack(bp_profiles_list).astype(np.float64)   # (N_bp, N_chords)
+    bp_xs       = np.vstack(bp_xs_list).astype(np.float64)         # (N_bp, N_chords)
+    bp_meta     = np.vstack(bp_meta_list)                          # (N_bp, 4)
+    N_bp        = bp_profiles.shape[0]
+
+    # Physical values for every profile
+    bp_Teff = T_vals_bp[bp_meta[:, 0]]
+    bp_logg = g_vals_bp[bp_meta[:, 1]]
+    bp_met  = m_vals_bp[bp_meta[:, 2]]
+    bp_wav  = wavs_ref_bp[bp_meta[:, 3]] / 1e4                    # → µm
+
+    print(f'  Collected {N_bp} valid profiles')
+    print(f'    Teff  : [{bp_Teff.min():.0f}, {bp_Teff.max():.0f}] K')
+    print(f'    logg  : [{bp_logg.min():.2f}, {bp_logg.max():.2f}]')
+    print(f'    [M/H] : [{bp_met.min():.2f}, {bp_met.max():.2f}]')
+    print(f'    λ     : [{bp_wav.min():.2f}, {bp_wav.max():.2f}] µm')
+
+    # ── 1b. Optional sub-sampling ────────────────────────────────────────────
+    n_subsample_bp = min(n_subsample_profiles, N_bp) if subsample_profiles else N_bp
+
+    if n_subsample_bp < N_bp:
+        rng_bp  = np.random.default_rng(subsample_seed)
+        idx_bp  = np.sort(rng_bp.choice(N_bp, size=n_subsample_bp, replace=False))
+        print(f'  Sub-sampled {N_bp} → {n_subsample_bp} profiles')
+    else:
+        idx_bp = np.arange(N_bp)
+
+    bp_profiles = bp_profiles[idx_bp]
+    bp_xs       = bp_xs[idx_bp]
+    bp_meta     = bp_meta[idx_bp]
+    bp_Teff     = bp_Teff[idx_bp]
+    bp_logg     = bp_logg[idx_bp]
+    bp_met      = bp_met[idx_bp]
+    bp_wav      = bp_wav[idx_bp]
+    N_bp        = len(idx_bp)
+
+    # ── 2. PCA ───────────────────────────────────────────────────────────────
+    print(f'  Running PCA ({n_components} components) on {N_bp} profiles …')
+    pca_bp        = PCA(n_components=n_components)
+    bp_scores     = pca_bp.fit_transform(bp_profiles)              # (N_bp, n_components)
+    bp_eigen      = pca_bp.components_                             # (n_components, N_chords)
+    bp_evr        = pca_bp.explained_variance_ratio_
+
+    print(f'    Variance explained per PC : '
+          f'{", ".join(f"{v*100:.2f}%" for v in bp_evr)}')
+    print(f'    Total variance captured   : {bp_evr.sum()*100:.2f}%')
+
+    # ── 2a. PCA summary figure ───────────────────────────────────────────────
+    ncols_pca_bp = 2 + n_components
+    fig_pca_bp, ax_pca_bp = plt.subplots(1, ncols_pca_bp,
+                                          figsize=(4 * ncols_pca_bp, 4))
+
+    # Scree
+    ax_pca_bp[0].plot(range(1, n_components + 1), bp_evr, 'o-',
+                      color='teal', linewidth=2)
+    ax_pca_bp[0].set_title('Scree')
+    ax_pca_bp[0].set_xlabel('PC')
+    ax_pca_bp[0].set_ylabel('Expl. var. ratio')
+    ax_pca_bp[0].grid(True, alpha=0.3)
+
+    # Cumulative
+    ax_pca_bp[1].plot(range(1, n_components + 1), np.cumsum(bp_evr), 'o-',
+                      color='teal', linewidth=2)
+    ax_pca_bp[1].axhline(0.95, color='g', linestyle='--', label='95 %')
+    ax_pca_bp[1].set_title('Cumul. variance')
+    ax_pca_bp[1].set_xlabel('PC')
+    ax_pca_bp[1].set_ylabel('Cumul. expl. var.')
+    ax_pca_bp[1].legend(fontsize=7)
+    ax_pca_bp[1].grid(True, alpha=0.3)
+
+    # Eigen-profiles
+    x_ref_bp = bp_xs[0]
+    for ic in range(n_components):
+        ax = ax_pca_bp[2 + ic]
+        ax.plot(x_ref_bp, bp_eigen[ic], color=colors[ic], linewidth=1.5)
+        ax.axhline(0, color='k', linestyle='--', alpha=0.3)
+        ax.set_title(f'PC{ic+1}  ({bp_evr[ic]*100:.1f} %)')
+        ax.set_xlabel(r'$r / R_\star$')
+        ax.set_ylabel('Component value')
+        ax.grid(True, alpha=0.3)
+
+    fig_pca_bp.suptitle(
+        f'PCA — b = {target_b_val}, p = {target_p_val}  ({model})',
+        fontsize=12, y=1.03)
+    fig_pca_bp.tight_layout()
+    fig_pca_bp.savefig(bp_save_path + f'PCA_summary_b0_p0.1_{model}.png',
+                       dpi=150, bbox_inches='tight')
+    plt.close(fig_pca_bp)
+    print('    Saved PCA summary figure')
+
+    # ── 3. Hierarchical clustering on PCA scores ────────────────────────────
+    print('  Clustering on PCA scores …')
+
+    bp_cl_labels, bp_cl_cutoff, bp_cl_Z = hierarchical_clustering(
+        data              = bp_scores,
+        label             = f'b0_p0.1_PCA_{model}',
+        save_path         = bp_save_path,
+        feature_labels    = [f'PC{k+1}' for k in range(n_components)],
+        clustering_metric = 'mahalanobis',
+        method            = 'single',
+        cutoff            = None,          # auto-detect
+    )
+
+    bp_cl_0idx    = bp_cl_labels - 1       # → 0-indexed
+    bp_unique_cl  = np.unique(bp_cl_0idx)
+    n_cl_bp       = len(bp_unique_cl)
+
+    # Identify typical (closest to centroid) and outlier (furthest) per cluster
+    bp_typical_idx  = None
+    bp_min_dist     = np.inf
+    bp_outlier_idxs = []
+
+    for cl in bp_unique_cl:
+        mask_cl  = bp_cl_0idx == cl
+        members  = bp_scores[mask_cl]
+        centroid = members.mean(axis=0)
+        dists    = np.linalg.norm(members - centroid, axis=1)
+
+        closest_local = np.argmin(dists)
+        closest_global = int(np.where(mask_cl)[0][closest_local])
+        if dists[closest_local] < bp_min_dist:
+            bp_min_dist    = dists[closest_local]
+            bp_typical_idx = closest_global
+
+        farthest_local  = np.argmax(dists)
+        farthest_global = int(np.where(mask_cl)[0][farthest_local])
+        bp_outlier_idxs.append(farthest_global)
+
+    print(f'    Typical profile index : {bp_typical_idx}')
+    print(f'    Outlier indices       : {bp_outlier_idxs}')
+
+    # ── 3a. PCA corner scatter coloured by cluster ───────────────────────────
+    bp_cluster_cmap   = plt.cm.get_cmap('tab10', n_cl_bp)
+    bp_cluster_colors = [bp_cluster_cmap(c) for c in range(n_cl_bp)]
+
+    fig_pca_corner_bp, axes_pcc = plt.subplots(
+        n_components, n_components,
+        figsize=(3 * n_components, 3 * n_components))
+    fig_pca_corner_bp.suptitle(
+        f'PCA cluster structure — b = 0, p = 0.1  ({model})',
+        fontsize=12, y=1.01)
+
+    for row in range(n_components):
+        for col in range(n_components):
+            ax = axes_pcc[row, col]
+
+            if row == col:
+                for ci, cl in enumerate(bp_unique_cl):
+                    cmask = bp_cl_0idx == cl
+                    ax.hist(bp_scores[cmask, row], bins=30, alpha=0.5,
+                            color=bp_cluster_colors[ci], density=True,
+                            edgecolor='none')
+                ax.set_xlabel(f'PC{row+1}', fontsize=8)
+                for sp in ['top', 'left', 'right']:
+                    ax.spines[sp].set_visible(False)
+                ax.set_yticks([])
+
+            elif row > col:
+                for ci, cl in enumerate(bp_unique_cl):
+                    cmask = bp_cl_0idx == cl
+                    ax.scatter(bp_scores[cmask, col], bp_scores[cmask, row],
+                               color=bp_cluster_colors[ci], s=6, alpha=0.35,
+                               linewidths=0, rasterized=True)
+
+                # Typical
+                ax.scatter(bp_scores[bp_typical_idx, col],
+                           bp_scores[bp_typical_idx, row],
+                           color='blue', s=80, marker='*',
+                           edgecolors='k', linewidths=0.5, zorder=10,
+                           label='Typical')
+                # Outliers
+                for oi, oidx in enumerate(bp_outlier_idxs):
+                    ax.scatter(bp_scores[oidx, col], bp_scores[oidx, row],
+                               color='red', s=60, marker='D',
+                               edgecolors='k', linewidths=0.5, zorder=10,
+                               label=f'Outlier {oi}' if col == 0 and row == 1 else '')
+
+                if col == 0:
+                    ax.set_ylabel(f'PC{row+1}', fontsize=8)
+                if row == n_components - 1:
+                    ax.set_xlabel(f'PC{col+1}', fontsize=8)
+                ax.tick_params(labelsize=6)
+                ax.grid(True, alpha=0.2)
+            else:
+                ax.set_visible(False)
+
+    # Legend
+    h_leg = ([plt.Line2D([0], [0], marker='o', color='w',
+                          markerfacecolor=bp_cluster_colors[ci], markersize=7,
+                          label=f'Cluster {cl}')
+              for ci, cl in enumerate(bp_unique_cl)]
+             + [plt.Line2D([0], [0], marker='*', color='w',
+                           markerfacecolor='blue', markersize=9,
+                           label='Typical'),
+                plt.Line2D([0], [0], marker='D', color='w',
+                           markerfacecolor='red', markersize=7,
+                           label='Outlier')])
+    fig_pca_corner_bp.legend(handles=h_leg, loc='upper right', fontsize=8,
+                             framealpha=0.85)
+    fig_pca_corner_bp.tight_layout()
+    fig_pca_corner_bp.savefig(
+        bp_save_path + f'PCA_Corner_b0_p0.1_{model}.png',
+        dpi=150, bbox_inches='tight')
+    plt.close(fig_pca_corner_bp)
+    print('    Saved PCA corner scatter')
+
+    # ── 4. Fit every profile with 4th-order NLLD ────────────────────────────
+    print(f'  Fitting {N_bp} profiles with 4th-order NLLD …')
+
+    bp_coeffs = np.zeros((N_bp, 4), dtype=np.float64)
+
+    for idx_fit in tqdm(range(N_bp), desc='  NLLD fits'):
+        mus_fit  = bp_xs[idx_fit]
+        prof_fit = bp_profiles[idx_fit]
+
+        if np.all(np.abs(prof_fit) < 1e-10):
+            bp_coeffs[idx_fit] = np.nan
+            continue
+
+        params_fit = Parameters()
+        for ipc in range(4):
+            params_fit.add(f'c{ipc+1}', value=np.random.uniform(0, 1))
+
+        try:
+            res_fit = minimize(residual_fn, params_fit,
+                               args=(mus_fit, prof_fit))
+            bp_coeffs[idx_fit] = [
+                res_fit.params[f'c{ic+1}'].value for ic in range(4)
+            ]
+        except Exception:
+            bp_coeffs[idx_fit] = np.nan
+
+    valid_fit = ~np.any(np.isnan(bp_coeffs), axis=1)
+    n_valid_fit = int(valid_fit.sum())
+    print(f'    {n_valid_fit} / {N_bp} fits converged')
+
+    # ── 4a. Save coefficients (+metadata) ────────────────────────────────────
+    bp_save_array = np.column_stack([
+        bp_coeffs,          # c1, c2, c3, c4
+        bp_Teff,            # Teff (K)
+        bp_logg,            # log g
+        bp_met,             # [M/H]
+        bp_wav,             # wavelength (µm)
+        bp_cl_0idx,         # PCA cluster label (0-indexed)
+    ])   # (N_bp, 9)
+
+    npy_bp_path = bp_save_path + f'coeffs_b0_p0.1_full_{model}.npy'
+    np.save(npy_bp_path, bp_save_array)
+    print(f'    Saved {bp_save_array.shape} array → {npy_bp_path}')
+    print(f'    Columns: c1, c2, c3, c4, Teff, logg, [M/H], λ(µm), cluster')
+
+    # ── 5. Figure: typical + outlier profiles with NLLD fits ─────────────────
+    print('  Plotting typical & outlier profiles with NLLD fits …')
+
+    special_bp = (
+        [('Typical', bp_typical_idx, 'blue')]
+        + [(f'Outlier {oi}', oidx, 'red')
+           for oi, oidx in enumerate(bp_outlier_idxs)]
+    )
+
+    fig_prof_bp, axes_prof_bp = plt.subplots(
+        len(special_bp), 2,
+        figsize=(14, 4.5 * len(special_bp)),
+        gridspec_kw={'width_ratios': [3, 1]})
+    if len(special_bp) == 1:
+        axes_prof_bp = axes_prof_bp[np.newaxis, :]
+
+    fig_prof_bp.suptitle(
+        f'4th-order NLLD fits — b = 0, p = 0.1  ({model})', fontsize=13)
+
+    for isp, (sp_label, sp_idx, sp_color) in enumerate(special_bp):
+        mus_sp  = bp_xs[sp_idx]
+        prof_sp = bp_profiles[sp_idx]
+        c_sp    = bp_coeffs[sp_idx]
+        fit_sp  = fourNLLD(mus_sp, c_sp)
+
+        ax_l = axes_prof_bp[isp, 0]
+        ax_r = axes_prof_bp[isp, 1]
+
+        # Background: all profiles in light grey
+        step_bg = max(1, N_bp // 300)
+        for ibg in range(0, N_bp, step_bg):
+            ax_l.plot(bp_xs[ibg], bp_profiles[ibg],
+                      alpha=0.1, color='gray', linewidth=0.3)
+
+        # The special profile + fit
+        ax_l.plot(mus_sp, prof_sp, 'o', color=sp_color, markersize=3,
+                  alpha=0.7, label=f'{sp_label} profile')
+        ax_l.plot(mus_sp, fit_sp, '--', color='black', linewidth=2,
+                  label='4th-order NLLD')
+        ax_l.set_ylabel('Norm. Intensity')
+        ax_l.set_title(
+            f'{sp_label}   '
+            f'c=[{c_sp[0]:.4f}, {c_sp[1]:.4f}, {c_sp[2]:.4f}, {c_sp[3]:.4f}]',
+            fontsize=9)
+        ax_l.legend(fontsize=7)
+        ax_l.grid(True, alpha=0.3)
+        if isp < len(special_bp) - 1:
+            ax_l.tick_params(labelbottom=False)
+        else:
+            ax_l.set_xlabel(r'$\mu = \cos(\theta)$')
+
+        # Residual panel
+        safe_sp = np.where(np.abs(prof_sp) < 1e-10, np.nan, prof_sp)
+        ax_r.plot(mus_sp, 100 * (prof_sp - fit_sp) / safe_sp,
+                  '--', color=sp_color, linewidth=1.5)
+        ax_r.axhline(0, color='k', linestyle='--', alpha=0.5)
+        ax_r.set_ylabel('Rel. diff. (%)')
+        ax_r.grid(True, alpha=0.3)
+        if isp < len(special_bp) - 1:
+            ax_r.tick_params(labelbottom=False)
+        else:
+            ax_r.set_xlabel(r'$\mu = \cos(\theta)$')
+
+        # Print coefficients
+        redchi_sp = np.nan
+        try:
+            params_sp = Parameters()
+            for ipc in range(4):
+                params_sp.add(f'c{ipc+1}', value=c_sp[ipc])
+            res_sp = minimize(residual_fn, params_sp, args=(mus_sp, prof_sp))
+            redchi_sp = res_sp.redchi
+        except Exception:
+            pass
+
+        print(f'    {sp_label:12s}  '
+              f'c=[{c_sp[0]:+.4f}, {c_sp[1]:+.4f}, '
+              f'{c_sp[2]:+.4f}, {c_sp[3]:+.4f}]  '
+              f'red-χ²={redchi_sp:.4e}  '
+              f'Teff={bp_Teff[sp_idx]:.0f} K  '
+              f'logg={bp_logg[sp_idx]:.2f}  '
+              f'[M/H]={bp_met[sp_idx]:.2f}  '
+              f'λ={bp_wav[sp_idx]:.2f} µm')
+
+    fig_prof_bp.tight_layout()
+    fig_prof_bp.savefig(
+        bp_save_path + f'Profiles_NLLD_b0_p0.1_{model}.png',
+        dpi=150, bbox_inches='tight')
+    plt.close(fig_prof_bp)
+    print('    Saved typical & outlier profile figure')
+
+    # ── 6. Figure: one profile per cluster (centroid-closest) with NLLD fit ──
+    print('  Plotting per-cluster representative profiles …')
+
+    fig_cl_bp, axes_cl_bp = plt.subplots(
+        n_cl_bp, 2,
+        figsize=(14, 4.5 * n_cl_bp),
+        gridspec_kw={'width_ratios': [3, 1]})
+    if n_cl_bp == 1:
+        axes_cl_bp = axes_cl_bp[np.newaxis, :]
+
+    fig_cl_bp.suptitle(
+        f'Cluster representatives with NLLD fits — b = 0, p = 0.1  ({model})',
+        fontsize=13)
+
+    for ci, cl in enumerate(bp_unique_cl):
+        mask_cl   = bp_cl_0idx == cl
+        members   = bp_scores[mask_cl]
+        centroid  = members.mean(axis=0)
+        dists_cl  = np.linalg.norm(members - centroid, axis=1)
+        rep_local = np.argmin(dists_cl)
+        rep_idx   = int(np.where(mask_cl)[0][rep_local])
+
+        mus_rep  = bp_xs[rep_idx]
+        prof_rep = bp_profiles[rep_idx]
+        c_rep    = bp_coeffs[rep_idx]
+        fit_rep  = fourNLLD(mus_rep, c_rep)
+
+        ax_l = axes_cl_bp[ci, 0]
+        ax_r = axes_cl_bp[ci, 1]
+
+        # All cluster members in background
+        cl_indices = np.where(mask_cl)[0]
+        step_cl    = max(1, len(cl_indices) // 200)
+        for ii in cl_indices[::step_cl]:
+            ax_l.plot(bp_xs[ii], bp_profiles[ii],
+                      alpha=0.15, color=bp_cluster_colors[ci], linewidth=0.3)
+
+        ax_l.plot(mus_rep, prof_rep, 'o',
+                  color=bp_cluster_colors[ci], markersize=3, alpha=0.8,
+                  label=f'Cluster {cl} representative')
+        ax_l.plot(mus_rep, fit_rep, '--', color='black', linewidth=2,
+                  label='4th-order NLLD')
+        ax_l.set_ylabel('Norm. Intensity')
+        ax_l.set_title(
+            f'Cluster {cl}  (n={mask_cl.sum()})   '
+            f'c=[{c_rep[0]:.4f}, {c_rep[1]:.4f}, '
+            f'{c_rep[2]:.4f}, {c_rep[3]:.4f}]',
+            fontsize=9)
+        ax_l.legend(fontsize=7)
+        ax_l.grid(True, alpha=0.3)
+        if ci < n_cl_bp - 1:
+            ax_l.tick_params(labelbottom=False)
+        else:
+            ax_l.set_xlabel(r'$\mu = \cos(\theta)$')
+
+        safe_rep = np.where(np.abs(prof_rep) < 1e-10, np.nan, prof_rep)
+        ax_r.plot(mus_rep, 100 * (prof_rep - fit_rep) / safe_rep,
+                  '--', color=bp_cluster_colors[ci], linewidth=1.5)
+        ax_r.axhline(0, color='k', linestyle='--', alpha=0.5)
+        ax_r.set_ylabel('Rel. diff. (%)')
+        ax_r.grid(True, alpha=0.3)
+        if ci < n_cl_bp - 1:
+            ax_r.tick_params(labelbottom=False)
+        else:
+            ax_r.set_xlabel(r'$\mu = \cos(\theta)$')
+
+        print(f'    Cluster {cl:2d}  n={mask_cl.sum():5d}  '
+              f'c=[{c_rep[0]:+.4f}, {c_rep[1]:+.4f}, '
+              f'{c_rep[2]:+.4f}, {c_rep[3]:+.4f}]  '
+              f'Teff={bp_Teff[rep_idx]:.0f}  '
+              f'logg={bp_logg[rep_idx]:.2f}  '
+              f'[M/H]={bp_met[rep_idx]:.2f}  '
+              f'λ={bp_wav[rep_idx]:.2f} µm')
+
+    fig_cl_bp.tight_layout()
+    fig_cl_bp.savefig(
+        bp_save_path + f'ClusterReps_NLLD_b0_p0.1_{model}.png',
+        dpi=150, bbox_inches='tight')
+    plt.close(fig_cl_bp)
+    print('    Saved per-cluster representative figure')
+
+    # ── 7. Corner plot of NLLD coefficients coloured by cluster ──────────────
+    print('  Corner plot of coefficients coloured by cluster …')
+
+    bp_coeffs_valid   = bp_coeffs[valid_fit]
+    bp_cl_valid       = bp_cl_0idx[valid_fit]
+    bp_wav_valid      = bp_wav[valid_fit]
+
+    labels_bp_corner  = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
+    ranges_bp_corner  = [
+        (np.percentile(bp_coeffs_valid[:, ic], 1),
+         np.percentile(bp_coeffs_valid[:, ic], 99))
+        for ic in range(4)
+    ]
+
+    # ── 7a. Coloured by PCA cluster ─────────────────────────────────────────
+    fig_cc_bp = corner.corner(
+        bp_coeffs_valid,
+        labels=labels_bp_corner,
+        range=ranges_bp_corner,
+        bins=50,
+        smooth1d=1.0,
+        plot_datapoints=False,
+        plot_density=False,
+        fill_contours=False,
+        no_fill_contours=True,
+        levels=(0.5, 0.68, 0.95, 0.99),
+        hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
+        label_kwargs={'fontsize': 13},
+        show_titles=False,
+        contour_kwargs={'colors': 'none'},
+    )
+
+    ndim_bp    = 4
+    axes_cc_bp = np.array(fig_cc_bp.axes).reshape(ndim_bp, ndim_bp)
+
+    # Scatter in lower triangle
+    max_scatter_bp = 40_000
+    if n_valid_fit > max_scatter_bp:
+        rng_cc     = np.random.default_rng(42)
+        idx_cc_sub = np.sort(rng_cc.choice(n_valid_fit, size=max_scatter_bp,
+                                           replace=False))
+    else:
+        idx_cc_sub = np.arange(n_valid_fit)
+
+    for row in range(ndim_bp):
+        for col in range(row):
+            ax = axes_cc_bp[row, col]
+            for ci, cl in enumerate(bp_unique_cl):
+                mask_cl_v = bp_cl_valid[idx_cc_sub] == cl
+                if mask_cl_v.sum() == 0:
+                    continue
+                ax.scatter(
+                    bp_coeffs_valid[idx_cc_sub[mask_cl_v], col],
+                    bp_coeffs_valid[idx_cc_sub[mask_cl_v], row],
+                    color=bp_cluster_colors[ci],
+                    s=2, alpha=0.35, linewidths=0, rasterized=True)
+
+    # Coloured diagonal histograms
+    for d in range(ndim_bp):
+        ax = axes_cc_bp[d, d]
+        ax.clear()
+        for ci, cl in enumerate(bp_unique_cl):
+            mask_cl_v = bp_cl_valid == cl
+            if mask_cl_v.sum() == 0:
+                continue
+            ax.hist(bp_coeffs_valid[mask_cl_v, d], bins=50,
+                    range=ranges_bp_corner[d], alpha=0.55,
+                    color=bp_cluster_colors[ci], density=True,
+                    histtype='stepfilled', edgecolor='none')
+        ax.set_xlim(ranges_bp_corner[d])
+        ax.set_yticks([])
+        for sp in ['top', 'left', 'right']:
+            ax.spines[sp].set_visible(False)
+        if d == ndim_bp - 1:
+            ax.set_xlabel(labels_bp_corner[d], fontsize=13)
+
+    # Axis labels
+    for row in range(ndim_bp):
+        for col in range(row):
+            ax = axes_cc_bp[row, col]
+            if col == 0:
+                ax.set_ylabel(labels_bp_corner[row], fontsize=13)
+            if row == ndim_bp - 1:
+                ax.set_xlabel(labels_bp_corner[col], fontsize=13)
+            ax.tick_params(labelsize=8)
+            ax.grid(True, alpha=0.15)
+
+    # Legend
+    h_cc = [plt.Line2D([0], [0], marker='o', color='w',
+                        markerfacecolor=bp_cluster_colors[ci], markersize=7,
+                        label=f'Cluster {cl}')
+            for ci, cl in enumerate(bp_unique_cl)]
+    fig_cc_bp.legend(handles=h_cc, loc='upper right', fontsize=8,
+                     framealpha=0.85, title='PCA cluster')
+
+    info_box = (f'$b = {target_b_val:.1f}$,  $p = {target_p_val}$\n'
+                f'$N = {n_valid_fit}$ converged fits\n'
+                f'{n_cl_bp} clusters')
+    fig_cc_bp.text(0.72, 0.55, info_box, fontsize=10,
+                   verticalalignment='top',
+                   bbox=dict(boxstyle='round,pad=0.4',
+                             facecolor='wheat', alpha=0.7))
+
+    fig_cc_bp.suptitle(
+        f'NLLD coefficients by PCA cluster — b=0, p=0.1  ({model})',
+        fontsize=13, y=1.02)
+
+    fig_cc_bp.savefig(
+        bp_save_path + f'Corner_coeffs_byCluster_b0_p0.1_{model}.png',
+        dpi=150, bbox_inches='tight')
+    plt.close(fig_cc_bp)
+    print('    Saved cluster-coloured coefficient corner plot')
+
+    # ── 7b. Coloured by wavelength ───────────────────────────────────────────
+    print('  Corner plot of coefficients coloured by wavelength …')
+
+    wav_cmap_bp  = plt.cm.turbo
+    wav_norm_bp  = mcolors.Normalize(vmin=bp_wav_valid.min(),
+                                     vmax=bp_wav_valid.max())
+
+    fig_cw_bp = corner.corner(
+        bp_coeffs_valid,
+        labels=labels_bp_corner,
+        range=ranges_bp_corner,
+        bins=50,
+        smooth1d=1.0,
+        plot_datapoints=False,
+        plot_density=False,
+        fill_contours=False,
+        no_fill_contours=True,
+        levels=(0.5, 0.68, 0.95, 0.99),
+        hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
+        label_kwargs={'fontsize': 13},
+        show_titles=False,
+        contour_kwargs={'colors': 'none'},
+    )
+
+    axes_cw_bp = np.array(fig_cw_bp.axes).reshape(ndim_bp, ndim_bp)
+
+    order_wav_bp = np.argsort(bp_wav_valid[idx_cc_sub])
+    idx_wav_sub  = idx_cc_sub[order_wav_bp]
+
+    for row in range(ndim_bp):
+        for col in range(row):
+            ax = axes_cw_bp[row, col]
+            ax.scatter(
+                bp_coeffs_valid[idx_wav_sub, col],
+                bp_coeffs_valid[idx_wav_sub, row],
+                c=bp_wav_valid[idx_wav_sub],
+                cmap=wav_cmap_bp, norm=wav_norm_bp,
+                s=2, alpha=0.35, linewidths=0, rasterized=True)
+
+    # Coloured diagonal histograms by wavelength bin
+    n_wav_hist_bp  = 10
+    wav_edges_bp   = np.linspace(bp_wav_valid.min(), bp_wav_valid.max(),
+                                 n_wav_hist_bp + 1)
+    wav_centres_bp = 0.5 * (wav_edges_bp[:-1] + wav_edges_bp[1:])
+
+    for d in range(ndim_bp):
+        ax = axes_cw_bp[d, d]
+        ax.clear()
+        for ibin, centre in enumerate(wav_centres_bp):
+            mask_bin = ((bp_wav_valid >= wav_edges_bp[ibin]) &
+                        (bp_wav_valid < wav_edges_bp[ibin + 1]))
+            if ibin == n_wav_hist_bp - 1:
+                mask_bin |= (bp_wav_valid == wav_edges_bp[ibin + 1])
+            if mask_bin.sum() == 0:
+                continue
+            ax.hist(bp_coeffs_valid[mask_bin, d], bins=50,
+                    range=ranges_bp_corner[d], alpha=0.55,
+                    color=wav_cmap_bp(wav_norm_bp(centre)),
+                    density=True, histtype='stepfilled', edgecolor='none')
+        ax.set_xlim(ranges_bp_corner[d])
+        ax.set_yticks([])
+        for sp in ['top', 'left', 'right']:
+            ax.spines[sp].set_visible(False)
+        if d == ndim_bp - 1:
+            ax.set_xlabel(labels_bp_corner[d], fontsize=13)
+
+    for row in range(ndim_bp):
+        for col in range(row):
+            ax = axes_cw_bp[row, col]
+            if col == 0:
+                ax.set_ylabel(labels_bp_corner[row], fontsize=13)
+            if row == ndim_bp - 1:
+                ax.set_xlabel(labels_bp_corner[col], fontsize=13)
+            ax.tick_params(labelsize=8)
+            ax.grid(True, alpha=0.15)
+
+    # Wavelength colorbar
+    cbar_ax_cw = fig_cw_bp.add_axes([0.72, 0.72, 0.025, 0.20])
+    sm_cw      = cm.ScalarMappable(cmap=wav_cmap_bp, norm=wav_norm_bp)
+    sm_cw.set_array([])
+    cbar_cw    = fig_cw_bp.colorbar(sm_cw, cax=cbar_ax_cw)
+    cbar_cw.set_label(r'Wavelength ($\mu$m)', fontsize=13)
+    cbar_cw.ax.tick_params(labelsize=10)
+    wav_tick_bp = 0.5
+    wav_ticks_cw = np.arange(
+        np.ceil(bp_wav_valid.min() / wav_tick_bp) * wav_tick_bp,
+        bp_wav_valid.max() + wav_tick_bp / 2,
+        wav_tick_bp)
+    cbar_cw.set_ticks(wav_ticks_cw)
+    cbar_cw.set_ticklabels([f'{t:.1f}' for t in wav_ticks_cw])
+
+    fig_cw_bp.suptitle(
+        f'NLLD coefficients by wavelength — b=0, p=0.1  ({model})',
+        fontsize=13, y=1.02)
+    fig_cw_bp.savefig(
+        bp_save_path + f'Corner_coeffs_byWav_b0_p0.1_{model}.png',
+        dpi=150, bbox_inches='tight')
+    plt.close(fig_cw_bp)
+    print('    Saved wavelength-coloured coefficient corner plot')
+
+    # ── 7c. Coloured by Teff, logg, metallicity ─────────────────────────────
+    bp_Teff_valid = bp_Teff[valid_fit]
+    bp_logg_valid = bp_logg[valid_fit]
+    bp_met_valid  = bp_met[valid_fit]
+
+    bp_meta_sources = [
+        (r'$T_{\rm eff}$ (K)', 'Teff',  bp_Teff_valid, plt.cm.inferno),
+        (r'$\log\,g$',         'logg',  bp_logg_valid, plt.cm.cividis),
+        (r'[M/H]',             'MH',    bp_met_valid,  plt.cm.coolwarm),
+    ]
+
+    for meta_label, meta_key, meta_vals, meta_cmap in bp_meta_sources:
+        print(f'  Corner plot of coefficients coloured by {meta_key} …')
+
+        meta_norm = mcolors.Normalize(vmin=meta_vals.min(),
+                                      vmax=meta_vals.max())
+
+        fig_cm_bp = corner.corner(
+            bp_coeffs_valid,
+            labels=labels_bp_corner,
+            range=ranges_bp_corner,
+            bins=50, smooth1d=1.0,
+            plot_datapoints=False, plot_density=False,
+            fill_contours=False, no_fill_contours=True,
+            levels=(0.5, 0.68, 0.95, 0.99),
+            hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
+            label_kwargs={'fontsize': 13}, show_titles=False,
+            contour_kwargs={'colors': 'none'},
+        )
+
+        axes_cm_bp = np.array(fig_cm_bp.axes).reshape(ndim_bp, ndim_bp)
+
+        order_meta = np.argsort(meta_vals[idx_cc_sub])
+        idx_meta_sub = idx_cc_sub[order_meta]
+
+        for row in range(ndim_bp):
+            for col in range(row):
+                ax = axes_cm_bp[row, col]
+                ax.scatter(
+                    bp_coeffs_valid[idx_meta_sub, col],
+                    bp_coeffs_valid[idx_meta_sub, row],
+                    c=meta_vals[idx_meta_sub],
+                    cmap=meta_cmap, norm=meta_norm,
+                    s=2, alpha=0.35, linewidths=0, rasterized=True)
+
+        # Coloured diagonal
+        unique_meta = np.unique(meta_vals)
+        for d in range(ndim_bp):
+            ax = axes_cm_bp[d, d]
+            ax.clear()
+            if len(unique_meta) <= 20:
+                for uv in unique_meta:
+                    mask_uv = meta_vals == uv
+                    if mask_uv.sum() == 0:
+                        continue
+                    ax.hist(bp_coeffs_valid[mask_uv, d], bins=50,
+                            range=ranges_bp_corner[d], alpha=0.55,
+                            color=meta_cmap(meta_norm(uv)),
+                            density=True, histtype='stepfilled',
+                            edgecolor='none')
+            else:
+                n_bins_meta = 8
+                meta_edges  = np.linspace(meta_vals.min(), meta_vals.max(),
+                                          n_bins_meta + 1)
+                meta_ctrs   = 0.5 * (meta_edges[:-1] + meta_edges[1:])
+                for ib_m, ctr in enumerate(meta_ctrs):
+                    mask_bm = ((meta_vals >= meta_edges[ib_m]) &
+                               (meta_vals < meta_edges[ib_m + 1]))
+                    if ib_m == len(meta_ctrs) - 1:
+                        mask_bm |= (meta_vals == meta_edges[ib_m + 1])
+                    if mask_bm.sum() == 0:
+                        continue
+                    ax.hist(bp_coeffs_valid[mask_bm, d], bins=50,
+                            range=ranges_bp_corner[d], alpha=0.55,
+                            color=meta_cmap(meta_norm(ctr)),
+                            density=True, histtype='stepfilled',
+                            edgecolor='none')
+            ax.set_xlim(ranges_bp_corner[d])
+            ax.set_yticks([])
+            for sp in ['top', 'left', 'right']:
+                ax.spines[sp].set_visible(False)
+            if d == ndim_bp - 1:
+                ax.set_xlabel(labels_bp_corner[d], fontsize=13)
+
+        for row in range(ndim_bp):
+            for col in range(row):
+                ax = axes_cm_bp[row, col]
+                if col == 0:
+                    ax.set_ylabel(labels_bp_corner[row], fontsize=13)
+                if row == ndim_bp - 1:
+                    ax.set_xlabel(labels_bp_corner[col], fontsize=13)
+                ax.tick_params(labelsize=8)
+                ax.grid(True, alpha=0.15)
+
+        cbar_ax_m = fig_cm_bp.add_axes([0.72, 0.72, 0.025, 0.20])
+        sm_m      = cm.ScalarMappable(cmap=meta_cmap, norm=meta_norm)
+        sm_m.set_array([])
+        cbar_m    = fig_cm_bp.colorbar(sm_m, cax=cbar_ax_m)
+        cbar_m.set_label(meta_label, fontsize=13)
+        cbar_m.ax.tick_params(labelsize=10)
+        if len(unique_meta) <= 15:
+            cbar_m.set_ticks(unique_meta)
+            if meta_key == 'Teff':
+                cbar_m.set_ticklabels([f'{v:.0f}' for v in unique_meta])
+            else:
+                cbar_m.set_ticklabels([f'{v:.2f}' for v in unique_meta])
+
+        fig_cm_bp.suptitle(
+            f'NLLD coefficients by {meta_label} — b=0, p=0.1  ({model})',
+            fontsize=13, y=1.02)
+        fig_cm_bp.savefig(
+            bp_save_path + f'Corner_coeffs_by{meta_key}_b0_p0.1_{model}.png',
+            dpi=150, bbox_inches='tight')
+        plt.close(fig_cm_bp)
+        print(f'    Saved {meta_key}-coloured coefficient corner plot')
+
+    # ── 8. Reconstruction quality for typical profile ────────────────────────
+    print('  Reconstruction quality for typical profile …')
+
+    n_comp_check = [1, max(2, n_components // 2), n_components]
+
+    fig_recon_bp, axes_recon_bp = plt.subplots(
+        len(n_comp_check), 2,
+        figsize=(12, 4 * len(n_comp_check)),
+        gridspec_kw={'width_ratios': [3, 1]})
+
+    fig_recon_bp.suptitle(
+        f'PCA reconstruction — typical profile, b=0, p=0.1  ({model})',
+        fontsize=13)
+
+    original_bp = bp_profiles[bp_typical_idx]
+    x_orig_bp   = bp_xs[bp_typical_idx]
+
+    for ri, nc in enumerate(n_comp_check):
+        pca_temp_bp = PCA(n_components=nc)
+        pca_temp_bp.fit(bp_profiles)
+        recon_bp = pca_temp_bp.inverse_transform(
+            pca_temp_bp.transform(original_bp.reshape(1, -1)))[0]
+        resid_bp = original_bp - recon_bp
+        rmse_bp  = np.sqrt(np.mean(resid_bp ** 2))
+
+        ax_t = axes_recon_bp[ri, 0]
+        ax_b = axes_recon_bp[ri, 1]
+
+        ax_t.plot(x_orig_bp, original_bp, color='teal', linewidth=2,
+                  label='Original')
+        ax_t.plot(x_orig_bp, recon_bp, color='teal', linewidth=1.2,
+                  linestyle='--', label='Reconstructed')
+        ax_t.set_title(f'{nc} PC   RMSE = {rmse_bp:.6f}', fontsize=9)
+        ax_t.set_ylabel('Norm. Intensity')
+        ax_t.legend(fontsize=7)
+        ax_t.grid(True, alpha=0.3)
+
+        safe_bp = np.where(np.abs(original_bp) < 1e-10, np.nan, original_bp)
+        ax_b.plot(x_orig_bp, 100 * resid_bp / safe_bp,
+                  color='teal', linewidth=1.0)
+        ax_b.axhline(0, color='k', linestyle='--', alpha=0.5)
+        ax_b.set_ylabel('Rel. diff. (%)')
+        ax_b.grid(True, alpha=0.3)
+        if ri == len(n_comp_check) - 1:
+            ax_t.set_xlabel(r'$r / R_\star$')
+            ax_b.set_xlabel(r'$r / R_\star$')
+
+    fig_recon_bp.tight_layout()
+    fig_recon_bp.savefig(
+        bp_save_path + f'ReconQuality_b0_p0.1_{model}.png',
+        dpi=150, bbox_inches='tight')
+    plt.close(fig_recon_bp)
+    print('    Saved reconstruction quality figure')
+
+    # ── 9. Final summary ─────────────────────────────────────────────────────
+    print(f'\n  ═══ b=0, p=0.1 analysis complete for {model} ═══')
+    print(f'  Profiles collected      : {N_bp}')
+    print(f'  PCA components          : {n_components}')
+    print(f'  Variance captured       : {bp_evr.sum()*100:.2f} %')
+    print(f'  Clusters found          : {n_cl_bp}')
+    print(f'  Converged NLLD fits     : {n_valid_fit} / {N_bp}')
+    print(f'  All outputs saved to    : {bp_save_path}')
+
+    # Print coefficient summary statistics
+    print(f'\n  ── Coefficient summary (converged fits) ──')
+    for ic in range(4):
+        vals = bp_coeffs_valid[:, ic]
+        print(f'    c{ic+1}:  mean={vals.mean():+.4f}  '
+              f'median={np.median(vals):+.4f}  '
+              f'std={vals.std():.4f}  '
+              f'[{vals.min():+.4f}, {vals.max():+.4f}]')
+
+    # Per-cluster coefficient summary
+    print(f'\n  ── Per-cluster coefficient means ──')
+    for ci, cl in enumerate(bp_unique_cl):
+        mask_cl_v = bp_cl_valid == cl
+        n_in_cl   = mask_cl_v.sum()
+        if n_in_cl == 0:
+            continue
+        means_cl = bp_coeffs_valid[mask_cl_v].mean(axis=0)
+        stds_cl  = bp_coeffs_valid[mask_cl_v].std(axis=0)
+        print(f'    Cluster {cl} (n={n_in_cl:5d}):  '
+              f'c=[{means_cl[0]:+.4f}±{stds_cl[0]:.4f}, '
+              f'{means_cl[1]:+.4f}±{stds_cl[1]:.4f}, '
+              f'{means_cl[2]:+.4f}±{stds_cl[2]:.4f}, '
+              f'{means_cl[3]:+.4f}±{stds_cl[3]:.4f}]')
+
+    # ── 10. Save a summary pickle with everything for easy downstream use ────
+    bp_summary = {
+        'model'             : model,
+        'target_b'          : target_b_val,
+        'target_p'          : target_p_val,
+        'ib'                : target_ib,
+        'ip'                : target_ip,
+        'N_profiles'        : N_bp,
+        'n_components'      : n_components,
+        'explained_variance': bp_evr,
+        'pca_object'        : pca_bp,
+        'pca_scores'        : bp_scores,
+        'pca_eigen'         : bp_eigen,
+        'profiles'          : bp_profiles,
+        'xs'                : bp_xs,
+        'coeffs'            : bp_coeffs,
+        'valid_fit_mask'    : valid_fit,
+        'cluster_labels'    : bp_cl_0idx,
+        'n_clusters'        : n_cl_bp,
+        'cluster_cutoff'    : bp_cl_cutoff,
+        'typical_idx'       : bp_typical_idx,
+        'outlier_idxs'      : bp_outlier_idxs,
+        'meta_indices'      : bp_meta,          # [i_Teff, j_logg, k_met, iw]
+        'Teff'              : bp_Teff,
+        'logg'              : bp_logg,
+        'metallicity'       : bp_met,
+        'wavelength_um'     : bp_wav,
+        'stellar_params'    : {
+            'T_vals' : T_vals_bp,
+            'g_vals' : g_vals_bp,
+            'm_vals' : m_vals_bp,
+        },
+        'wavs_ref_angstrom' : wavs_ref_bp,
+    }
+
+    pkl_path = bp_save_path + f'summary_b0_p0.1_{model}.pkl'
+    with open(pkl_path, 'wb') as f:
+        pickle.dump(bp_summary, f, protocol=pickle.HIGHEST_PROTOCOL)
+    print(f'\n  Saved summary pickle → {pkl_path}')
+
+    # ── 11. Also save the typical and outlier coefficients as plain text ──────
+    #        for quick copy-paste into downstream scripts
+    txt_path = bp_save_path + f'special_coeffs_b0_p0.1_{model}.txt'
+    with open(txt_path, 'w') as ftxt:
+        ftxt.write(f'# 4th-order NLLD coefficients for b={target_b_val}, '
+                   f'p={target_p_val}, model={model}\n')
+        ftxt.write(f'# Format: label  c1  c2  c3  c4  Teff  logg  [M/H]  '
+                   f'wavelength_um  cluster\n')
+        ftxt.write('#\n')
+
+        c_typ = bp_coeffs[bp_typical_idx]
+        ftxt.write(f'typical  '
+                   f'{c_typ[0]:+.6f}  {c_typ[1]:+.6f}  '
+                   f'{c_typ[2]:+.6f}  {c_typ[3]:+.6f}  '
+                   f'{bp_Teff[bp_typical_idx]:.0f}  '
+                   f'{bp_logg[bp_typical_idx]:.2f}  '
+                   f'{bp_met[bp_typical_idx]:.2f}  '
+                   f'{bp_wav[bp_typical_idx]:.4f}  '
+                   f'{bp_cl_0idx[bp_typical_idx]}\n')
+
+        for oi, oidx in enumerate(bp_outlier_idxs):
+            c_out = bp_coeffs[oidx]
+            ftxt.write(f'outlier{oi}  '
+                       f'{c_out[0]:+.6f}  {c_out[1]:+.6f}  '
+                       f'{c_out[2]:+.6f}  {c_out[3]:+.6f}  '
+                       f'{bp_Teff[oidx]:.0f}  '
+                       f'{bp_logg[oidx]:.2f}  '
+                       f'{bp_met[oidx]:.2f}  '
+                       f'{bp_wav[oidx]:.4f}  '
+                       f'{bp_cl_0idx[oidx]}\n')
+
+        # Also write per-cluster centroid-closest coefficients
+        ftxt.write('#\n')
+        ftxt.write('# Per-cluster representatives (closest to centroid)\n')
+        for ci, cl in enumerate(bp_unique_cl):
+            mask_cl = bp_cl_0idx == cl
+            members = bp_scores[mask_cl]
+            centroid = members.mean(axis=0)
+            dists_cl = np.linalg.norm(members - centroid, axis=1)
+            rep_idx  = int(np.where(mask_cl)[0][np.argmin(dists_cl)])
+            c_rep    = bp_coeffs[rep_idx]
+            ftxt.write(f'cluster{cl}_rep  '
+                       f'{c_rep[0]:+.6f}  {c_rep[1]:+.6f}  '
+                       f'{c_rep[2]:+.6f}  {c_rep[3]:+.6f}  '
+                       f'{bp_Teff[rep_idx]:.0f}  '
+                       f'{bp_logg[rep_idx]:.2f}  '
+                       f'{bp_met[rep_idx]:.2f}  '
+                       f'{bp_wav[rep_idx]:.4f}  '
+                       f'{cl}\n')
+
+        # Per-cluster mean coefficients
+        ftxt.write('#\n')
+        ftxt.write('# Per-cluster mean coefficients (± std)\n')
+        for ci, cl in enumerate(bp_unique_cl):
+            mask_cl_v = bp_cl_valid == cl
+            if mask_cl_v.sum() == 0:
+                continue
+            means = bp_coeffs_valid[mask_cl_v].mean(axis=0)
+            stds  = bp_coeffs_valid[mask_cl_v].std(axis=0)
+            ftxt.write(f'cluster{cl}_mean  '
+                       f'{means[0]:+.6f}±{stds[0]:.6f}  '
+                       f'{means[1]:+.6f}±{stds[1]:.6f}  '
+                       f'{means[2]:+.6f}±{stds[2]:.6f}  '
+                       f'{means[3]:+.6f}±{stds[3]:.6f}  '
+                       f'n={mask_cl_v.sum()}\n')
+
+    print(f'  Saved special coefficients → {txt_path}')
+
+    # ── Clean up ─────────────────────────────────────────────────────────────
+    del bp_profiles_list, bp_xs_list, bp_meta_list
+    del bp_profiles, bp_xs, bp_meta, bp_scores, bp_coeffs
+    del bp_coeffs_valid, bp_cl_valid, bp_wav_valid
+    del bp_Teff_valid, bp_logg_valid, bp_met_valid
+    gc.collect()
+
+    print('\n' + '=' * 80)
+    print(f'  DEDICATED b=0, p=0.1 ANALYSIS COMPLETE — {model}')
+    print('=' * 80 + '\n')
