@@ -130,7 +130,7 @@ excluded_bp_pairs = [
 # before running PCA, clustering, fitting, etc.
 # Set to False to use all valid profiles.
 subsample_profiles = True
-n_subsample_profiles = 100000
+n_subsample_profiles = 10000
 subsample_seed = 42  # for reproducibility
 
 plot_dendogram = False
@@ -160,10 +160,13 @@ def hierarchical_clustering(
     save_path       : str
     feature_labels  : list of str, optional
     cutoff          : float or None
-    method          : str            linkage method, default 'complete'
+    method          : str            linkage method, default 'complete', Can use 'single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward'
     max_display     : int            max dendrogram leaves shown
     n_subsample     : int            scatter plot cap per cluster
     external_labels : np.ndarray or None   pre-computed labels (skips clustering)
+    clustering_metric: str           distance metric for pdist, default 'euclidean', can use any metric supported by scipy's cdist ('braycurtis', 'canberra', 
+                                    'chebyshev', 'cityblock', 'correlation', 'cosine', 'dice', 'euclidean', 'hamming', 'jaccard', 'jensenshannon', 'mahalanobis',
+                                    'matching', 'minkowski', 'rogerstanimoto', 'russellrao', 'seuclidean', 'sokalsneath', 'sqeuclidean', 'yule')
 
     Returns
     -------
@@ -212,6 +215,12 @@ def hierarchical_clustering(
         # Choose a chunk size that gives ~50 bar updates regardless of N
         CHUNK = max(1, N // 50)
 
+        cdist_kwargs = {}
+        if clustering_metric == 'mahalanobis':
+            cov = np.cov(data_scaled, rowvar=False)          # (D, D)
+            VI  = np.linalg.inv(cov).astype(np.float64)      # (D, D)
+            cdist_kwargs['VI'] = VI
+
         ptr = 0
         print(f'  [{label}] Computing {N:,}×{N:,} distance matrix '
               f'({n_pairs:,} pairs) with scipy cdist in row-chunks of {CHUNK} ...')
@@ -238,6 +247,7 @@ def hierarchical_clustering(
                         query_rows[local_i : local_i + 1],
                         right_cols,
                         metric = clustering_metric,
+                        **cdist_kwargs,
                     )[0]
                     n_vals      = len(row_dists)
                     if clustering_metric == 'cityblock':
@@ -872,9 +882,9 @@ for model in models:
                 label          = f'PCA_b{ib}_{model}',
                 save_path      = save_data_path,
                 feature_labels = [f'PC{k+1}' for k in range(n_components)],
-                clustering_metric = 'cityblock',
+                clustering_metric = 'mahalanobis',
                 method= 'single',
-                cutoff = [0.3, 0.3, 0.3, 0.4, 0.3][ib]
+                cutoff = [0.8, 0.8, 0.9, 0.865, 1.6][ib]
             )
 
             # Convert to 0-indexed
@@ -1454,9 +1464,9 @@ for model in models:
         label          = f'Coefficients_{model}',
         save_path      = save_data_path,
         feature_labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$'],
-        cutoff         = 0.055,
-        clustering_metric = 'cityblock',
-        method = 'single'
+        cutoff         = 75,
+        clustering_metric = 'mahalanobis',
+        method = 'ward'
     )
     # mode_labels_corner : (N_valid,)  integers 1 … N_MODES_FOUND
     N_MODES     = len(np.unique(mode_labels_corner))
@@ -1502,12 +1512,12 @@ for model in models:
             label          = f'PCA_byMode_{model}_b{ib}',
             save_path      = save_data_path,
             feature_labels = [f'PC{k+1}' for k in range(n_components)],
-            cutoff         = None,
+            cutoff         = 75,
             # Pass the back-propagated coefficient-space labels as an override
             # so the corner plot colours come from c-space, not a fresh PCA cluster.
             external_labels = mode_per_b_profile[ib],
-            clustering_metric = 'cityblock',
-            method = 'single'
+            clustering_metric = 'mahalanobis',
+            method = 'ward'
         )
 
     # ── Save ─────────────────────────────────────────────────────────────────
