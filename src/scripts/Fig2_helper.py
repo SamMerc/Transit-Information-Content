@@ -1946,6 +1946,405 @@ for model in models:
     print(f'    Saved wavelength-coloured corner plot')
 
     # ─────────────────────────────────────────────────────────────────────────────
+    # Figure 5h: 5D coefficient corner plot coloured by PCA-space cluster labels
+    # This is the reverse of the existing plot where coefficient-space modes
+    # are projected onto PCA space — here PCA clusters are projected onto
+    # coefficient space.
+    # ─────────────────────────────────────────────────────────────────────────────
+    print('    FIGURE 5h - Coefficient corner plot coloured by PCA clusters')
+
+    # ── Back-propagate PCA cluster labels onto the stacked coefficient array ──
+    # cluster_labels_per_b[ib] is 0-indexed, shape (n_profs_ib,), one per b.
+    # We concatenate them in the same order that corner_data was built
+    # (i.e. b0, b1, ..., b_{N_bs_ps-1}) and apply the same valid_mask.
+    pca_cl_stacked = np.concatenate(cluster_labels_per_b)   # (N_total,)
+    pca_cl_corner  = pca_cl_stacked[valid_mask]             # (N_valid,)
+
+    unique_pca_cl   = np.unique(pca_cl_corner)
+    n_pca_clusters  = len(unique_pca_cl)
+
+    # Because different b values may have produced different cluster counts,
+    # we offset each b's labels so they are globally unique.
+    # This way cluster 0 from b=0.0 is not conflated with cluster 0 from b=0.5.
+    pca_cl_global = np.empty_like(pca_cl_stacked)
+    offset = 0
+    for ib in range(N_bs_ps):
+        n_cl_ib = len(np.unique(cluster_labels_per_b[ib]))
+        start   = sum(len(c) for c in cluster_labels_per_b[:ib])
+        end     = start + len(cluster_labels_per_b[ib])
+        pca_cl_global[start:end] = cluster_labels_per_b[ib] + offset
+        offset += n_cl_ib
+
+    pca_cl_global_corner = pca_cl_global[valid_mask]
+    unique_global_cl     = np.unique(pca_cl_global_corner)
+    n_global_clusters    = len(unique_global_cl)
+
+    print(f'    {n_global_clusters} global PCA clusters '
+          f'(across {N_bs_ps} b values) mapped onto coefficient space')
+    for cl in unique_global_cl:
+        n_in = np.sum(pca_cl_global_corner == cl)
+        print(f'      Global PCA cluster {cl}: {n_in} profiles')
+
+    # ── Colour palette ───────────────────────────────────────────────────────
+    if n_global_clusters <= 10:
+        pca_cl_cmap = plt.cm.tab10
+    elif n_global_clusters <= 20:
+        pca_cl_cmap = plt.cm.tab20
+    else:
+        pca_cl_cmap = plt.cm.hsv
+
+    pca_cl_colors = {
+        cl: pca_cl_cmap(i / max(n_global_clusters - 1, 1))
+        for i, cl in enumerate(unique_global_cl)
+    }
+
+    # Build an RGBA array for every valid profile
+    point_colors_pca = np.array([pca_cl_colors[cl] for cl in pca_cl_global_corner])
+
+    # ── Base corner figure ───────────────────────────────────────────────────
+    fig_pca_on_coeff = corner.corner(
+        corner_data,
+        labels=labels_5d,
+        range=ranges_5d,
+        bins=50,
+        smooth1d=1.0,
+        plot_datapoints=False,
+        plot_density=False,
+        fill_contours=False,
+        no_fill_contours=True,
+        levels=(0.5, 0.68, 0.95, 0.99),
+        hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
+        label_kwargs={'fontsize': 13},
+        title_kwargs={'fontsize': 11},
+        show_titles=False,
+        contour_kwargs={'colors': 'none'},
+    )
+
+    axes_pc = np.array(fig_pca_on_coeff.axes).reshape(ndim_5d, ndim_5d)
+
+    # ── Coloured scatter in lower-triangle panels ────────────────────────────
+    max_scatter_pc = 40_000
+    if len(corner_data) > max_scatter_pc:
+        rng_pc      = np.random.default_rng(42)
+        idx_sub_pc  = np.sort(rng_pc.choice(len(corner_data),
+                                            size=max_scatter_pc, replace=False))
+    else:
+        idx_sub_pc = np.arange(len(corner_data))
+
+    for row in range(ndim_5d):
+        for col in range(row):
+            ax = axes_pc[row, col]
+            for cl in unique_global_cl:
+                mask_cl = pca_cl_global_corner[idx_sub_pc] == cl
+                if mask_cl.sum() == 0:
+                    continue
+                ax.scatter(
+                    corner_data[idx_sub_pc[mask_cl], col],
+                    corner_data[idx_sub_pc[mask_cl], row],
+                    color=pca_cl_colors[cl],
+                    s=1.5,
+                    alpha=0.35,
+                    linewidths=0,
+                    rasterized=True,
+                )
+
+    # ── Coloured diagonal histograms ─────────────────────────────────────────
+    for d in range(ndim_5d):
+        ax = axes_pc[d, d]
+        ax.clear()
+
+        for cl in unique_global_cl:
+            mask_cl = pca_cl_global_corner == cl
+            if mask_cl.sum() == 0:
+                continue
+            ax.hist(
+                corner_data[mask_cl, d],
+                bins=50,
+                range=ranges_5d[d],
+                alpha=0.55,
+                color=pca_cl_colors[cl],
+                density=True,
+                histtype='stepfilled',
+                edgecolor='none',
+            )
+
+        ax.set_xlim(ranges_5d[d])
+        ax.set_yticks([])
+        for spine in ['top', 'left', 'right']:
+            ax.spines[spine].set_visible(False)
+        if d == ndim_5d - 1:
+            ax.set_xlabel(labels_5d[d], fontsize=13)
+
+    # ── Restore axis labels ──────────────────────────────────────────────────
+    for row in range(ndim_5d):
+        for col in range(row):
+            ax = axes_pc[row, col]
+            if col == 0:
+                ax.set_ylabel(labels_5d[row], fontsize=13)
+            if row == ndim_5d - 1:
+                ax.set_xlabel(labels_5d[col], fontsize=13)
+            ax.tick_params(labelsize=8)
+            ax.grid(True, alpha=0.15)
+
+    # ── Legend in upper-right empty space ─────────────────────────────────────
+    # Build one entry per b value, grouping its PCA clusters together
+    legend_handles = []
+    cl_offset = 0
+    for ib in range(N_bs_ps):
+        n_cl_ib    = len(np.unique(cluster_labels_per_b[ib]))
+        b_val_str  = f'{float(bs[ib]):.2f}'
+        for ic in range(n_cl_ib):
+            global_cl = cl_offset + ic
+            legend_handles.append(
+                plt.Line2D(
+                    [0], [0],
+                    marker='o', color='w',
+                    markerfacecolor=pca_cl_colors[global_cl],
+                    markersize=7,
+                    label=f'b={b_val_str} PCA-cl {ic}',
+                )
+            )
+        cl_offset += n_cl_ib
+
+    # Place legend; use two columns if many clusters
+    ncol_leg = 2 if n_global_clusters > 8 else 1
+    fig_pca_on_coeff.legend(
+        handles=legend_handles,
+        loc='upper right',
+        fontsize=7,
+        ncol=ncol_leg,
+        framealpha=0.85,
+        title='PCA clusters',
+        title_fontsize=8,
+        bbox_to_anchor=(0.98, 0.98),
+    )
+
+    fig_pca_on_coeff.suptitle(
+        f'NLLD coefficients coloured by PCA-space clusters — {model}',
+        fontsize=13, y=1.02,
+    )
+
+    fig_pca_on_coeff.savefig(
+        save_data_path + f'Corner_NLLD_byPCAcluster_{model}.png',
+        dpi=150, bbox_inches='tight',
+    )
+    plt.close(fig_pca_on_coeff)
+    print(f'    Saved PCA-cluster-coloured coefficient corner plot')
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Figure 5i: Corner plot of NLLD coefficients restricted to b=0, p=0.1
+    # Also saves a dedicated .npy file with coefficients + stellar/wavelength info
+    # ─────────────────────────────────────────────────────────────────────────────
+    print('    FIGURE 5i - Coefficient corner plot for b=0, p=1e-1')
+
+    # ── Identify the target b and p values ───────────────────────────────────
+    target_b = 0.0
+    target_p = 1e-1
+
+    # corner_data columns: [c1, c2, c3, c4, b]
+    # corner_meta columns: [p, Teff, logg, metallicity]
+    # corner_wav_um      : wavelength in microns
+    mask_bp = (
+        np.isclose(corner_data[:, 4], target_b, atol=1e-8) &
+        np.isclose(corner_meta[:, 0], target_p, rtol=1e-4)
+    )
+
+    n_selected = mask_bp.sum()
+    print(f'    Selected {n_selected} / {len(corner_data)} profiles '
+          f'with b={target_b} and p={target_p}')
+
+    if n_selected == 0:
+        print('    WARNING: no profiles match b=0, p=1e-1. Skipping Figure 5i.')
+    else:
+        # ── Extract the subset ───────────────────────────────────────────────
+        coeffs_bp   = corner_data[mask_bp, :4]        # (n_selected, 4) — c1..c4
+        meta_bp     = corner_meta[mask_bp]             # (n_selected, 4) — p, Teff, logg, met
+        wav_bp      = corner_wav_um[mask_bp]           # (n_selected,)
+
+        # ── Save dedicated .npy ──────────────────────────────────────────────
+        # Columns: c1, c2, c3, c4, Teff, logg, metallicity, wavelength_um
+        save_array = np.column_stack([
+            coeffs_bp,                   # c1, c2, c3, c4
+            meta_bp[:, 1],               # Teff
+            meta_bp[:, 2],               # logg
+            meta_bp[:, 3],               # metallicity
+            wav_bp,                      # wavelength (µm)
+        ])  # (n_selected, 8)
+
+        col_description = (
+            'Columns: c1, c2, c3, c4, Teff, logg, metallicity, wavelength_um'
+        )
+
+        npy_path = save_data_path + f'coeffs_b0_p0.1_{model}.npy'
+        np.save(npy_path, save_array)
+        print(f'    Saved {save_array.shape} array to {npy_path}')
+        print(f'    {col_description}')
+
+        # Print summary statistics
+        print(f'    --- Subset summary ---')
+        print(f'    c1   : [{coeffs_bp[:,0].min():.4f}, {coeffs_bp[:,0].max():.4f}]  '
+              f'mean={coeffs_bp[:,0].mean():.4f}')
+        print(f'    c2   : [{coeffs_bp[:,1].min():.4f}, {coeffs_bp[:,1].max():.4f}]  '
+              f'mean={coeffs_bp[:,1].mean():.4f}')
+        print(f'    c3   : [{coeffs_bp[:,2].min():.4f}, {coeffs_bp[:,2].max():.4f}]  '
+              f'mean={coeffs_bp[:,2].mean():.4f}')
+        print(f'    c4   : [{coeffs_bp[:,3].min():.4f}, {coeffs_bp[:,3].max():.4f}]  '
+              f'mean={coeffs_bp[:,3].mean():.4f}')
+        print(f'    Teff : [{meta_bp[:,1].min():.0f}, {meta_bp[:,1].max():.0f}] K')
+        print(f'    logg : [{meta_bp[:,2].min():.2f}, {meta_bp[:,2].max():.2f}]')
+        print(f'    [M/H]: [{meta_bp[:,3].min():.2f}, {meta_bp[:,3].max():.2f}]')
+        print(f'    λ    : [{wav_bp.min():.2f}, {wav_bp.max():.2f}] µm')
+
+        # ── 4D corner plot of c1–c4 ─────────────────────────────────────────
+        labels_4d  = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
+        ranges_4d  = [
+            (np.percentile(coeffs_bp[:, ic], 1),
+             np.percentile(coeffs_bp[:, ic], 99))
+            for ic in range(4)
+        ]
+
+        # ── Base figure: uncoloured corner ───────────────────────────────────
+        fig_5i = corner.corner(
+            coeffs_bp,
+            labels=labels_4d,
+            range=ranges_4d,
+            bins=50,
+            smooth=1.0,
+            smooth1d=1.0,
+            plot_datapoints=False,
+            plot_density=False,
+            fill_contours=False,
+            no_fill_contours=True,
+            levels=(0.5, 0.68, 0.95, 0.99),
+            hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
+            label_kwargs={'fontsize': 13},
+            title_kwargs={'fontsize': 11},
+            show_titles=False,
+            contour_kwargs={'colors': 'none'},
+        )
+
+        ndim_4d  = 4
+        axes_5i  = np.array(fig_5i.axes).reshape(ndim_4d, ndim_4d)
+
+        # ── Colour by wavelength (the main remaining variable) ───────────────
+        wav_cmap_5i = plt.cm.turbo
+        wav_norm_5i = mcolors.Normalize(vmin=wav_bp.min(), vmax=wav_bp.max())
+
+        # Scatter — sort so long wavelengths render on top
+        max_scatter_5i = 40_000
+        if n_selected > max_scatter_5i:
+            rng_5i      = np.random.default_rng(42)
+            idx_sub_5i  = np.sort(rng_5i.choice(n_selected,
+                                                 size=max_scatter_5i, replace=False))
+        else:
+            idx_sub_5i = np.arange(n_selected)
+
+        order_5i    = np.argsort(wav_bp[idx_sub_5i])
+        idx_sub_5i  = idx_sub_5i[order_5i]
+
+        for row in range(ndim_4d):
+            for col in range(row):
+                ax = axes_5i[row, col]
+                ax.scatter(
+                    coeffs_bp[idx_sub_5i, col],
+                    coeffs_bp[idx_sub_5i, row],
+                    c=wav_bp[idx_sub_5i],
+                    cmap=wav_cmap_5i,
+                    norm=wav_norm_5i,
+                    s=2.5,
+                    alpha=0.4,
+                    linewidths=0,
+                    rasterized=True,
+                )
+
+        # ── Coloured diagonal histograms by wavelength bin ───────────────────
+        n_wav_hist_5i = 10
+        wav_edges_5i  = np.linspace(wav_bp.min(), wav_bp.max(),
+                                    n_wav_hist_5i + 1)
+        wav_centres_5i = 0.5 * (wav_edges_5i[:-1] + wav_edges_5i[1:])
+
+        for d in range(ndim_4d):
+            ax = axes_5i[d, d]
+            ax.clear()
+            for ibin, centre in enumerate(wav_centres_5i):
+                mask_bin = ((wav_bp >= wav_edges_5i[ibin]) &
+                            (wav_bp < wav_edges_5i[ibin + 1]))
+                if ibin == n_wav_hist_5i - 1:
+                    mask_bin |= (wav_bp == wav_edges_5i[ibin + 1])
+                if mask_bin.sum() == 0:
+                    continue
+                ax.hist(
+                    coeffs_bp[mask_bin, d],
+                    bins=50,
+                    range=ranges_4d[d],
+                    alpha=0.55,
+                    color=wav_cmap_5i(wav_norm_5i(centre)),
+                    density=True,
+                    histtype='stepfilled',
+                    edgecolor='none',
+                )
+            ax.set_xlim(ranges_4d[d])
+            ax.set_yticks([])
+            for spine in ['top', 'left', 'right']:
+                ax.spines[spine].set_visible(False)
+            if d == ndim_4d - 1:
+                ax.set_xlabel(labels_4d[d], fontsize=13)
+
+        # ── Restore axis labels ──────────────────────────────────────────────
+        for row in range(ndim_4d):
+            for col in range(row):
+                ax = axes_5i[row, col]
+                if col == 0:
+                    ax.set_ylabel(labels_4d[row], fontsize=13)
+                if row == ndim_4d - 1:
+                    ax.set_xlabel(labels_4d[col], fontsize=13)
+                ax.tick_params(labelsize=8)
+                ax.grid(True, alpha=0.15)
+
+        # ── Wavelength colorbar ──────────────────────────────────────────────
+        cbar_ax_5i = fig_5i.add_axes([0.72, 0.72, 0.025, 0.20])
+        sm_5i      = cm.ScalarMappable(cmap=wav_cmap_5i, norm=wav_norm_5i)
+        sm_5i.set_array([])
+        cbar_5i    = fig_5i.colorbar(sm_5i, cax=cbar_ax_5i)
+        cbar_5i.set_label(r'Wavelength ($\mu$m)', fontsize=13)
+        cbar_5i.ax.tick_params(labelsize=10)
+
+        wav_tick_step_5i = 0.5
+        wav_ticks_5i = np.arange(
+            np.ceil(wav_bp.min() / wav_tick_step_5i) * wav_tick_step_5i,
+            wav_bp.max() + wav_tick_step_5i / 2,
+            wav_tick_step_5i,
+        )
+        cbar_5i.set_ticks(wav_ticks_5i)
+        cbar_5i.set_ticklabels([f'{t:.1f}' for t in wav_ticks_5i])
+
+        # ── Annotation box with the fixed parameters ─────────────────────────
+        info_text = (
+            f'Fixed parameters:\n'
+            f'  $b = {target_b:.1f}$\n'
+            f'  $p = {target_p}$\n'
+            f'  $N = {n_selected}$ profiles'
+        )
+        fig_5i.text(
+            0.73, 0.58, info_text,
+            fontsize=10,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='wheat', alpha=0.7),
+        )
+
+        fig_5i.suptitle(
+            f'NLLD coefficients at $b=0$, $p=10^{{-1}}$ — {model}',
+            fontsize=13, y=1.02,
+        )
+
+        fig_5i.savefig(
+            save_data_path + f'Corner_NLLD_b0_p0.1_{model}.png',
+            dpi=150, bbox_inches='tight',
+        )
+        plt.close(fig_5i)
+        print(f'    Saved b=0, p=0.1 corner plot')
+
+    # ─────────────────────────────────────────────────────────────────────────────
     # Mode identification in coefficient space — hierarchical clustering
     # ─────────────────────────────────────────────────────────────────────────────
     print('\n=== MODE IDENTIFICATION IN COEFFICIENT SPACE ===')
