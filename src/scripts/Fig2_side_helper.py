@@ -1028,22 +1028,171 @@ for model in models:
             plt.close(fig2a)
             print(f'      Saved PCA corner scatter for b[{ib}]={float(bs[ib]):.3f}')
 
+        # ── Figure 2b: PCA corner scatter coloured by various parameters ─────────────
+        print('    FIGURE 2b - PCA corner scatter by multiple parameters')
+
+        # Recover physical values for each profile (for all b values)
+        T_vals_arr = np.linspace(Teffs[model][0],       Teffs[model][1],       N_star)
+        g_vals_arr = np.linspace(loggs[model][0],        loggs[model][1],        N_star)
+        m_vals_arr = np.linspace(metallicitys[model][0], metallicitys[model][1], N_star)
+        p_vals_arr = np.array(ps)
+
+        # Compute wavelength bin centers
+        wav_bins_ref = np.array(gen_dict['stellar_wavelengths'][model][0, 0, 0])
+        wav_bin_centers = []
+        for idx_slice in wav_bin_slices:
+            if len(idx_slice) > 0:
+                wav_bin_centers.append(np.mean(wav_bins_ref[idx_slice]))
+        wav_bin_centers = np.array(wav_bin_centers)
+
+        # Define color schemes for PCA corner plots
+        color_schemes = {
+            'p':    {'name': 'Planet size $p$',   'cmap': plt.cm.plasma,    'unit': ''},
+            'Teff': {'name': '$T_{eff}$ (K)',     'cmap': plt.cm.inferno,   'unit': 'K'},
+            'logg': {'name': '$\\log g$',         'cmap': plt.cm.cividis,   'unit': 'dex'},
+            'MH':   {'name': '[M/H]',             'cmap': plt.cm.coolwarm,  'unit': 'dex'},
+            'wav':  {'name': 'Wavelength ($\\mu$m)', 'cmap': plt.cm.turbo,  'unit': 'μm'},
+        }
+
+        for ib in range(N_bs_ps):
+            scores_ib    = profiles_pca[ib]
+            meta_ib      = meta_per_b[ib]
+
+            special_indices_ib = [typical_idx_per_b[ib]] + outlier_indices_per_b[ib]
+            special_labels_ib  = ['Typical'] + [f'Outlier {c}' for c in range(len(outlier_indices_per_b[ib]))]
+            special_colors_ib  = ['blue'] + ['red'] * len(outlier_indices_per_b[ib])
+            
+            # Extract physical values for this b
+            phys_p      = p_vals_arr[meta_ib[:, 0]]
+            phys_Teff   = T_vals_arr[meta_ib[:, 1]]
+            phys_logg   = g_vals_arr[meta_ib[:, 2]]
+            phys_MH     = m_vals_arr[meta_ib[:, 3]]
+            phys_wav_um = wav_bins_ref[meta_ib[:, 4]] / 1e4
+            
+            phys_dict = {
+                'p':    phys_p,
+                'Teff': phys_Teff,
+                'logg': phys_logg,
+                'MH':   phys_MH,
+                'wav':  phys_wav_um,
+            }
+            
+            # Create one corner plot per color scheme
+            for scheme_key, scheme_info in color_schemes.items():
+                col_vals = phys_dict[scheme_key]
+                col_norm = mcolors.Normalize(vmin=col_vals.min(), vmax=col_vals.max())
+                col_cmap = scheme_info['cmap']
+                col_label = scheme_info['name']
+                
+                print(f'      PCA corner for b[{ib}]={float(bs[ib]):.3f} coloured by {scheme_key}')
+                
+                fig2a, axes2a = plt.subplots(n_components, n_components,
+                                            figsize=(3 * n_components, 3 * n_components))
+                fig2a.suptitle(f'PCA space — b = {float(bs[ib]):.3f}, coloured by {col_label}',
+                            fontsize=12, y=1.01)
+                
+                # Subsample for visualization if needed
+                max_scatter_2a = 20_000
+                rng_2a = np.random.default_rng(42)
+                if len(scores_ib) > max_scatter_2a:
+                    idx_sub = np.sort(rng_2a.choice(len(scores_ib), size=max_scatter_2a, replace=False))
+                else:
+                    idx_sub = np.arange(len(scores_ib))
+                idx_sub = idx_sub[np.argsort(col_vals[idx_sub])]  # Sort by color for better visibility
+                
+                for row in range(n_components):
+                    for col in range(n_components):
+                        ax = axes2a[row, col]
+                        if row == col:
+                            # Diagonal: histogram
+                            n_hist_bins = 8 if len(np.unique(col_vals)) > 50 else len(np.unique(col_vals))
+                            
+                            if n_hist_bins > 1:
+                                edges = np.linspace(col_vals.min(), col_vals.max(), n_hist_bins + 1)
+                                centres = 0.5 * (edges[:-1] + edges[1:])
+                                for ib_m, centre in enumerate(centres):
+                                    mask_bin = (col_vals >= edges[ib_m]) & (col_vals < edges[ib_m + 1])
+                                    if ib_m == len(centres) - 1:
+                                        mask_bin |= (col_vals == edges[ib_m + 1])
+                                    if mask_bin.sum() == 0:
+                                        continue
+                                    ax.hist(scores_ib[mask_bin, row], bins=30, alpha=0.55,
+                                        color=col_cmap(col_norm(centre)), density=True,
+                                        histtype='stepfilled', edgecolor='none', linewidth=0.8)
+                            else:
+                                ax.hist(scores_ib[:, row], bins=30, alpha=0.55,
+                                    color=col_cmap(col_norm(col_vals.mean())), density=True,
+                                    histtype='stepfilled', edgecolor='none', linewidth=0.8)
+                            
+                            ax.set_xlabel(f'PC{row+1}', fontsize=8)
+                            ax.tick_params(labelsize=7)
+                            for spine in ['top', 'left', 'right']:
+                                ax.spines[spine].set_visible(False)
+                            ax.set_yticks([])
+                            
+                        elif row > col:
+                            # Lower triangle: scatter
+                            ax.scatter(scores_ib[idx_sub, col], scores_ib[idx_sub, row],
+                                    c=col_vals[idx_sub], cmap=col_cmap, norm=col_norm,
+                                    s=8, alpha=0.4, linewidths=0, rasterized=True)
+                            
+                            # Add special markers for typical and outlier profiles
+                            for cidx, slabel, scol in zip(special_indices_ib, special_labels_ib, special_colors_ib):
+                                ax.scatter(scores_ib[cidx, col], scores_ib[cidx, row],
+                                        color=scol, s=60, zorder=10,
+                                        marker='*' if slabel == 'Typical' else 'D',
+                                        edgecolors='k', linewidths=0.5, label=slabel)
+                            
+                            if col == 0:
+                                ax.set_ylabel(f'PC{row+1}', fontsize=8)
+                            if row == n_components - 1:
+                                ax.set_xlabel(f'PC{col+1}', fontsize=8)
+                            ax.tick_params(labelsize=6)
+                            ax.grid(True, alpha=0.2)
+                        else:
+                            ax.set_visible(False)
+                
+                # Add colorbar
+                cbar_ax = fig2a.add_axes([0.92, 0.15, 0.02, 0.7])
+                sm = cm.ScalarMappable(cmap=col_cmap, norm=col_norm)
+                sm.set_array([])
+                cbar = fig2a.colorbar(sm, cax=cbar_ax)
+                cbar.set_label(col_label, fontsize=11)
+                cbar.ax.tick_params(labelsize=9)
+                
+                # Set colorbar ticks intelligently
+                unique_vals = np.unique(col_vals)
+                if len(unique_vals) <= 12:
+                    cbar.set_ticks(unique_vals)
+                    if scheme_key == 'Teff':
+                        cbar.set_ticklabels([f'{v:.0f}' for v in unique_vals], fontsize=8)
+                    elif scheme_key == 'p':
+                        cbar.set_ticklabels([f'{v:.1e}' for v in unique_vals], fontsize=8)
+                    else:
+                        cbar.set_ticklabels([f'{v:.2f}' for v in unique_vals], fontsize=8)
+                
+                fig2a.tight_layout(rect=[0, 0, 0.90, 1])
+                fig2a.savefig(save_data_path + f'PCA_Corner_Scatter_{model}_b{ib}_by{scheme_key}.png',
+                            dpi=150, bbox_inches='tight')
+                plt.close(fig2a)
+                print(f'        Saved: b{ib}_by{scheme_key}')
+
         # ─────────────────────────────────────────────────────────────────────────────
-        # Figure 2b: typical and outlier profiles
+        # Figure 2c: typical and outlier profiles
         # Rows = b values, columns = special profiles (typical + outliers)
         # ─────────────────────────────────────────────────────────────────────────────
-        print('    FIGURE 2b - Mode and outlier profiles')
+        print('    FIGURE 2c - Mode and outlier profiles')
 
         max_n_outliers = max(len(ol) for ol in outlier_indices_per_b)
         n_specials     = 1 + max_n_outliers
 
-        fig2b, axes2b = plt.subplots(N_bs_ps, n_specials,
+        fig2c, axes2c = plt.subplots(N_bs_ps, n_specials,
                                      figsize=(5 * n_specials, 4 * N_bs_ps),
                                      sharey='row')
         if N_bs_ps == 1:
-            axes2b = axes2b[np.newaxis, :]
+            axes2c = axes2c[np.newaxis, :]
         if n_specials == 1:
-            axes2b = axes2b[:, np.newaxis]
+            axes2c = axes2c[:, np.newaxis]
 
         for ib in range(N_bs_ps):
             special_indices_ib = [typical_idx_per_b[ib]] + outlier_indices_per_b[ib]
@@ -1052,7 +1201,7 @@ for model in models:
 
             for col, (cidx, slabel, scol) in enumerate(
                     zip(special_indices_ib, special_labels_ib, special_colors_ib)):
-                ax  = axes2b[ib, col]
+                ax  = axes2c[ib, col]
                 n_v = n_valid_per_b[ib]
                 for nval in range(0, n_v, max(1, n_v // 200)):
                     ax.plot(xs_per_b[ib][nval], pca_int_profile[ib][nval],
@@ -1066,11 +1215,11 @@ for model in models:
                 ax.grid(True, alpha=0.3)
 
             for col in range(len(special_indices_ib), n_specials):
-                axes2b[ib, col].set_visible(False)
+                axes2c[ib, col].set_visible(False)
 
-        fig2b.tight_layout()
-        fig2b.savefig(save_data_path + 'Mode_and_Outliers.png', dpi=150, bbox_inches='tight')
-        plt.close(fig2b)
+        fig2c.tight_layout()
+        fig2c.savefig(save_data_path + 'Mode_and_Outliers.png', dpi=150, bbox_inches='tight')
+        plt.close(fig2c)
 
         # ─────────────────────────────────────────────────────────────────────────────
         # Figure 3: reconstruction quality for the typical profile — one col per b
