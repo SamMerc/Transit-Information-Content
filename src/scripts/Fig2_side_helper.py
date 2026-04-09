@@ -295,6 +295,34 @@ def hierarchical_clustering(
         for cl in unique_cl:
             print(f'    Cluster {cl}: {np.sum(labels == cl):6d} profiles')
 
+        # ── 6. Reassign singleton clusters ────────────────────────────────────
+        unique_cl = np.unique(labels)
+        singleton_cls = [cl for cl in unique_cl if np.sum(labels == cl) == 1]
+        non_singleton_cls = [cl for cl in unique_cl if np.sum(labels == cl) > 1]
+
+        if len(singleton_cls) > 0 and len(non_singleton_cls) > 0:
+            print(f'  [{label}] Reassigning {len(singleton_cls)} singleton cluster(s)')
+
+            centroids = np.array([
+                data_scaled[labels == cl].mean(axis=0)
+                for cl in non_singleton_cls
+            ])
+
+            for scl in singleton_cls:
+                idx_singleton = np.where(labels == scl)[0][0]
+                point = data_scaled[idx_singleton:idx_singleton + 1]
+                dists = cdist(point, centroids, metric='euclidean')[0]
+                nearest = non_singleton_cls[np.argmin(dists)]
+                print(f'    Singleton cluster {scl} (idx={idx_singleton}) '
+                      f'→ cluster {nearest}')
+                labels[idx_singleton] = nearest
+
+            unique_cl = np.unique(labels)
+            n_cls     = len(unique_cl)
+            print(f'  [{label}] After reassignment: {n_cls} clusters')
+            for cl in unique_cl:
+                print(f'    Cluster {cl}: {np.sum(labels == cl):6d} profiles')
+
         # ── Colour palette ─────────────────────────────
         cls_colors = plt.cm.tab10(np.linspace(0, 1, min(n_cls, 10)))
         if n_cls > 10:
@@ -605,7 +633,7 @@ for model in models:
 
                     #Normalize and store this local intensity profile
                     gen_dict['local_intensity_profiles'][model][i, j, k] = normalized_profiles
-                    gen_dict['local_rps'][model][i, j, k, :, :, :]       = jnp.linspace(0.0, 1.0, N_chords)
+                    gen_dict['local_rps'][model][i, j, k, :, :, :]       = r_ps
 
                     #Garbage disposal to save memory
                     del (local_stellar_intensities, global_stellar_intensities,
@@ -628,7 +656,7 @@ for model in models:
     # PCA analysis
     # ──────────────────────────────────────────────────────────────────────────
     outlier_profiles = []
-    outlier_xs       = []
+    outlier_rs       = []
 
     if PCA_mode == 'build':
 
@@ -702,7 +730,8 @@ for model in models:
         # group_id = unique integer per (i,j,k,ip,iw) combination
         # ─────────────────────────────────────────────────────────────────────────────
         pca_int_profile = [np.empty((n_valid_per_b[ib], N_chords),  dtype=np.float32) for ib in range(N_bs_ps)]
-        xs_per_b        = [np.empty((n_valid_per_b[ib], N_chords),  dtype=np.float32) for ib in range(N_bs_ps)]
+        rs_per_b        = [np.empty((n_valid_per_b[ib], N_chords),  dtype=np.float32) for ib in range(N_bs_ps)]
+        mus_per_b       = [np.empty((n_valid_per_b[ib], N_chords),  dtype=np.float32) for ib in range(N_bs_ps)]
         group_ids       = [np.empty( n_valid_per_b[ib],             dtype=np.int64  ) for ib in range(N_bs_ps)]
         # Add metadata arrays — 5 columns: [ip, i(Teff), j(logg), k(met), iw]
         meta_per_b = [np.empty((n_valid_per_b[ib], 5), dtype=np.int32) for ib in range(N_bs_ps)]
@@ -748,7 +777,7 @@ for model in models:
 
                         ptr = ptrs[ib]
                         pca_int_profile[ib][ptr:ptr + n_ijk] = prof_ib[mask_ib]
-                        xs_per_b[ib][ptr:ptr + n_ijk]        = rps_ib[mask_ib]
+                        rs_per_b[ib][ptr:ptr + n_ijk]        = rps_ib[mask_ib]
                         group_ids[ib][ptr:ptr + n_ijk]       = local_group_ids[mask_ib]
                         meta_per_b[ib][ptr:ptr + n_ijk]      = meta[mask_ib]
                         ptrs[ib] += n_ijk
@@ -759,7 +788,13 @@ for model in models:
 
         for ib in range(N_bs_ps):
             assert ptrs[ib] == n_valid_per_b[ib], f'Pointer mismatch at b[{ib}]'
-            xs_per_b[ib] = xs_per_b[ib][:, ::-1]
+            # ── Compute mus_per_b: mu = sqrt(1 - (r - A(p,b))^2) ─────────────
+            b_val = float(bs[ib])
+            for idx in range(n_valid_per_b[ib]):
+                ip    = meta_per_b[ib][idx, 0]
+                p_val = float(ps[ip])
+                arg   = 1.0 - ((rs_per_b[ib][idx] - b_val)/(1.0 + p_val - b_val)) ** 2
+                mus_per_b[ib][idx] = np.sqrt(np.clip(arg, 0.0, 1.0))
 
         # ─────────────────────────────────────────────────────────────────────────────
         # Optional subsampling — draw a fixed number of profiles per b
@@ -783,7 +818,8 @@ for model in models:
                           f'(fewer than {n_subsample_profiles}, keeping all)')
 
                 pca_int_profile[ib] = pca_int_profile[ib][idx]
-                xs_per_b[ib]        = xs_per_b[ib][idx]
+                rs_per_b[ib]        = rs_per_b[ib][idx]
+                mus_per_b[ib]       = mus_per_b[ib][idx]
                 group_ids[ib]       = group_ids[ib][idx]
                 meta_per_b[ib]      = meta_per_b[ib][idx]
                 n_valid_per_b[ib]   = n_draw
@@ -828,7 +864,7 @@ for model in models:
                     cmap_g = cm.get_cmap('coolwarm')
                     norm_g = mcolors.Normalize(vmin=np.min(cvals), vmax=np.max(cvals))
                     for idx in range(0, len(resid), step):
-                        ax.plot(xs_per_b[ib][idx], resid[idx],
+                        ax.plot(rs_per_b[ib][idx], resid[idx],
                                 alpha=0.15, linewidth=0.4,
                                 color=cmap_g(norm_g(cvals[idx])))
 
@@ -881,7 +917,7 @@ for model in models:
                 feature_labels=[f'PC{k+1}' for k in range(n_components)],
                 clustering_metric='mahalanobis',
                 method='single',
-                cutoff=[0.8, 0.8, 0.9, 0.865, 1.6][ib],
+                cutoff=[0.8, 0.8, 0.9, 0.7, 1.2][ib],
             )
 
             cl_labels_ib = hc_labels_ib - 1
@@ -948,7 +984,7 @@ for model in models:
             # Eigen profiles
             for i_plot in range(n_components):
                 ax = axes1[ib, 2 + i_plot]
-                ax.plot(xs_per_b[ib][0], eigen[i_plot], color=colors[i_plot], linewidth=1.5)
+                ax.plot(mus_per_b[ib][0], eigen[i_plot], color=colors[i_plot], linewidth=1.5)
                 ax.axhline(0, color='k', linestyle='--', alpha=0.3)
                 ax.set_title(f'b={float(bs[ib]):.2f}  PC{i_plot+1} ({evr[i_plot]*100:.1f}%)')
                 ax.set_xlabel('$r/R_\\star$')
@@ -1204,11 +1240,11 @@ for model in models:
                 ax  = axes2c[ib, col]
                 n_v = n_valid_per_b[ib]
                 for nval in range(0, n_v, max(1, n_v // 200)):
-                    ax.plot(xs_per_b[ib][nval], pca_int_profile[ib][nval],
+                    ax.plot(mus_per_b[ib][nval], pca_int_profile[ib][nval],
                             alpha=0.15, color='gray', linewidth=0.3)
-                ax.plot(xs_per_b[ib][cidx], pca_int_profile[ib][cidx],
+                ax.plot(mus_per_b[ib][cidx], pca_int_profile[ib][cidx],
                         color=scol, linewidth=2, label=slabel, zorder=10)
-                ax.set_xlabel('$r/R_\\star$')
+                ax.set_xlabel('$\\mu$')
                 ax.set_ylabel('Norm. Intensity')
                 ax.set_title(f'{slabel}  b={float(bs[ib]):.3f}')
                 ax.legend(fontsize=7)
@@ -1233,7 +1269,7 @@ for model in models:
         for col_ib, ib in enumerate(range(N_bs_ps)):
             row_in_b = typical_idx_per_b[ib]
             original = pca_int_profile[ib][row_in_b]
-            x_orig   = xs_per_b[ib][row_in_b]
+            mu_orig   = mus_per_b[ib][row_in_b]
 
             for row_idx, n_comp_plot in enumerate(n_comp_list):
                 pca_temp      = PCA(n_components=n_comp_plot)
@@ -1246,8 +1282,8 @@ for model in models:
                 ax_top = fig3.add_subplot(gs[row_idx * 2,     col_ib])
                 ax_bot = fig3.add_subplot(gs[row_idx * 2 + 1, col_ib], sharex=ax_top)
 
-                ax_top.plot(x_orig, original,      color=b_colors[ib], linewidth=2,  label='Original')
-                ax_top.plot(x_orig, reconstructed, color=b_colors[ib], linewidth=1.2,
+                ax_top.plot(mu_orig, original,      color=b_colors[ib], linewidth=2,  label='Original')
+                ax_top.plot(mu_orig, reconstructed, color=b_colors[ib], linewidth=1.2,
                             linestyle='--', label='Recon.')
                 ax_top.set_title(f'b={float(bs[ib]):.2f}  {n_comp_plot}PC  RMSE={rmse:.4f}', fontsize=8)
                 ax_top.set_ylabel('Norm. Intensity', fontsize=7)
@@ -1256,9 +1292,9 @@ for model in models:
                 ax_top.tick_params(labelbottom=False)
 
                 safe = np.where(np.abs(original) < 1e-10, np.nan, original)
-                ax_bot.plot(x_orig, 100 * residual / safe, color=b_colors[ib], linewidth=1.0)
+                ax_bot.plot(mu_orig, 100 * residual / safe, color=b_colors[ib], linewidth=1.0)
                 ax_bot.axhline(0, color='k', linestyle='--', alpha=0.5)
-                ax_bot.set_xlabel('$r/R_\\star$', fontsize=7)
+                ax_bot.set_xlabel('$\\mu$', fontsize=7)
                 ax_bot.set_ylabel('Rel. diff. (%)', fontsize=7)
                 ax_bot.grid(True, alpha=0.3)
 
@@ -1277,33 +1313,33 @@ for model in models:
             row_typical = typical_idx_per_b[ib]
             np.save(save_data_path + f'mode_intensity_profile_{model}_b{ib}.npy',
                     pca_int_profile[ib][row_typical])
-            np.save(save_data_path + f'mode_rs_{model}_b{ib}.npy',
-                    xs_per_b[ib][row_typical])
+            np.save(save_data_path + f'mode_mus_{model}_b{ib}.npy',
+                    mus_per_b[ib][row_typical])
             for i_save, cidx in enumerate(outlier_indices_per_b[ib]):
                 np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}_b{ib}.npy',
                         pca_int_profile[ib][cidx])
-                np.save(save_data_path + f'outlier{i_save+1}_rs_{model}_b{ib}.npy',
-                        xs_per_b[ib][cidx])
+                np.save(save_data_path + f'outlier{i_save+1}_mus_{model}_b{ib}.npy',
+                        mus_per_b[ib][cidx])
 
         # Build the flat lists needed for Figure 4
         typical_profile  = [pca_int_profile[ib][typical_idx_per_b[ib]] for ib in range(N_bs_ps)]
-        typical_xs       = [xs_per_b[ib][typical_idx_per_b[ib]]        for ib in range(N_bs_ps)]
+        typical_mus      = [mus_per_b[ib][typical_idx_per_b[ib]]        for ib in range(N_bs_ps)]
         outlier_profiles = []
-        outlier_xs       = []
+        outlier_mus      = []
         # Use max number of outliers; pad with None for b values with fewer clusters
         max_n_outliers   = max(len(ol) for ol in outlier_indices_per_b)
         for i_out in range(max_n_outliers):
-            prof_list, xs_list = [], []
+            prof_list, mus_list = [], []
             for ib in range(N_bs_ps):
                 if i_out < len(outlier_indices_per_b[ib]):
                     cidx = outlier_indices_per_b[ib][i_out]
                     prof_list.append(pca_int_profile[ib][cidx])
-                    xs_list.append(xs_per_b[ib][cidx])
+                    mus_list.append(mus_per_b[ib][cidx])
                 else:
                     prof_list.append(None)
-                    xs_list.append(None)
+                    mus_list.append(None)
             outlier_profiles.append(prof_list)
-            outlier_xs.append(xs_list)
+            outlier_mus.append(mus_list)
 
         # Save metadata arrays for each b (needed for coloured corner plots)
         for ib in range(N_bs_ps):
@@ -1316,7 +1352,7 @@ for model in models:
 
         typical_profile = [np.load(save_data_path + f'mode_intensity_profile_{model}_b{ib}.npy')
                            for ib in range(N_bs_ps)]
-        typical_xs      = [np.load(save_data_path + f'mode_rs_{model}_b{ib}.npy')
+        typical_mus     = [np.load(save_data_path + f'mode_mus_{model}_b{ib}.npy')
                            for ib in range(N_bs_ps)]
         # Load metadata arrays
         meta_per_b      = [np.load(save_data_path + f'meta_{model}_b{ib}.npy')
@@ -1324,24 +1360,24 @@ for model in models:
 
          # Discover how many outlier files exist per b
         outlier_profiles = []
-        outlier_xs       = []
+        outlier_mus      = []
         i_save = 0
         while True:
             path_check = save_data_path + f'outlier{i_save+1}_intensity_profile_{model}_b0.npy'
             if not os.path.exists(path_check):
                 break
-            prof_list, xs_list = [], []
+            prof_list, mus_list = [], []
             for ib in range(N_bs_ps):
                 p_path = save_data_path + f'outlier{i_save+1}_intensity_profile_{model}_b{ib}.npy'
-                x_path = save_data_path + f'outlier{i_save+1}_rs_{model}_b{ib}.npy'
+                m_path = save_data_path + f'outlier{i_save+1}_mus_{model}_b{ib}.npy'
                 if os.path.exists(p_path):
                     prof_list.append(np.load(p_path))
-                    xs_list.append(np.load(x_path))
+                    mus_list.append(np.load(m_path))
                 else:
                     prof_list.append(None)
-                    xs_list.append(None)
+                    mus_list.append(None)
             outlier_profiles.append(prof_list)
-            outlier_xs.append(xs_list)
+            outlier_mus.append(mus_list)
             i_save += 1
         n_clusters = len(outlier_profiles) if outlier_profiles else 1
         print(f"\nLoaded profiles from {save_data_path}")
@@ -1352,14 +1388,14 @@ for model in models:
     # ── Figure 4: 4th-order NLLD fit for mode and outlier profiles ───────────
     print('    FIGURE 4')
 
-    # Bundle all special profiles: list of (label, profiles_per_b, xs_per_b)
+    # Bundle all special profiles: list of (label, profiles_per_b, rs_per_b)
     specials = (
-        [('mode', typical_profile, typical_xs)]
-        + [(f'outlier{i+1}', outlier_profiles[i], outlier_xs[i])
+        [('mode', typical_profile, typical_mus)]
+        + [(f'outlier{i+1}', outlier_profiles[i], outlier_mus[i])
            for i in range(len(outlier_profiles))]
     )
 
-    for label, prof_per_b, rps_per_b in specials:
+    for label, prof_per_b, specialmus_per_b in specials:
 
         fig4, axes4 = plt.subplots(
             N_bs_ps, 2,
@@ -1372,12 +1408,12 @@ for model in models:
         for ib in range(N_bs_ps):
 
             # Skip if this b has no profile for this outlier
-            if rps_per_b[ib] is None or prof_per_b[ib] is None:
+            if specialmus_per_b[ib] is None or prof_per_b[ib] is None:
                 axes4[ib, 0].set_visible(False)
                 axes4[ib, 1].set_visible(False)
                 continue
 
-            mus_ib  = np.array(rps_per_b[ib])
+            mus_ib  = np.array(specialmus_per_b[ib])
             prof_ib = np.array(prof_per_b[ib])
 
             # ── Fit ───────────────────────────────────────────────────────────
@@ -1437,7 +1473,7 @@ for model in models:
             print(f'  Fitting {n_profs} profiles for b[{ib}]={float(bs[ib]):.3f} ...')
 
             for idx in tqdm(range(n_profs)):
-                mus_idx  = xs_per_b[ib][idx]
+                mus_idx  = mus_per_b[ib][idx]
                 prof_idx = pca_int_profile[ib][idx]
 
                 if np.all(np.abs(prof_idx) < 1e-10):
