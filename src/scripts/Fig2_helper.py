@@ -3,12 +3,13 @@
 #############################
 
 # Restricted analysis for a single (b, p) pair drawn from the intensity profile
-# grid produced by full_ld_analysis.py.  For a user-specified impact parameter b
+# grid produced by Fig2_side_helper.py.  For a user-specified impact parameter b
 # and planet-to-star radius ratio p, this script:
 #   1. Loads the pre-built intensity profile grid (gen_dict) from disk.
 #   2. Collects every valid profile at that (b, p).
 #   3. Runs PCA and hierarchical clustering to identify structure.
-#   4. Fits each profile with a 4th-order non-linear limb-darkening law.
+#   4. Fits each profile with a 4th-order non-linear limb-darkening law,
+#      using rs_mask = r <= 1 - p (consistent with Fig2_side_helper.py).
 #   5. Produces corner plots coloured by wavelength, Teff, logg, [M/H] and
 #      PCA cluster, as well as representative profile plots with NLLD fits.
 #   6. Saves all outputs — arrays, figures, and a summary pickle — to a
@@ -49,7 +50,7 @@ from scipy.spatial.distance import cdist
 orig_load_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig2_sidehelper_Storage/'
 orig_save_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig2_helper_Storage/'
 
-models = ['mps1']  # must match the models run in full_ld_analysis.py
+models = ['mps1']  # must match the models run in Fig2_side_helper.py
 
 Teffs = {
     'phoenix': [2300, 15000],
@@ -171,17 +172,10 @@ def hierarchical_clustering(
         scaler      = StandardScaler()
         data_scaled = scaler.fit_transform(data).astype(np.float32)
 
-        # ── 2. Scipy pdist with chunked tqdm progress ─────────────────────────
-        # scipy's pdist is a single C call so we can't track it mid-flight.
-        # Instead we split the row indices into chunks and call pdist on each
-        # block-row, accumulating the condensed vector ourselves.  This gives
-        # a meaningful progress bar while keeping all the speed of scipy.
-
+        # ── 2. Scipy cdist in row-chunks with tqdm progress ───────────────────
         n_pairs  = N * (N - 1) // 2
         dist_vec = np.empty(n_pairs, dtype=np.float32)
-        
-        # Choose a chunk size that gives ~50 bar updates regardless of N
-        CHUNK = max(1, N // 50)
+        CHUNK    = max(1, N // 50)
 
         cdist_kwargs = {}
         if clustering_metric == 'mahalanobis':
@@ -260,7 +254,34 @@ def hierarchical_clustering(
         for cl in unique_cl:
             print(f'    Cluster {cl}: {np.sum(labels == cl):6d} profiles')
 
-        # ── Colour palette ─────────────────────────────
+        # ── 6. Reassign singleton clusters ────────────────────────────────────
+        unique_cl         = np.unique(labels)
+        singleton_cls     = [cl for cl in unique_cl if np.sum(labels == cl) == 1]
+        non_singleton_cls = [cl for cl in unique_cl if np.sum(labels == cl) > 1]
+
+        if len(singleton_cls) > 0 and len(non_singleton_cls) > 0:
+            print(f'  [{label}] Reassigning {len(singleton_cls)} singleton cluster(s)')
+
+            centroids = np.array([
+                data_scaled[labels == cl].mean(axis=0)
+                for cl in non_singleton_cls
+            ])
+
+            for scl in singleton_cls:
+                idx_singleton = np.where(labels == scl)[0][0]
+                point  = data_scaled[idx_singleton:idx_singleton + 1]
+                dists  = cdist(point, centroids, metric='euclidean')[0]
+                nearest = non_singleton_cls[np.argmin(dists)]
+                print(f'    Singleton cluster {scl} (idx={idx_singleton}) '
+                      f'→ cluster {nearest}')
+                labels[idx_singleton] = nearest
+
+            unique_cl = np.unique(labels)
+            n_cls     = len(unique_cl)
+            print(f'  [{label}] After reassignment: {n_cls} clusters')
+            for cl in unique_cl:
+                print(f'    Cluster {cl}: {np.sum(labels == cl):6d} profiles')
+
         cls_colors = plt.cm.tab10(np.linspace(0, 1, min(n_cls, 10)))
         if n_cls > 10:
             cls_colors = plt.cm.hsv(np.linspace(0, 0.9, n_cls))
@@ -376,6 +397,16 @@ def residual_fn(params, x, base_prof):
     return fourNLLD(x, [params[f'c{ic+1}'].value for ic in range(4)]) - base_prof
 
 
+def rs_to_mu(rs, p):
+    """
+    Convert r/R_star values to mu = cos(theta), masking to r <= 1-p.
+    Returns (mask, mu_values) where mu is clipped to [0, 1] for r > 1.
+    """
+    mask = rs <= (1.0 - float(p))
+    mu   = np.sqrt(np.clip(1.0 - rs[mask] ** 2, 0.0, None))
+    return mask, mu
+
+
 ################################
 ########## Code block ##########
 ################################
@@ -411,17 +442,21 @@ for model in models:
     # ── 0. Identify the target indices ───────────────────────────────────────
     target_ib = int(np.argmin(np.abs(np.array(bs) - target_b_val)))
     target_ip = int(np.argmin(np.abs(np.array(ps) - target_p_val)))
+    target_p  = float(ps[target_ip])   # actual p value used in the grid
 
     print(f'  Target b = {target_b_val}  →  ib = {target_ib}  '
           f'(actual b = {float(bs[target_ib]):.4f})')
     print(f'  Target p = {target_p_val}  →  ip = {target_ip}  '
-          f'(actual p = {float(ps[target_ip]):.6f})')
+          f'(actual p = {target_p:.6f})')
 
     bp_save_path = os.path.join(save_data_path, 'b0_p0.1_analysis/')
     if not os.path.exists(bp_save_path):
         os.makedirs(bp_save_path)
 
     # ── 1. Collect every valid intensity profile for this (b, p) pair ────────
+    # bp_rs stores r/R_star values (NOT reversed, NOT converted to mu here).
+    # The rs_to_mu() helper is called at each use site so that the mask
+    # r <= 1 - p is applied consistently everywhere.
     print('  Collecting profiles …')
 
     T_vals_bp   = np.linspace(Teffs[model][0],       Teffs[model][1],       N_star)
@@ -430,7 +465,7 @@ for model in models:
     wavs_ref_bp = np.array(gen_dict['stellar_wavelengths'][model][0, 0, 0])
 
     bp_profiles_list = []
-    bp_xs_list       = []
+    bp_rs_list       = []   # r/R_star values, shape (N_chords,) per profile
     bp_meta_list     = []   # columns: [i_Teff, j_logg, k_met, iw]
 
     for i in range(N_star):
@@ -453,8 +488,8 @@ for model in models:
 
                 rps_row = np.array(
                     gen_dict['local_rps'][model][i, j, k, target_ib, target_ip]
-                )[::-1]
-                bp_xs_list.append(np.tile(rps_row, (n_valid_ijk, 1)))
+                )  # shape (N_chords,) — do NOT reverse here
+                bp_rs_list.append(np.tile(rps_row, (n_valid_ijk, 1)))
 
                 wav_idx    = np.where(mask_ijk)[0].astype(np.int32)
                 meta_block = np.column_stack([
@@ -466,7 +501,7 @@ for model in models:
                 bp_meta_list.append(meta_block)
 
     bp_profiles = np.vstack(bp_profiles_list).astype(np.float64)
-    bp_xs       = np.vstack(bp_xs_list).astype(np.float64)
+    bp_rs       = np.vstack(bp_rs_list).astype(np.float64)
     bp_meta     = np.vstack(bp_meta_list)
     N_bp        = bp_profiles.shape[0]
 
@@ -492,7 +527,7 @@ for model in models:
         idx_bp = np.arange(N_bp)
 
     bp_profiles = bp_profiles[idx_bp]
-    bp_xs       = bp_xs[idx_bp]
+    bp_rs       = bp_rs[idx_bp]
     bp_meta     = bp_meta[idx_bp]
     bp_Teff     = bp_Teff[idx_bp]
     bp_logg     = bp_logg[idx_bp]
@@ -500,7 +535,19 @@ for model in models:
     bp_wav      = bp_wav[idx_bp]
     N_bp        = len(idx_bp)
 
-    # ── 2. PCA ───────────────────────────────────────────────────────────────
+    # ── Pre-compute mu arrays for every profile (applying r <= 1-p mask) ─────
+    # bp_mus[i] and bp_profs_masked[i] are 1-D arrays of varying length
+    # because the mask r <= 1-p can cut a different number of chord points
+    # per profile (all identical here since p is fixed, but kept general).
+    bp_mus          = []
+    bp_profs_masked = []
+    for idx in range(N_bp):
+        mask_i, mu_i = rs_to_mu(bp_rs[idx], target_p)
+        bp_mus.append(mu_i)
+        bp_profs_masked.append(bp_profiles[idx][mask_i])
+
+    # ── 2. PCA — fit on the full N_chords vectors (before masking) ───────────
+    # PCA is performed on the full chord to preserve consistent dimensionality.
     print(f'  Running PCA ({n_components} components) on {N_bp} profiles …')
     pca_bp    = PCA(n_components=n_components)
     bp_scores = pca_bp.fit_transform(bp_profiles)
@@ -512,6 +559,7 @@ for model in models:
     print(f'    Total variance captured   : {bp_evr.sum()*100:.2f}%')
 
     # ── 2a. PCA summary figure ───────────────────────────────────────────────
+    # Eigen profiles are plotted against mu using the r<=1-p mask on bp_rs[0]
     ncols_pca_bp = 2 + n_components
     fig_pca_bp, ax_pca_bp = plt.subplots(1, ncols_pca_bp, figsize=(4 * ncols_pca_bp, 4))
 
@@ -529,13 +577,14 @@ for model in models:
     ax_pca_bp[1].legend(fontsize=7)
     ax_pca_bp[1].grid(True, alpha=0.3)
 
-    x_ref_bp = bp_xs[0]
+    # Use profile 0's mu grid as the reference x-axis for eigen profiles
+    mask_ref, mu_ref = rs_to_mu(bp_rs[0], target_p)
     for ic in range(n_components):
         ax = ax_pca_bp[2 + ic]
-        ax.plot(x_ref_bp, bp_eigen[ic], color=colors[ic], linewidth=1.5)
+        ax.plot(mu_ref, bp_eigen[ic][mask_ref], color=colors[ic], linewidth=1.5)
         ax.axhline(0, color='k', linestyle='--', alpha=0.3)
         ax.set_title(f'PC{ic+1}  ({bp_evr[ic]*100:.1f} %)')
-        ax.set_xlabel(r'$r / R_\star$')
+        ax.set_xlabel(r'$\mu = \cos(\theta)$')
         ax.set_ylabel('Component value')
         ax.grid(True, alpha=0.3)
 
@@ -651,13 +700,14 @@ for model in models:
     print('    Saved PCA corner scatter')
 
     # ── 4. Fit every profile with 4th-order NLLD ─────────────────────────────
+    # Each fit uses the profile values masked to r <= 1-p, with mu = sqrt(clip(1-r^2))
     print(f'  Fitting {N_bp} profiles with 4th-order NLLD …')
 
     bp_coeffs = np.zeros((N_bp, 4), dtype=np.float64)
 
     for idx_fit in tqdm(range(N_bp), desc='  NLLD fits'):
-        mus_fit  = bp_xs[idx_fit]
-        prof_fit = bp_profiles[idx_fit]
+        mu_fit   = bp_mus[idx_fit]           # already masked to r <= 1-p
+        prof_fit = bp_profs_masked[idx_fit]  # matching profile values
 
         if np.all(np.abs(prof_fit) < 1e-10):
             bp_coeffs[idx_fit] = np.nan
@@ -667,7 +717,7 @@ for model in models:
         for ipc in range(4):
             params_fit.add(f'c{ipc+1}', value=np.random.uniform(0, 1))
         try:
-            res_fit = minimize(residual_fn, params_fit, args=(mus_fit, prof_fit))
+            res_fit = minimize(residual_fn, params_fit, args=(mu_fit, prof_fit))
             bp_coeffs[idx_fit] = [res_fit.params[f'c{ic+1}'].value for ic in range(4)]
         except Exception:
             bp_coeffs[idx_fit] = np.nan
@@ -707,22 +757,23 @@ for model in models:
         fontsize=13)
 
     for isp, (sp_label, sp_idx, sp_color) in enumerate(special_bp):
-        mus_sp  = bp_xs[sp_idx]
-        prof_sp = bp_profiles[sp_idx]
+        mu_sp   = bp_mus[sp_idx]            # masked mu values
+        prof_sp = bp_profs_masked[sp_idx]   # matching masked profile
         c_sp    = bp_coeffs[sp_idx]
-        fit_sp  = fourNLLD(mus_sp, c_sp)
+        fit_sp  = fourNLLD(mu_sp, c_sp)
 
         ax_l = axes_prof_bp[isp, 0]
         ax_r = axes_prof_bp[isp, 1]
 
+        # Background: draw a subsample of all profiles (also masked)
         step_bg = max(1, N_bp // 300)
         for ibg in range(0, N_bp, step_bg):
-            ax_l.plot(bp_xs[ibg], bp_profiles[ibg],
+            ax_l.plot(bp_mus[ibg], bp_profs_masked[ibg],
                       alpha=0.1, color='gray', linewidth=0.3)
 
-        ax_l.plot(mus_sp, prof_sp, 'o', color=sp_color, markersize=3,
+        ax_l.plot(mu_sp, prof_sp, 'o', color=sp_color, markersize=3,
                   alpha=0.7, label=f'{sp_label} profile')
-        ax_l.plot(mus_sp, fit_sp, '--', color='black', linewidth=2,
+        ax_l.plot(mu_sp, fit_sp, '--', color='black', linewidth=2,
                   label='4th-order NLLD')
         ax_l.set_ylabel('Norm. Intensity')
         ax_l.set_title(
@@ -737,7 +788,7 @@ for model in models:
             ax_l.set_xlabel(r'$\mu = \cos(\theta)$')
 
         safe_sp = np.where(np.abs(prof_sp) < 1e-10, np.nan, prof_sp)
-        ax_r.plot(mus_sp, 100 * (prof_sp - fit_sp) / safe_sp,
+        ax_r.plot(mu_sp, 100 * (prof_sp - fit_sp) / safe_sp,
                   '--', color=sp_color, linewidth=1.5)
         ax_r.axhline(0, color='k', linestyle='--', alpha=0.5)
         ax_r.set_ylabel('Rel. diff. (%)')
@@ -752,7 +803,7 @@ for model in models:
             params_sp = Parameters()
             for ipc in range(4):
                 params_sp.add(f'c{ipc+1}', value=c_sp[ipc])
-            res_sp    = minimize(residual_fn, params_sp, args=(mus_sp, prof_sp))
+            res_sp    = minimize(residual_fn, params_sp, args=(mu_sp, prof_sp))
             redchi_sp = res_sp.redchi
         except Exception:
             pass
@@ -787,16 +838,16 @@ for model in models:
         fontsize=13)
 
     for ci, cl in enumerate(bp_unique_cl):
-        mask_cl   = bp_cl_0idx == cl
-        members   = bp_scores[mask_cl]
-        centroid  = members.mean(axis=0)
-        dists_cl  = np.linalg.norm(members - centroid, axis=1)
-        rep_idx   = int(np.where(mask_cl)[0][np.argmin(dists_cl)])
+        mask_cl  = bp_cl_0idx == cl
+        members  = bp_scores[mask_cl]
+        centroid = members.mean(axis=0)
+        dists_cl = np.linalg.norm(members - centroid, axis=1)
+        rep_idx  = int(np.where(mask_cl)[0][np.argmin(dists_cl)])
 
-        mus_rep  = bp_xs[rep_idx]
-        prof_rep = bp_profiles[rep_idx]
+        mu_rep   = bp_mus[rep_idx]
+        prof_rep = bp_profs_masked[rep_idx]
         c_rep    = bp_coeffs[rep_idx]
-        fit_rep  = fourNLLD(mus_rep, c_rep)
+        fit_rep  = fourNLLD(mu_rep, c_rep)
 
         ax_l = axes_cl_bp[ci, 0]
         ax_r = axes_cl_bp[ci, 1]
@@ -804,13 +855,13 @@ for model in models:
         cl_indices = np.where(mask_cl)[0]
         step_cl    = max(1, len(cl_indices) // 200)
         for ii in cl_indices[::step_cl]:
-            ax_l.plot(bp_xs[ii], bp_profiles[ii],
+            ax_l.plot(bp_mus[ii], bp_profs_masked[ii],
                       alpha=0.15, color=bp_cluster_colors[ci], linewidth=0.3)
 
-        ax_l.plot(mus_rep, prof_rep, 'o',
+        ax_l.plot(mu_rep, prof_rep, 'o',
                   color=bp_cluster_colors[ci], markersize=3, alpha=0.8,
                   label=f'Cluster {cl} representative')
-        ax_l.plot(mus_rep, fit_rep, '--', color='black', linewidth=2,
+        ax_l.plot(mu_rep, fit_rep, '--', color='black', linewidth=2,
                   label='4th-order NLLD')
         ax_l.set_ylabel('Norm. Intensity')
         ax_l.set_title(
@@ -825,7 +876,7 @@ for model in models:
             ax_l.set_xlabel(r'$\mu = \cos(\theta)$')
 
         safe_rep = np.where(np.abs(prof_rep) < 1e-10, np.nan, prof_rep)
-        ax_r.plot(mus_rep, 100 * (prof_rep - fit_rep) / safe_rep,
+        ax_r.plot(mu_rep, 100 * (prof_rep - fit_rep) / safe_rep,
                   '--', color=bp_cluster_colors[ci], linewidth=1.5)
         ax_r.axhline(0, color='k', linestyle='--', alpha=0.5)
         ax_r.set_ylabel('Rel. diff. (%)')
@@ -1133,22 +1184,26 @@ for model in models:
         f'p={target_p_val}  ({model})',
         fontsize=13)
 
-    original_bp = bp_profiles[bp_typical_idx]
-    x_orig_bp   = bp_xs[bp_typical_idx]
+    # Reconstruction operates on the full N_chords vector; masking applied for display
+    original_bp_full = bp_profiles[bp_typical_idx]
+    mask_typical, mu_typical    = rs_to_mu(bp_rs[bp_typical_idx], target_p)   # for x-axis
 
     for ri, nc in enumerate(n_comp_check):
         pca_temp_bp = PCA(n_components=nc)
         pca_temp_bp.fit(bp_profiles)
-        recon_bp = pca_temp_bp.inverse_transform(
-            pca_temp_bp.transform(original_bp.reshape(1, -1)))[0]
-        resid_bp = original_bp - recon_bp
-        rmse_bp  = np.sqrt(np.mean(resid_bp ** 2))
+        recon_bp_full = pca_temp_bp.inverse_transform(
+            pca_temp_bp.transform(original_bp_full.reshape(1, -1)))[0]
+
+        original_bp = original_bp_full[mask_typical]
+        recon_bp    = recon_bp_full[mask_typical]
+        resid_bp    = original_bp - recon_bp
+        rmse_bp     = np.sqrt(np.mean(resid_bp ** 2))
 
         ax_t = axes_recon_bp[ri, 0]
         ax_b = axes_recon_bp[ri, 1]
 
-        ax_t.plot(x_orig_bp, original_bp,  color='teal', linewidth=2, label='Original')
-        ax_t.plot(x_orig_bp, recon_bp, color='teal', linewidth=1.2,
+        ax_t.plot(mu_typical, original_bp,  color='teal', linewidth=2, label='Original')
+        ax_t.plot(mu_typical, recon_bp, color='teal', linewidth=1.2,
                   linestyle='--', label='Reconstructed')
         ax_t.set_title(f'{nc} PC   RMSE = {rmse_bp:.6f}', fontsize=9)
         ax_t.set_ylabel('Norm. Intensity')
@@ -1156,13 +1211,13 @@ for model in models:
         ax_t.grid(True, alpha=0.3)
 
         safe_bp = np.where(np.abs(original_bp) < 1e-10, np.nan, original_bp)
-        ax_b.plot(x_orig_bp, 100 * resid_bp / safe_bp, color='teal', linewidth=1.0)
+        ax_b.plot(mu_typical, 100 * resid_bp / safe_bp, color='teal', linewidth=1.0)
         ax_b.axhline(0, color='k', linestyle='--', alpha=0.5)
         ax_b.set_ylabel('Rel. diff. (%)')
         ax_b.grid(True, alpha=0.3)
         if ri == len(n_comp_check) - 1:
-            ax_t.set_xlabel(r'$r / R_\star$')
-            ax_b.set_xlabel(r'$r / R_\star$')
+            ax_t.set_xlabel(r'$\mu = \cos(\theta)$')
+            ax_b.set_xlabel(r'$\mu = \cos(\theta)$')
 
     fig_recon_bp.tight_layout()
     fig_recon_bp.savefig(bp_save_path + f'ReconQuality_b0_p0.1_{model}.png',
@@ -1205,6 +1260,7 @@ for model in models:
         'model'             : model,
         'target_b'          : target_b_val,
         'target_p'          : target_p_val,
+        'actual_p'          : target_p,
         'ib'                : target_ib,
         'ip'                : target_ip,
         'N_profiles'        : N_bp,
@@ -1213,8 +1269,10 @@ for model in models:
         'pca_object'        : pca_bp,
         'pca_scores'        : bp_scores,
         'pca_eigen'         : bp_eigen,
-        'profiles'          : bp_profiles,
-        'xs'                : bp_xs,
+        'profiles'          : bp_profiles,        # full N_chords vectors
+        'rs'                : bp_rs,              # r/R_star values (N_bp, N_chords)
+        'mus'               : bp_mus,             # list of masked mu arrays
+        'profs_masked'      : bp_profs_masked,    # list of masked profile arrays
         'coeffs'            : bp_coeffs,
         'valid_fit_mask'    : valid_fit,
         'cluster_labels'    : bp_cl_0idx,
@@ -1283,10 +1341,11 @@ for model in models:
     print(f'  Saved special coefficients → {txt_path}')
 
     # ── Clean up ──────────────────────────────────────────────────────────────
-    del (bp_profiles_list, bp_xs_list, bp_meta_list,
-         bp_profiles, bp_xs, bp_meta, bp_scores, bp_coeffs,
+    del (bp_profiles_list, bp_rs_list, bp_meta_list,
+         bp_profiles, bp_rs, bp_meta, bp_scores, bp_coeffs,
          bp_coeffs_valid, bp_cl_valid, bp_wav_valid,
-         bp_Teff_valid, bp_logg_valid, bp_met_valid)
+         bp_Teff_valid, bp_logg_valid, bp_met_valid,
+         bp_mus, bp_profs_masked)
     gc.collect()
 
     print('\n' + '=' * 80)
