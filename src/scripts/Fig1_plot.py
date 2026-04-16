@@ -93,7 +93,7 @@ num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2)
                         (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
 
 #%% Location of MCMC results and where plot will be output
-raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/New/'
+raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig1_Storage/'
 
 #%% Model parameters
 mod_prop = {
@@ -645,7 +645,10 @@ if __name__ == '__main__':
     #####################
     #### Optimization ###
     #####################
-    model_scatters = jnp.logspace(-2, 5, 15).tolist() + [16.0, 27.0, 46.0, 77.0, 129.0, 215.0, 359.0, 599.0]
+    model_scatters = [0.01, 0.03162277660168379, 0.09999999999999995, 0.31622776601683783,\
+                      0.9999999999999994, 3.162277660168377, 9.999999999999995,\
+                      99.9999999999999, 999.999999999998, 3162.2776601683763,
+                      9999.99999999998, 31622.77660168373, 100000.0] + [16.0, 27.0, 46.0, 77.0, 129.0, 215.0, 359.0, 599.0]
     seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
     PLD_orders = [2, 3, 4]
 
@@ -781,7 +784,7 @@ if __name__ == '__main__':
     t_plot_start = time.time()
 
     PLD_order = 3
-    model_scatter = 316.2279357910156
+    model_scatter = 359.0
     seed = 100
     #Setting base LDCs
     init_PLD_coeffs = [0.1, 0.2, 0.4]
@@ -865,10 +868,13 @@ if __name__ == '__main__':
         )
 
     # --- Fit asymptotes automatically for each PLD order ---
-    asymp_amp_factor = np.zeros(len(PLD_orders), dtype=float)
+    asymp_amp_factor_left = np.zeros(len(PLD_orders), dtype=float)
+    asymp_amp_factor_right = np.zeros(len(PLD_orders), dtype=float)
     asymp_bias = np.zeros(len(PLD_orders), dtype=float)
+    # Define the scatter thresholds to split the data sets for the two fits
+    scatter_splits = [2, 2, 2]
 
-    for ipld, PLD_order in enumerate(PLD_orders):
+    for ipld, (PLD_order, scatter_split) in enumerate(zip(PLD_orders, scatter_splits)):
 
         # Collect per-scatter medians
         scatter_vals = []
@@ -883,8 +889,14 @@ if __name__ == '__main__':
         scatter_vals = np.array(scatter_vals)
         median_amps  = np.array(median_amps)
 
-        log_scatter = np.log10(scatter_vals)
-        log_amps    = np.log10(median_amps)
+        #Left side of the break : define a constant from the median
+        left_mask = (scatter_vals < scatter_split)
+        asymp_amp_factor_left[ipld] = np.median(median_amps[left_mask])
+
+        #Right side of the break : fit a piecewise log linear function
+        right_mask = (scatter_vals > scatter_split)
+        log_scatter = np.log10(scatter_vals)[right_mask]
+        log_amps    = np.log10(median_amps)[right_mask]
 
         # Initial guesses:
         #   - break near the middle of the scatter range
@@ -903,14 +915,14 @@ if __name__ == '__main__':
                 p0=p0, bounds=bounds, maxfev=10000
             )
             _, _, log_A_asym = popt
-            asymp_amp_factor[ipld] = 10**log_A_asym
+            asymp_amp_factor_right[ipld] = 10**log_A_asym
 
-            print(f"PLD{PLD_order}: A_asym = {asymp_amp_factor[ipld]:.3f}")
+            print(f"PLD{PLD_order}: A_asym_left = {asymp_amp_factor_left[ipld]:.3f}, A_asym_right = {asymp_amp_factor_right[ipld]:.3f}")
 
         except RuntimeError as e:
             print(f"  WARNING — fit failed for PLD{PLD_order}: {e}. Using low-scatter fallback.")
             n_low = max(1, len(scatter_vals) // 3)
-            asymp_amp_factor[ipld] = np.median(median_amps[:n_low])
+            asymp_amp_factor_right[ipld] = np.median(median_amps[:n_low])
 
     #Loop over LD models
     for ipld, (PLD_order, fit_color) in enumerate(zip(PLD_orders, fit_colors)):
@@ -975,7 +987,8 @@ if __name__ == '__main__':
     ax_right.text(0.4, np.sqrt(3) - 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
     ax_right.text(200, 50, 'Transition region', fontsize=12, color='black')
     ax_right.text(9000, 50, 'Noise limited', fontsize=12, color='black')
-    ax_right.text(0.13, 50, 'Model (i.e. degeneracy) limited', fontsize=12, color='black')
+    ax_right.text(5.5, 50, 'Model limited', fontsize=12, color='black')
+    ax_right.text(0.03, 50, 'Sampler limited', fontsize=12, color='black')
 
     # Add arrows from "Transition Region" to the other two regions
     ax_right.annotate("",
@@ -984,35 +997,110 @@ if __name__ == '__main__':
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
     ax_right.annotate("",
-                xy=(10, 52), xycoords="data",   # Degeneracy Limited
+                xy=(40, 52), xycoords="data",   # Model Limited
                 xytext=(180, 52), textcoords="data",  # Transition Region
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
+    ax_right.annotate("",
+                xy=(0.3, 52), xycoords="data",   # Sampler Limited
+                xytext=(4, 52), textcoords="data",  # Model Limited
+                arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
+    
+    transition_buffers = [0.3, 0.6, 0.6]
     # --- Asymptote lines with fading into transition region ---
-    for idx, (y_asym, x_fade_min, x_fade_max, asym_color, text_loc) in enumerate(zip(asymp_amp_factor, [10, 1, 0.5], [10000, 1000, 100], fit_colors, [2., 0.13, 0.13])):
+    for idx, (y_asym_left, y_asym_right, x_fade_min, x_fade_max, asym_color, text_loc, transition_buffer) in enumerate(zip(asymp_amp_factor_left, asymp_amp_factor_right, [10, 1, 0.5], [10000, 1000, 100], fit_colors, [5., 4., 2.], transition_buffers)):
+
+        log_split = np.log10(scatter_splits[idx])
 
         # log-spaced x for the line
         x_line = np.logspace(np.log10(0.008), np.log10(x_fade_max), 500)
-        y_line = np.full_like(x_line, y_asym)
 
         # Compute alpha: 1 (solid) on left, fade to 0 in transition region
         alphas = np.ones_like(x_line)
         fade_mask = (x_line >= x_fade_min) & (x_line <= x_fade_max)
         fade_x = x_line[fade_mask]
         if fade_x.size > 0:
-            # Smooth fade: Gaussian or linear
             fade_profile = np.linspace(1, 0, fade_x.size)
             alphas[fade_mask] = fade_profile
 
-        # Build line segments with alpha fading
-        points = np.array([x_line, y_line]).T.reshape(-1, 1, 2)
+        # --- Upper edge: interpolates from y_asym_right → y_asym_left (in log space) ---
+        log_y_bottom = np.log10(y_asym_right)
+        log_y_top_max = np.log10(y_asym_left)
+
+        # Width factor: 0 to the right of split, ramps to 1 to the left
+        width_factor = np.clip(
+            (log_split - np.log10(x_line)) / transition_buffer, 0.0, 1.0
+        )
+
+        # Upper edge grows upward only; bottom edge stays fixed at y_asym_right
+        log_y_upper = log_y_bottom + width_factor * (log_y_top_max - log_y_bottom)
+        y_upper = 10 ** log_y_upper
+        y_lower = np.full_like(x_line, y_asym_right)
+
+        # Build per-segment fill_between patches
+        # - Right of split: horizontal alpha fading (as before)
+        # - Left of split: vertical alpha fading (bottom opaque, top transparent)
+        base_color = mcolors.to_rgba(asym_color)
+        n_segs = len(x_line) - 1
+
+        for i in range(n_segs):
+            x_seg = x_line[i:i+2]
+            y_seg_lower = y_lower[i:i+2]
+            y_seg_upper = y_upper[i:i+2]
+
+            if np.log10(x_line[i]) < log_split:
+                # --- Vertical fading: stack thin horizontal slices ---
+                n_slices = 30
+                log_y_bot = np.log10(y_seg_lower[0])
+                log_y_top = np.log10(y_seg_upper[0])
+                if log_y_top <= log_y_bot:
+                    continue
+                log_y_edges = np.linspace(log_y_bot, log_y_top, n_slices + 1)
+                y_edges = 10 ** log_y_edges
+
+                for j in range(n_slices):
+                    # 0 at bottom (y_asym_right), 1 at top (y_asym_left)
+                    t = j / n_slices
+                    slice_alpha = (1.0 - t) * base_color[3]
+                    ax_right.fill_between(
+                        x_seg,
+                        [y_edges[j], y_edges[j]],
+                        [y_edges[j+1], y_edges[j+1]],
+                        color=(base_color[0], base_color[1], base_color[2], slice_alpha),
+                        linewidth=0,
+                        zorder=1
+                    )
+            else:
+                # --- Horizontal fading (right of split): as before ---
+                a = alphas[i]
+                if a < 0.01:
+                    continue
+                ax_right.fill_between(
+                    x_seg,
+                    y_seg_lower,
+                    y_seg_upper,
+                    color=(base_color[0], base_color[1], base_color[2], a),
+                    linewidth=0,
+                    zorder=1
+                )
+
+        # Draw a thin solid baseline at y_asym_right with alpha fading
+        points = np.array([x_line, y_lower]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        base_color = mcolors.to_rgba(asym_color)  # convert to RGBA
-        lc = LineCollection(segments, colors=[(base_color[0], base_color[1], base_color[2], a) for a in alphas[:-1]], linewidths=2, zorder=1)
+        lc = LineCollection(
+            segments,
+            colors=[(base_color[0], base_color[1], base_color[2], a) for a in alphas[:-1]],
+            linewidths=2.0,
+            zorder=2
+        )
         ax_right.add_collection(lc)
 
-        if idx==0:ax_right.text(text_loc, y_asym + (y_asym/6), f'asymptote @ A = {y_asym:.0f}', fontsize=12, color=asym_color)
-        else:ax_right.text(text_loc, y_asym - (y_asym/5), f'asymptote @ A = {y_asym:.0f}', fontsize=12, color=asym_color)
+        if idx == 0:
+            ax_right.text(text_loc, y_asym_right + (y_asym_right/6), f'asymptote @ A = {y_asym_right:.0f}', fontsize=12, color=asym_color)
+        elif idx == 1:
+            ax_right.text(text_loc, y_asym_right - (y_asym_right/5), f'asymptote @ A = {y_asym_right:.0f}', fontsize=12, color=asym_color)
+        else:
+            ax_right.text(text_loc, y_asym_right + (y_asym_right/5), f'asymptote @ A = {y_asym_right:.0f}', fontsize=12, color=asym_color)
     print(f"\nPlotting complete in {time.time() - t_plot_start:.2f} seconds")
 
     plt.savefig(raw_save_dir+'Fig1_opt.png')
