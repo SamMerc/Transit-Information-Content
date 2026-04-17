@@ -104,8 +104,6 @@ colors = cmap(np.linspace(0, 1, n_components))
 wav_region = [6000, 53000]  # 0.6 – 5.3 micron
 
 intr_prof_mode = 'build'  # 'build' or 'load'
-PCA_mode       = 'build'  # 'build' or 'load'
-All_Corner     = 'build'  # 'build' or 'load'
 
 # ── Profile subsampling ───────────────────────────────────────────────────────
 # If True, randomly draw n_subsample_profiles from the valid profiles before
@@ -497,583 +495,172 @@ for model in models:
     else:
         raise ValueError('intr_prof_mode not recognized.')
 
-    # ── PCA analysis ──────────────────────────────────────────────────────────
-    outlier_profiles = []
-    outlier_mus      = []
-
-    if PCA_mode == 'build':
-
-        print('MASKING')
-
-        # ── Count valid profiles per wavelength bin ───────────────────────────
-        n_wav_bins      = 10
-        wavs_ref        = np.array(gen_dict['stellar_wavelengths'][model][0, 0, 0])
-        wav_bin_slices  = np.array_split(np.arange(len(wavs_ref)), n_wav_bins)
-        wav_bin_labels  = [f'{wavs_ref[s[0]]/1e4:.2f}-{wavs_ref[s[-1]]/1e4:.2f} μm'
-                           for s in wav_bin_slices]
-
-        n_valid_per_wav = np.zeros(n_wav_bins, dtype=int)
-        n_considered    = 0
-        n_valid         = 0
-
-        # Each entry: profile (n_wav, n_mu_fine), normalized at mu=1 (centre).
-        # A profile/wavelength slice is valid when the intensity is monotonically
-        # non-increasing from centre to limb (no upward steps).
-        for i in range(N_star):
-            for j in range(N_star):
-                for k in range(N_star):
-                    prof = gen_dict['global_intensity_profiles'][model][i, j, k]  # (n_wav, n_mu_fine)
-                    # Normalise each wavelength slice to its centre value
-                    center_vals = prof[:, 0:1]  # (n_wav, 1)  — mu=1 is the first column
-                    safe_center = np.where(np.abs(center_vals) < 1e-10, 1.0, center_vals)
-                    norm_prof   = prof / safe_center  # (n_wav, n_mu_fine)
-
-                    # Valid = monotonically non-increasing (no positive differences)
-                    mask = ~np.any(np.diff(norm_prof, axis=1) > 0.0, axis=1)  # (n_wav,)
-
-                    n_considered += mask.size
-                    n_valid      += int(np.sum(mask))
-                    for iw_bin, idx in enumerate(wav_bin_slices):
-                        n_valid_per_wav[iw_bin] += int(np.sum(mask[idx]))
-
-        print(f"=== Profile filtering summary ===")
-        print(f"Total profiles considered : {n_considered}")
-        print(f"Total valid               : {n_valid} ({100 * n_valid / n_considered:.1f} %)")
-        print(f"Per wavelength region:")
-        n_total_per_wav = np.array([len(s) * N_star**3 for s in wav_bin_slices])
-        for iw_bin in range(n_wav_bins):
-            print(f"  {wav_bin_labels[iw_bin]} : "
-                  f"{n_valid_per_wav[iw_bin]}/{n_total_per_wav[iw_bin]} valid "
-                  f"({100 * n_valid_per_wav[iw_bin] / n_total_per_wav[iw_bin]:.1f} %)")
-
-        # ── Pass 2 — pre-allocate and fill profile matrix ─────────────────────
-        # Metadata columns: [i_Teff, j_logg, k_met, i_wav]
-        pca_int_profile = np.empty((n_valid, n_mu_fine), dtype=np.float32)
-        mus_array       = np.empty((n_valid, n_mu_fine), dtype=np.float32)
-        meta_array      = np.empty((n_valid, 4),         dtype=np.int32)
-        ptr             = 0
-
-        for i in range(N_star):
-            for j in range(N_star):
-                for k in range(N_star):
-                    prof = gen_dict['global_intensity_profiles'][model][i, j, k]  # (n_wav, n_mu_fine)
-                    mus  = gen_dict['global_mus'][model][i, j, k]                 # (n_mu_fine,)
-
-                    center_vals = prof[:, 0:1]
-                    safe_center = np.where(np.abs(center_vals) < 1e-10, 1.0, center_vals)
-                    norm_prof   = prof / safe_center
-
-                    mask = ~np.any(np.diff(norm_prof, axis=1) > 0.0, axis=1)  # (n_wav,)
-                    n_ok = int(np.sum(mask))
-                    if n_ok == 0:
-                        continue
-
-                    iw_indices  = np.where(mask)[0]
-                    pca_int_profile[ptr:ptr + n_ok] = norm_prof[mask].astype(np.float32)
-                    mus_array[ptr:ptr + n_ok]       = np.broadcast_to(mus, (n_ok, n_mu_fine)).astype(np.float32)
-
-                    meta_block = np.column_stack([
-                        np.full(n_ok, i,  dtype=np.int32),
-                        np.full(n_ok, j,  dtype=np.int32),
-                        np.full(n_ok, k,  dtype=np.int32),
-                        iw_indices.astype(np.int32),
-                    ])
-                    meta_array[ptr:ptr + n_ok] = meta_block
-                    ptr += n_ok
-
-        assert ptr == n_valid, f'Pointer mismatch: {ptr} vs {n_valid}'
-
-        # ── Optional subsampling ──────────────────────────────────────────────
-        if subsample_profiles:
-            rng    = np.random.default_rng(subsample_seed)
-            n_draw = min(n_subsample_profiles, n_valid)
-            if n_draw < n_valid:
-                idx = np.sort(rng.choice(n_valid, size=n_draw, replace=False))
-                print(f'\nSUBSAMPLING: {n_valid} → {n_draw} profiles (seed={subsample_seed})')
-            else:
-                idx = np.arange(n_valid)
-                print(f'\nSUBSAMPLING: {n_valid} profiles (fewer than '
-                      f'{n_subsample_profiles}, keeping all)')
-            pca_int_profile = pca_int_profile[idx]
-            mus_array       = mus_array[idx]
-            meta_array      = meta_array[idx]
-            n_valid         = n_draw
-
-        # ── Residual plots coloured by parameter ──────────────────────────────
-        print('RESIDUAL PLOTTING')
-        med   = np.median(pca_int_profile, axis=0)
-        resid = pca_int_profile - med
-
-        wav_bin_of_profile = np.empty(len(meta_array), dtype=np.int32)
-        for iw_bin, idx_slice in enumerate(wav_bin_slices):
-            in_bin = np.isin(meta_array[:, 3], idx_slice)
-            wav_bin_of_profile[in_bin] = iw_bin
-
-        color_sources = {
-            '$T_{eff}$ (K)':     T_vals_arr[meta_array[:, 0]],
-            '$\\log g$':         g_vals_arr[meta_array[:, 1]],
-            'Metallicity [M/H]': m_vals_arr[meta_array[:, 2]],
-            'Wavelength bin':    wav_bin_of_profile.astype(float),
-        }
-
-        step    = max(1, len(resid) // 20000)
-        fig_g, axes_g = plt.subplots(1, 4, figsize=(24, 5), sharex=True, sharey=True)
-        fig_g.suptitle(f'Global intensity profile residuals coloured by parameter',
-                       fontsize=12)
-
-        for ax, (clabel, cvals) in zip(axes_g, color_sources.items()):
-            cmap_g = cm.get_cmap('coolwarm')
-            norm_g = mcolors.Normalize(vmin=np.min(cvals), vmax=np.max(cvals))
-            for idx in range(0, len(resid), step):
-                ax.plot(mus_array[idx], resid[idx],
-                        alpha=0.15, linewidth=0.4,
-                        color=cmap_g(norm_g(cvals[idx])))
-            sm = cm.ScalarMappable(cmap=cmap_g, norm=norm_g)
-            sm.set_array([])
-            plt.colorbar(sm, ax=ax, label=clabel, fraction=0.046, pad=0.04)
-            ax.set_xlabel('$\\mu$')
-            ax.set_ylabel('Residual intensity' if ax is axes_g[0] else '')
-            ax.set_title(clabel)
-            ax.grid(True, alpha=0.3)
-
-        fig_g.tight_layout()
-        fig_g.savefig(save_data_path + f'Global_profiles_residuals_{model}.pdf',
-                      dpi=150, bbox_inches='tight')
-        plt.close(fig_g)
-
-        # ── PCA ───────────────────────────────────────────────────────────────
-        print('PCA ANALYSIS')
-        print(f'  Fitting PCA on {n_valid} global intensity profiles '
-              f'({n_mu_fine} mu points, {n_components} components) ...')
-        pca_model  = PCA(n_components=n_components)
-        scores     = pca_model.fit_transform(pca_int_profile)  # (n_valid, n_components)
-        print(f'  Variance captured: {np.sum(pca_model.explained_variance_ratio_)*100:.1f}%')
-
-        # ── Hierarchical clustering ───────────────────────────────────────────
-        print('CLUSTERING')
-        hc_labels, _, _ = hierarchical_clustering(
-            data=scores,
-            label=f'PCA_clustering_{model}',
-            save_path=save_data_path,
-            feature_labels=[f'PC{k+1}' for k in range(n_components)],
-            clustering_metric='mahalanobis',
-            method='single',
-            cutoff=1.2,
-        )
-
-        cluster_labels = hc_labels - 1  # 0-indexed
-        unique_cl      = np.unique(cluster_labels)
-
-        # Typical profile: closest to its cluster's centroid (globally nearest centroid)
-        typical_idx = None
-        min_dist    = np.inf
-        for cl in unique_cl:
-            mask     = cluster_labels == cl
-            members  = scores[mask]
-            centroid = members.mean(axis=0)
-            dists    = np.linalg.norm(members - centroid, axis=1)
-            closest  = int(np.where(mask)[0][np.argmin(dists)])
-            if dists.min() < min_dist:
-                min_dist    = dists.min()
-                typical_idx = closest
-
-        # Outlier profiles: furthest from centroid per cluster
-        outlier_indices = []
-        for cl in unique_cl:
-            mask     = cluster_labels == cl
-            members  = scores[mask]
-            centroid = members.mean(axis=0)
-            dists    = np.linalg.norm(members - centroid, axis=1)
-            outlier_indices.append(int(np.where(mask)[0][np.argmax(dists)]))
-
-        # ── Figure 1: scree, cumulative variance, eigen profiles ──────────────
-        print('PLOTTING')
-        print('    FIGURE 1')
-
-        ncols_f1 = 2 + n_components
-        fig1, axes1 = plt.subplots(1, ncols_f1, figsize=(4 * ncols_f1, 4))
-        evr  = pca_model.explained_variance_ratio_
-        eigen = pca_model.components_  # (n_components, n_mu_fine)
-        ref_mus = mus_array[0]
-
-        axes1[0].plot(range(1, n_components + 1), evr, 'o-', linewidth=2)
-        axes1[0].set_title('Scree')
-        axes1[0].set_xlabel('PC')
-        axes1[0].set_ylabel('Expl. var. ratio')
-        axes1[0].grid(True, alpha=0.3)
-
-        axes1[1].plot(range(1, n_components + 1), np.cumsum(evr), 'o-', linewidth=2)
-        axes1[1].axhline(0.95, color='g', linestyle='--', label='95%')
-        axes1[1].set_title('Cumul. var.')
-        axes1[1].set_xlabel('PC')
-        axes1[1].set_ylabel('Cumul. expl. var.')
-        axes1[1].legend(fontsize=7)
-        axes1[1].grid(True, alpha=0.3)
-
-        for i_plot in range(n_components):
-            axes1[2 + i_plot].plot(ref_mus, eigen[i_plot], color=colors[i_plot], linewidth=1.5)
-            axes1[2 + i_plot].axhline(0, color='k', linestyle='--', alpha=0.3)
-            axes1[2 + i_plot].set_title(f'PC{i_plot+1} ({evr[i_plot]*100:.1f}%)')
-            axes1[2 + i_plot].set_xlabel('$\\mu$')
-            axes1[2 + i_plot].set_ylabel('Component value')
-            axes1[2 + i_plot].grid(True, alpha=0.3)
-
-        fig1.tight_layout()
-        fig1.savefig(save_data_path + 'PCA_Analysis.png', dpi=150, bbox_inches='tight')
-        plt.close(fig1)
-
-        # ── Figure 2a: PCA corner scatter coloured by cluster ─────────────────
-        print('    FIGURE 2a - PCA corner scatter')
-        n_cl = len(unique_cl)
-        cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
-        cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
-
-        special_indices = [typical_idx] + outlier_indices
-        special_labels  = ['Typical'] + [f'Outlier {c}' for c in range(len(outlier_indices))]
-        special_colors  = ['blue'] + ['red'] * len(outlier_indices)
-
-        fig2a, axes2a = plt.subplots(n_components, n_components,
-                                     figsize=(3 * n_components, 3 * n_components))
-        fig2a.suptitle(f'PCA cluster structure — {model}', fontsize=12, y=1.01)
-
-        for row in range(n_components):
-            for col in range(n_components):
-                ax = axes2a[row, col]
-                if row == col:
-                    for ci, cl in enumerate(unique_cl):
-                        cmask = cluster_labels == cl
-                        ax.hist(scores[cmask, row], bins=30, alpha=0.5,
-                                color=cluster_colors[ci], label=f'C{cl}',
-                                density=True, linewidth=0.8, edgecolor='none')
-                    ax.set_xlabel(f'PC{row+1}', fontsize=8)
-                    ax.tick_params(labelsize=7)
-                    for spine in ['top', 'left', 'right']:
-                        ax.spines[spine].set_visible(False)
-                    ax.set_yticks([])
-                elif row > col:
-                    for ci, cl in enumerate(unique_cl):
-                        cmask = cluster_labels == cl
-                        ax.scatter(scores[cmask, col], scores[cmask, row],
-                                   color=cluster_colors[ci], s=6, alpha=0.35,
-                                   linewidths=0, label=f'C{cl}', rasterized=True)
-                    for cidx, slabel, scol in zip(special_indices, special_labels, special_colors):
-                        ax.scatter(scores[cidx, col], scores[cidx, row],
-                                   color=scol, s=60, zorder=10,
-                                   marker='*' if slabel == 'Typical' else 'D',
-                                   edgecolors='k', linewidths=0.5, label=slabel)
-                    if col == 0:
-                        ax.set_ylabel(f'PC{row+1}', fontsize=8)
-                    if row == n_components - 1:
-                        ax.set_xlabel(f'PC{col+1}', fontsize=8)
-                    ax.tick_params(labelsize=6)
-                    ax.grid(True, alpha=0.2)
-                else:
-                    ax.set_visible(False)
-
-        last_ax  = axes2a[n_components - 1, n_components - 2]
-        handles, lbls = last_ax.get_legend_handles_labels()
-        seen = {}
-        for h, l in zip(handles, lbls):
-            if l not in seen:
-                seen[l] = h
-        fig2a.legend(seen.values(), seen.keys(), loc='upper right',
-                     fontsize=8, markerscale=1.5, framealpha=0.8)
-        fig2a.tight_layout()
-        fig2a.savefig(save_data_path + f'PCA_Corner_Scatter_{model}.png',
-                      dpi=150, bbox_inches='tight')
-        plt.close(fig2a)
-
-        # ── Figure 2b: PCA corner scatter coloured by physical parameters ─────
-        print('    FIGURE 2b - PCA corner scatter by multiple parameters')
-
-        wav_bins_ref    = np.array(gen_dict['stellar_wavelengths'][model][0, 0, 0])
-        color_schemes = {
-            'Teff': {'name': '$T_{eff}$ (K)',        'cmap': plt.cm.inferno,  'unit': 'K'},
-            'logg': {'name': '$\\log g$',            'cmap': plt.cm.cividis,  'unit': 'dex'},
-            'MH':   {'name': '[M/H]',                'cmap': plt.cm.coolwarm, 'unit': 'dex'},
-            'wav':  {'name': 'Wavelength ($\\mu$m)', 'cmap': plt.cm.turbo,    'unit': 'μm'},
-        }
-        phys_dict = {
-            'Teff': T_vals_arr[meta_array[:, 0]],
-            'logg': g_vals_arr[meta_array[:, 1]],
-            'MH':   m_vals_arr[meta_array[:, 2]],
-            'wav':  wav_bins_ref[meta_array[:, 3]] / 1e4,
-        }
-
-        for scheme_key, scheme_info in color_schemes.items():
-            col_vals  = phys_dict[scheme_key]
-            col_norm  = mcolors.Normalize(vmin=col_vals.min(), vmax=col_vals.max())
-            col_cmap  = scheme_info['cmap']
-            col_label = scheme_info['name']
-
-            print(f'      PCA corner for {model} coloured by {scheme_key}')
-
-            fig2b, axes2b = plt.subplots(n_components, n_components,
-                                         figsize=(3 * n_components, 3 * n_components))
-            fig2b.suptitle(f'PCA space — {model}, coloured by {col_label}',
-                           fontsize=12, y=1.01)
-
-            max_scatter = 20_000
-            rng_2b = np.random.default_rng(42)
-            if len(scores) > max_scatter:
-                idx_sub = np.sort(rng_2b.choice(len(scores), size=max_scatter, replace=False))
-            else:
-                idx_sub = np.arange(len(scores))
-            idx_sub = idx_sub[np.argsort(col_vals[idx_sub])]
-
-            for row in range(n_components):
-                for col in range(n_components):
-                    ax = axes2b[row, col]
-                    if row == col:
-                        n_hist_bins = 8 if len(np.unique(col_vals)) > 50 else len(np.unique(col_vals))
-                        if n_hist_bins > 1:
-                            edges   = np.linspace(col_vals.min(), col_vals.max(), n_hist_bins + 1)
-                            centres = 0.5 * (edges[:-1] + edges[1:])
-                            for ib_m, centre in enumerate(centres):
-                                mask_bin = (col_vals >= edges[ib_m]) & (col_vals < edges[ib_m + 1])
-                                if ib_m == len(centres) - 1:
-                                    mask_bin |= (col_vals == edges[ib_m + 1])
-                                if mask_bin.sum() == 0:
-                                    continue
-                                ax.hist(scores[mask_bin, row], bins=30, alpha=0.55,
-                                        color=col_cmap(col_norm(centre)), density=True,
-                                        histtype='stepfilled', edgecolor='none')
-                        else:
-                            ax.hist(scores[:, row], bins=30, alpha=0.55,
-                                    color=col_cmap(col_norm(col_vals.mean())), density=True,
-                                    histtype='stepfilled', edgecolor='none')
-                        ax.set_xlabel(f'PC{row+1}', fontsize=8)
-                        ax.tick_params(labelsize=7)
-                        for spine in ['top', 'left', 'right']:
-                            ax.spines[spine].set_visible(False)
-                        ax.set_yticks([])
-                    elif row > col:
-                        ax.scatter(scores[idx_sub, col], scores[idx_sub, row],
-                                   c=col_vals[idx_sub], cmap=col_cmap, norm=col_norm,
-                                   s=8, alpha=0.4, linewidths=0, rasterized=True)
-                        for cidx, slabel, scol in zip(special_indices, special_labels, special_colors):
-                            ax.scatter(scores[cidx, col], scores[cidx, row],
-                                       color=scol, s=60, zorder=10,
-                                       marker='*' if slabel == 'Typical' else 'D',
-                                       edgecolors='k', linewidths=0.5, label=slabel)
-                        if col == 0:
-                            ax.set_ylabel(f'PC{row+1}', fontsize=8)
-                        if row == n_components - 1:
-                            ax.set_xlabel(f'PC{col+1}', fontsize=8)
-                        ax.tick_params(labelsize=6)
-                        ax.grid(True, alpha=0.2)
-                    else:
-                        ax.set_visible(False)
-
-            cbar_ax = fig2b.add_axes([0.92, 0.15, 0.02, 0.7])
-            sm = cm.ScalarMappable(cmap=col_cmap, norm=col_norm)
-            sm.set_array([])
-            cbar = fig2b.colorbar(sm, cax=cbar_ax)
-            cbar.set_label(col_label, fontsize=11)
-            cbar.ax.tick_params(labelsize=9)
-            unique_vals = np.unique(col_vals)
-            if len(unique_vals) <= 12:
-                cbar.set_ticks(unique_vals)
-                if scheme_key == 'Teff':
-                    cbar.set_ticklabels([f'{v:.0f}' for v in unique_vals], fontsize=8)
-                elif scheme_key == 'wav':
-                    cbar.set_ticklabels([f'{v:.2f}' for v in unique_vals], fontsize=8)
-                else:
-                    cbar.set_ticklabels([f'{v:.2f}' for v in unique_vals], fontsize=8)
-
-            fig2b.tight_layout(rect=[0, 0, 0.90, 1])
-            fig2b.savefig(save_data_path + f'PCA_Corner_Scatter_{model}_by{scheme_key}.png',
-                          dpi=150, bbox_inches='tight')
-            plt.close(fig2b)
-            print(f'        Saved: by{scheme_key}')
-
-        # ── Figure 2c: typical and outlier profiles ───────────────────────────
-        print('    FIGURE 2c - Mode and outlier profiles')
-        n_specials = 1 + len(outlier_indices)
-        fig2c, axes2c = plt.subplots(1, n_specials,
-                                     figsize=(5 * n_specials, 5),
-                                     sharey=True)
-        if n_specials == 1:
-            axes2c = np.array([axes2c])
-
-        for col, (cidx, slabel, scol) in enumerate(
-                zip(special_indices, special_labels, special_colors)):
-            ax = axes2c[col]
-            step = max(1, n_valid // 200)
-            for nval in range(0, n_valid, step):
-                ax.plot(mus_array[nval], pca_int_profile[nval],
-                        alpha=0.15, color='gray', linewidth=0.3)
-            ax.plot(mus_array[cidx], pca_int_profile[cidx],
-                    color=scol, linewidth=2, label=slabel, zorder=10)
-            ax.set_xlabel('$\\mu$')
-            ax.set_ylabel('Norm. Intensity')
-            ax.set_title(f'{slabel}')
-            ax.legend(fontsize=7)
-            ax.grid(True, alpha=0.3)
-
-        fig2c.suptitle(f'Mode and outlier profiles — {model}', fontsize=12)
-        fig2c.tight_layout()
-        fig2c.savefig(save_data_path + 'Mode_and_Outliers.png', dpi=150, bbox_inches='tight')
-        plt.close(fig2c)
-
-        # ── Figure 3: reconstruction quality for the typical profile ──────────
-        print('    FIGURE 3')
-        n_comp_list = [1, max(2, n_components // 2), n_components]
-        fig3 = plt.figure(figsize=(5 * len(n_comp_list), 6 * 1))
-        gs   = GridSpec(2, len(n_comp_list), figure=fig3, hspace=0.05, wspace=0.3)
-
-        original = pca_int_profile[typical_idx]
-        mu_orig  = mus_array[typical_idx]
-
-        for col_idx, n_comp_plot in enumerate(n_comp_list):
-            pca_temp      = PCA(n_components=n_comp_plot)
-            pca_temp.fit(pca_int_profile)
-            reconstructed = pca_temp.inverse_transform(
-                                pca_temp.transform(original.reshape(1, -1)))[0]
-            residual      = original - reconstructed
-            rmse          = np.sqrt(np.mean(residual ** 2))
-
-            ax_top = fig3.add_subplot(gs[0, col_idx])
-            ax_bot = fig3.add_subplot(gs[1, col_idx], sharex=ax_top)
-
-            ax_top.plot(mu_orig, original,      linewidth=2,   label='Original')
-            ax_top.plot(mu_orig, reconstructed, linewidth=1.2, linestyle='--', label='Recon.')
-            ax_top.set_title(f'{n_comp_plot}PC  RMSE={rmse:.4f}', fontsize=8)
-            ax_top.set_ylabel('Norm. Intensity', fontsize=7)
-            ax_top.legend(fontsize=6)
-            ax_top.grid(True, alpha=0.3)
-            ax_top.tick_params(labelbottom=False)
-
-            safe = np.where(np.abs(original) < 1e-10, np.nan, original)
-            ax_bot.plot(mu_orig, 100 * (residual / safe), linewidth=1.0)
-            ax_bot.axhline(0, color='k', linestyle='--', alpha=0.5)
-            ax_bot.set_xlabel('$\\mu$', fontsize=7)
-            ax_bot.set_ylabel('Rel. diff. (%)', fontsize=7)
-            ax_bot.grid(True, alpha=0.3)
-
-        fig3.savefig(save_data_path + 'Reconstruction_Quality.png', dpi=150, bbox_inches='tight')
-        plt.close(fig3)
-
-        # ── Save profiles and metadata ────────────────────────────────────────
-        np.save(save_data_path + f'mode_intensity_profile_{model}.npy',
-                pca_int_profile[typical_idx])
-        np.save(save_data_path + f'mode_mus_{model}.npy',
-                mus_array[typical_idx])
-        for i_save, cidx in enumerate(outlier_indices):
-            np.save(save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy',
-                    pca_int_profile[cidx])
-            np.save(save_data_path + f'outlier{i_save+1}_mus_{model}.npy',
-                    mus_array[cidx])
-        np.save(save_data_path + f'meta_{model}.npy', meta_array)
-
-        typical_profile  = pca_int_profile[typical_idx]
-        typical_mus      = mus_array[typical_idx]
-        outlier_profiles = [pca_int_profile[cidx] for cidx in outlier_indices]
-        outlier_mus      = [mus_array[cidx]        for cidx in outlier_indices]
-        print(f"Saved profiles to {save_data_path}")
-
-    elif PCA_mode == 'load':
-        typical_profile = np.load(save_data_path + f'mode_intensity_profile_{model}.npy')
-        typical_mus     = np.load(save_data_path + f'mode_mus_{model}.npy')
-        meta_array      = np.load(save_data_path + f'meta_{model}.npy')
-
-        outlier_profiles, outlier_mus = [], []
-        i_save = 0
-        while True:
-            p_path = save_data_path + f'outlier{i_save+1}_intensity_profile_{model}.npy'
-            if not os.path.exists(p_path):
-                break
-            outlier_profiles.append(np.load(p_path))
-            outlier_mus.append(np.load(save_data_path + f'outlier{i_save+1}_mus_{model}.npy'))
-            i_save += 1
-        print(f"Loaded profiles from {save_data_path}")
-
-    else:
-        raise ValueError('PCA_mode not recognized.')
-
-    # ── Figure 4: 4th-order NLLD fit for mode and outlier profiles ────────────
-    print('    FIGURE 4 - NLLD fits for mode and outliers')
-
-    specials = [('mode', typical_profile, typical_mus)]
-    for i_out, (op, om) in enumerate(zip(outlier_profiles, outlier_mus)):
-        specials.append((f'outlier{i_out+1}', op, om))
-
-    for label, prof, mus_sp in specials:
-        params = Parameters()
-        for ip in range(4):
-            params.add(f'c{ip+1}', value=np.random.uniform(0, 1))
-        result = minimize(residual_fn, params, args=(mus_sp, prof))
-        coeffs = [result.params[f'c{ic+1}'].value for ic in range(4)]
-        fit    = fourNLLD(mus_sp, coeffs)
-
-        fig4, (ax1, ax2) = plt.subplots(
-            2, 1, figsize=(8, 6), sharex=True,
-            gridspec_kw={'height_ratios': [3, 1], 'hspace': 0.05},
-        )
-        fig4.suptitle(f'4th Order NLLD Fit — {label} — {model}', fontsize=13)
-
-        ax1.plot(mus_sp, prof, 'o', markersize=3, alpha=0.6, label='Profile')
-        ax1.plot(mus_sp, fit,  'r--', linewidth=2, label='4th order NLLD')
-        ax1.set_ylabel('Norm. Intensity')
-        ax1.legend(fontsize=8)
-        ax1.grid(True, alpha=0.3)
-        ax1.text(0.98, 0.05,
-                 f"$c$=[{coeffs[0]:.3f}, {coeffs[1]:.3f}, {coeffs[2]:.3f}, {coeffs[3]:.3f}]",
-                 transform=ax1.transAxes, fontsize=8, ha='right', va='bottom',
-                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-        safe = np.where(np.abs(prof) < 1e-10, np.nan, prof)
-        ax2.plot(mus_sp, 100 * (prof - fit) / safe, '--', linewidth=1.5)
-        ax2.axhline(0, color='k', linestyle='--', alpha=0.5)
-        ax2.set_xlabel('$\\mu$ = cos($\\theta$)')
-        ax2.set_ylabel('Rel. diff. (%)')
-        ax2.grid(True, alpha=0.3)
-
-        print(f"  {label}  c=[{', '.join(f'{c:.4f}' for c in coeffs)}]  "
-              f"redchi={result.redchi:.4e}")
-
-        fig4.savefig(save_data_path + f'4thOrderNLLD_Fit_Profile_{label}_{model}.png',
-                     dpi=150, bbox_inches='tight')
-        plt.close(fig4)
+    print('MASKING')
+
+    # ── Count valid profiles per wavelength bin ───────────────────────────
+    n_wav_bins      = 10
+    wavs_ref        = np.array(gen_dict['stellar_wavelengths'][model][0, 0, 0])
+    wav_bin_slices  = np.array_split(np.arange(len(wavs_ref)), n_wav_bins)
+    wav_bin_labels  = [f'{wavs_ref[s[0]]/1e4:.2f}-{wavs_ref[s[-1]]/1e4:.2f} μm'
+                        for s in wav_bin_slices]
+
+    n_valid_per_wav = np.zeros(n_wav_bins, dtype=int)
+    n_considered    = 0
+    n_valid         = 0
+
+    # Each entry: profile (n_wav, n_mu_fine), normalized at mu=1 (centre).
+    # A profile/wavelength slice is valid when the intensity is monotonically
+    # non-increasing from centre to limb (no upward steps).
+    for i in range(N_star):
+        for j in range(N_star):
+            for k in range(N_star):
+                prof = gen_dict['global_intensity_profiles'][model][i, j, k]  # (n_wav, n_mu_fine)
+                # Normalise each wavelength slice to its centre value
+                center_vals = prof[:, 0:1]  # (n_wav, 1)  — mu=1 is the first column
+                safe_center = np.where(np.abs(center_vals) < 1e-10, 1.0, center_vals)
+                norm_prof   = prof / safe_center  # (n_wav, n_mu_fine)
+
+                # Valid = monotonically non-increasing (no positive differences)
+                mask = ~np.any(np.diff(norm_prof, axis=1) > 0.0, axis=1)  # (n_wav,)
+
+                n_considered += mask.size
+                n_valid      += int(np.sum(mask))
+                for iw_bin, idx in enumerate(wav_bin_slices):
+                    n_valid_per_wav[iw_bin] += int(np.sum(mask[idx]))
+
+    print(f"=== Profile filtering summary ===")
+    print(f"Total profiles considered : {n_considered}")
+    print(f"Total valid               : {n_valid} ({100 * n_valid / n_considered:.1f} %)")
+    print(f"Per wavelength region:")
+    n_total_per_wav = np.array([len(s) * N_star**3 for s in wav_bin_slices])
+    for iw_bin in range(n_wav_bins):
+        print(f"  {wav_bin_labels[iw_bin]} : "
+                f"{n_valid_per_wav[iw_bin]}/{n_total_per_wav[iw_bin]} valid "
+                f"({100 * n_valid_per_wav[iw_bin] / n_total_per_wav[iw_bin]:.1f} %)")
+
+    # ── Pass 2 — pre-allocate and fill profile matrix ─────────────────────
+    # Metadata columns: [i_Teff, j_logg, k_met, i_wav]
+    int_profile = np.empty((n_valid, n_mu_fine), dtype=np.float32)
+    mus_array       = np.empty((n_valid, n_mu_fine), dtype=np.float32)
+    meta_array      = np.empty((n_valid, 4),         dtype=np.int32)
+    ptr             = 0
+
+    for i in range(N_star):
+        for j in range(N_star):
+            for k in range(N_star):
+                prof = gen_dict['global_intensity_profiles'][model][i, j, k]  # (n_wav, n_mu_fine)
+                mus  = gen_dict['global_mus'][model][i, j, k]                 # (n_mu_fine,)
+
+                center_vals = prof[:, 0:1]
+                safe_center = np.where(np.abs(center_vals) < 1e-10, 1.0, center_vals)
+                norm_prof   = prof / safe_center
+
+                mask = ~np.any(np.diff(norm_prof, axis=1) > 0.0, axis=1)  # (n_wav,)
+                n_ok = int(np.sum(mask))
+                if n_ok == 0:
+                    continue
+
+                iw_indices  = np.where(mask)[0]
+                int_profile[ptr:ptr + n_ok] = norm_prof[mask].astype(np.float32)
+                mus_array[ptr:ptr + n_ok]       = np.broadcast_to(mus, (n_ok, n_mu_fine)).astype(np.float32)
+
+                meta_block = np.column_stack([
+                    np.full(n_ok, i,  dtype=np.int32),
+                    np.full(n_ok, j,  dtype=np.int32),
+                    np.full(n_ok, k,  dtype=np.int32),
+                    iw_indices.astype(np.int32),
+                ])
+                meta_array[ptr:ptr + n_ok] = meta_block
+                ptr += n_ok
+
+    assert ptr == n_valid, f'Pointer mismatch: {ptr} vs {n_valid}'
+
+    # ── Optional subsampling ──────────────────────────────────────────────
+    if subsample_profiles:
+        rng    = np.random.default_rng(subsample_seed)
+        n_draw = min(n_subsample_profiles, n_valid)
+        if n_draw < n_valid:
+            idx = np.sort(rng.choice(n_valid, size=n_draw, replace=False))
+            print(f'\nSUBSAMPLING: {n_valid} → {n_draw} profiles (seed={subsample_seed})')
+        else:
+            idx = np.arange(n_valid)
+            print(f'\nSUBSAMPLING: {n_valid} profiles (fewer than '
+                    f'{n_subsample_profiles}, keeping all)')
+        int_profile = int_profile[idx]
+        mus_array       = mus_array[idx]
+        meta_array      = meta_array[idx]
+        n_valid         = n_draw
+
+    # ── Figure 1 : Residual plots coloured by parameter ──────────────────────────────
+    print('FIGURE 1 - RESIDUAL PLOTTING')
+    med   = np.median(int_profile, axis=0)
+    resid = int_profile - med
+
+    wav_bin_of_profile = np.empty(len(meta_array), dtype=np.int32)
+    for iw_bin, idx_slice in enumerate(wav_bin_slices):
+        in_bin = np.isin(meta_array[:, 3], idx_slice)
+        wav_bin_of_profile[in_bin] = iw_bin
+
+    color_sources = {
+        '$T_{eff}$ (K)':     T_vals_arr[meta_array[:, 0]],
+        '$\\log g$':         g_vals_arr[meta_array[:, 1]],
+        'Metallicity [M/H]': m_vals_arr[meta_array[:, 2]],
+        'Wavelength bin':    wav_bin_of_profile.astype(float),
+    }
+
+    step    = max(1, len(resid) // 20000)
+    fig_g, axes_g = plt.subplots(1, 4, figsize=(24, 5), sharex=True, sharey=True)
+    fig_g.suptitle(f'Global intensity profile residuals coloured by parameter',
+                    fontsize=12)
+
+    for ax, (clabel, cvals) in zip(axes_g, color_sources.items()):
+        cmap_g = cm.get_cmap('coolwarm')
+        norm_g = mcolors.Normalize(vmin=np.min(cvals), vmax=np.max(cvals))
+        for idx in range(0, len(resid), step):
+            ax.plot(mus_array[idx], resid[idx],
+                    alpha=0.15, linewidth=0.4,
+                    color=cmap_g(norm_g(cvals[idx])))
+        sm = cm.ScalarMappable(cmap=cmap_g, norm=norm_g)
+        sm.set_array([])
+        plt.colorbar(sm, ax=ax, label=clabel, fraction=0.046, pad=0.04)
+        ax.set_xlabel('$\\mu$')
+        ax.set_ylabel('Residual intensity' if ax is axes_g[0] else '')
+        ax.set_title(clabel)
+        ax.grid(True, alpha=0.3)
+
+    fig_g.tight_layout()
+    fig_g.savefig(save_data_path + f'Global_profiles_residuals_{model}.pdf',
+                    dpi=150, bbox_inches='tight')
+    plt.close(fig_g)
 
     # ── Fit ALL profiles with 4th-order NLLD ──────────────────────────────────
     print('Fitting ALL profiles with 4th-order NLLD')
 
-    if All_Corner == 'build':
-        n_profs  = pca_int_profile.shape[0]
-        all_coeffs = np.zeros((n_profs, 4), dtype=np.float64)
-        print(f'  Fitting {n_profs} global intensity profiles ...')
+    n_profs  = int_profile.shape[0]
+    all_coeffs = np.zeros((n_profs, 4), dtype=np.float64)
+    print(f'  Fitting {n_profs} global intensity profiles ...')
 
-        for idx in tqdm(range(n_profs)):
-            prof_idx = pca_int_profile[idx]
-            mus_idx  = mus_array[idx]
+    for idx in tqdm(range(n_profs)):
+        prof_idx = int_profile[idx]
+        mus_idx  = mus_array[idx]
 
-            if np.all(np.abs(prof_idx) < 1e-10):
-                all_coeffs[idx] = np.nan
-                continue
+        if np.all(np.abs(prof_idx) < 1e-10):
+            all_coeffs[idx] = np.nan
+            continue
 
-            params = Parameters()
-            for ip in range(4):
-                params.add(f'c{ip+1}', value=np.random.uniform(0, 1))
-            try:
-                result = minimize(residual_fn, params, args=(mus_idx, prof_idx))
-                all_coeffs[idx] = [result.params[f'c{ic+1}'].value for ic in range(4)]
-            except Exception:
-                all_coeffs[idx] = np.nan
-
-        np.save(save_data_path + f'all_coeffs_{model}.npy', all_coeffs)
-
-    elif All_Corner == 'load':
-        all_coeffs = np.load(save_data_path + f'all_coeffs_{model}.npy')
-
-    else:
-        raise ValueError('All_Corner mode not recognized.')
-
-    print('  Done fitting. Now making corner plots...')
+        params = Parameters()
+        for ip in range(4):
+            params.add(f'c{ip+1}', value=np.random.uniform(0, 1))
+        try:
+            result = minimize(residual_fn, params, args=(mus_idx, prof_idx))
+            all_coeffs[idx] = [result.params[f'c{ic+1}'].value for ic in range(4)]
+        except Exception:
+            all_coeffs[idx] = np.nan
 
     # ── Corner data: [c1, c2, c3, c4] ────────────────────────────────────────
     valid_mask  = ~np.any(np.isnan(all_coeffs), axis=1)
     corner_data = all_coeffs[valid_mask]
+    corner_profiles = int_profile[valid_mask]
     print(f'  Corner plot for {corner_data.shape[0]} valid profiles')
 
     labels_4d = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
@@ -1084,8 +671,8 @@ for model in models:
     ]
     ndim_4d = 4
 
-    # ── Figure 5a: density corner ─────────────────────────────────────────────
-    print('    FIGURE 5a - All coefficients corner plot')
+    # ── Figure 2a: density corner ─────────────────────────────────────────────
+    print('    FIGURE 2a - All coefficients corner plot')
     fig_corner = corner.corner(
         corner_data,
         labels=labels_4d, range=ranges_4d, bins=50,
@@ -1119,7 +706,7 @@ for model in models:
                       m_vals_arr[corner_meta[:, 2]]]
     meta_cmaps     = [plt.cm.inferno, plt.cm.cividis, plt.cm.coolwarm]
 
-    # ── Figures 5b–5d: coloured by physical parameters ────────────────────────
+    # ── Figures 2b–d : coloured by physical parameters ────────────────────────
     for imeta in range(3):
         col_vals  = meta_col_vals[imeta]
         col_label = meta_col_names[imeta]
@@ -1127,7 +714,7 @@ for model in models:
         col_cmap  = meta_cmaps[imeta]
         col_norm  = mcolors.Normalize(vmin=col_vals.min(), vmax=col_vals.max())
 
-        print(f'    FIGURE 5{chr(98 + imeta)} - Corner plot coloured by {col_key}')
+        print(f'    FIGURE 2{chr(98 + imeta)} - Corner plot coloured by {col_key}')
 
         fig_cm = corner.corner(
             corner_data, labels=labels_4d, range=ranges_4d, bins=50, smooth1d=1.0,
@@ -1212,8 +799,8 @@ for model in models:
                        dpi=150, bbox_inches='tight')
         plt.close(fig_cm)
 
-    # ── Figure 5e: coloured by wavelength ─────────────────────────────────────
-    print('    FIGURE 5e - Corner plot coloured by wavelength')
+    # ── Figure 2e: coloured by wavelength ─────────────────────────────────────
+    print('    FIGURE 2e - Corner plot coloured by wavelength')
     wav_cmap = plt.cm.turbo
     wav_norm = mcolors.Normalize(vmin=corner_wav_um.min(), vmax=corner_wav_um.max())
 
@@ -1293,88 +880,6 @@ for model in models:
                     dpi=150, bbox_inches='tight')
     plt.close(fig_wav)
 
-    # ── Figure 5f: coloured by PCA-space cluster labels ───────────────────────
-    print('    FIGURE 5f - Coefficient corner plot coloured by PCA clusters')
-
-    pca_cl_corner  = cluster_labels[valid_mask]
-    unique_pca_cl  = np.unique(pca_cl_corner)
-    n_pca_clusters = len(unique_pca_cl)
-
-    pca_cl_cmap   = (plt.cm.tab10 if n_pca_clusters <= 10
-                     else plt.cm.tab20 if n_pca_clusters <= 20
-                     else plt.cm.hsv)
-    pca_cl_colors = {cl: pca_cl_cmap(i / max(n_pca_clusters - 1, 1))
-                     for i, cl in enumerate(unique_pca_cl)}
-
-    fig_pca_on_coeff = corner.corner(
-        corner_data, labels=labels_4d, range=ranges_4d, bins=50, smooth1d=1.0,
-        plot_datapoints=False, plot_density=False, fill_contours=False, no_fill_contours=True,
-        levels=(0.5, 0.68, 0.95, 0.99),
-        hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
-        label_kwargs={'fontsize': 13}, show_titles=False,
-        contour_kwargs={'colors': 'none'},
-    )
-    axes_pc = np.array(fig_pca_on_coeff.axes).reshape(ndim_4d, ndim_4d)
-
-    rng_pc     = np.random.default_rng(42)
-    idx_sub_pc = (np.sort(rng_pc.choice(len(corner_data), size=40_000, replace=False))
-                  if len(corner_data) > 40_000 else np.arange(len(corner_data)))
-
-    for row in range(ndim_4d):
-        for col in range(row):
-            ax = axes_pc[row, col]
-            for cl in unique_pca_cl:
-                mask_cl = pca_cl_corner[idx_sub_pc] == cl
-                if mask_cl.sum() == 0:
-                    continue
-                ax.scatter(corner_data[idx_sub_pc[mask_cl], col],
-                           corner_data[idx_sub_pc[mask_cl], row],
-                           color=pca_cl_colors[cl], s=1.5, alpha=0.35,
-                           linewidths=0, rasterized=True)
-
-    for d in range(ndim_4d):
-        ax = axes_pc[d, d]
-        ax.clear()
-        for cl in unique_pca_cl:
-            mask_cl = pca_cl_corner == cl
-            if mask_cl.sum() == 0:
-                continue
-            ax.hist(corner_data[mask_cl, d], bins=50, range=ranges_4d[d],
-                    alpha=0.55, color=pca_cl_colors[cl], density=True,
-                    histtype='stepfilled', edgecolor='none')
-        ax.set_xlim(ranges_4d[d])
-        ax.set_yticks([])
-        for spine in ['top', 'left', 'right']:
-            ax.spines[spine].set_visible(False)
-        if d == ndim_4d - 1:
-            ax.set_xlabel(labels_4d[d], fontsize=13)
-
-    for row in range(ndim_4d):
-        for col in range(row):
-            ax = axes_pc[row, col]
-            if col == 0:
-                ax.set_ylabel(labels_4d[row], fontsize=13)
-            if row == ndim_4d - 1:
-                ax.set_xlabel(labels_4d[col], fontsize=13)
-            ax.tick_params(labelsize=8)
-            ax.grid(True, alpha=0.15)
-
-    legend_handles = [
-        plt.Line2D([0], [0], marker='o', color='w',
-                   markerfacecolor=pca_cl_colors[cl], markersize=7,
-                   label=f'PCA cluster {cl}')
-        for cl in unique_pca_cl
-    ]
-    fig_pca_on_coeff.legend(handles=legend_handles, loc='upper right', fontsize=7,
-                            ncol=2 if n_pca_clusters > 8 else 1, framealpha=0.85,
-                            title='PCA clusters', title_fontsize=8,
-                            bbox_to_anchor=(0.98, 0.98))
-    fig_pca_on_coeff.suptitle(f'NLLD coefficients coloured by PCA clusters — {model}',
-                              fontsize=13, y=1.02)
-    fig_pca_on_coeff.savefig(save_data_path + f'Corner_NLLD_coloured_byPCA_clustering_{model}.png',
-                             dpi=150, bbox_inches='tight')
-    plt.close(fig_pca_on_coeff)
-
     # ── Mode identification in coefficient space ──────────────────────────────
     print('\n=== MODE IDENTIFICATION IN COEFFICIENT SPACE ===')
 
@@ -1423,8 +928,8 @@ for model in models:
         dists    = np.linalg.norm(members - centroid, axis=1)
         outlier_indices.append(int(np.where(mask)[0][np.argmax(dists)]))
 
-    # ── Figure 6a: PCA corner scatter coloured by cluster ─────────────────
-    print('    FIGURE 6a - NLLD corner scatter')
+    # ── Figure 3a: NLLD corner scatter coloured by cluster ─────────────────
+    print('    FIGURE 3 - NLLD corner scatter')
     n_cl = len(unique_cl)
     cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
     cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
@@ -1433,13 +938,13 @@ for model in models:
     special_labels  = ['Typical'] + [f'Outlier {c}' for c in range(len(outlier_indices))]
     special_colors  = ['blue'] + ['red'] * len(outlier_indices)
 
-    fig6a, axes6a = plt.subplots(4, 4,
+    fig3a, axes3a = plt.subplots(4, 4,
                                     figsize=(3 * 4, 3 * 4))
-    fig6a.suptitle(f'NLLD cluster structure — {model}', fontsize=12, y=1.01)
+    fig3a.suptitle(f'NLLD cluster structure — {model}', fontsize=12, y=1.01)
 
     for row in range(4):
         for col in range(4):
-            ax = axes6a[row, col]
+            ax = axes3a[row, col]
             if row == col:
                 for ci, cl in enumerate(unique_cl):
                     cmask = cluster_labels == cl
@@ -1471,39 +976,159 @@ for model in models:
             else:
                 ax.set_visible(False)
 
-    last_ax  = axes6a[3, 2]
+    last_ax  = axes3a[3, 2]
     handles, lbls = last_ax.get_legend_handles_labels()
     seen = {}
     for h, l in zip(handles, lbls):
         if l not in seen:
             seen[l] = h
-    fig6a.legend(seen.values(), seen.keys(), loc='upper right',
+    fig3a.legend(seen.values(), seen.keys(), loc='upper right',
                     fontsize=8, markerscale=1.5, framealpha=0.8)
-    fig6a.tight_layout()
-    fig6a.savefig(save_data_path + f'NLLD_Corner_Scatter_{model}.png',
+    fig3a.tight_layout()
+    fig3a.savefig(save_data_path + f'NLLD_Corner_Scatter_{model}.png',
                     dpi=150, bbox_inches='tight')
-    plt.close(fig6a)
+    plt.close(fig3a)
 
+    # ── Figure 3b: Physical parameter corner scatter coloured by cluster ──────
+    print('    FIGURE 3b - Physical parameters corner scatter coloured by NLLD cluster')
+    
+    # 1. Extract physical parameter values matching the valid profiles
+    T_eff_vals = T_vals_arr[corner_meta[:, 0]]
+    logg_vals  = g_vals_arr[corner_meta[:, 1]]
+    MH_vals    = m_vals_arr[corner_meta[:, 2]]
+    
+    # Stack into a 2D array: (N_profiles, 4)
+    phys_data = np.column_stack([T_eff_vals, logg_vals, MH_vals, corner_wav_um])
+    
+    phys_labels = [r'$T_{\rm eff}$ (K)', r'$\log\,g$', r'[M/H]', r'Wavelength ($\mu$m)']
+    phys_ranges = [
+        (T_eff_vals.min(), T_eff_vals.max()),
+        (logg_vals.min(), logg_vals.max()),
+        (MH_vals.min(), MH_vals.max()),
+        (corner_wav_um.min(), corner_wav_um.max())
+    ]
+    ndim_phys = 4
 
+    # 2. Setup the base corner plot
+    fig_phys = corner.corner(
+        phys_data, labels=phys_labels, range=phys_ranges, bins=20, smooth1d=1.0,
+        plot_datapoints=False, plot_density=False, fill_contours=False, no_fill_contours=True,
+        hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
+        label_kwargs={'fontsize': 13}, show_titles=False,
+        contour_kwargs={'colors': 'none'},
+    )
+    axes_phys = np.array(fig_phys.axes).reshape(ndim_phys, ndim_phys)
 
-    # Back-project coefficient-space mode labels onto PCA score space
-    valid_rows = np.where(valid_mask)[0]
-    mode_per_profile = np.full(len(all_coeffs), -1, dtype=int)
-    mode_per_profile[valid_rows] = mode_labels_corner
+    # 3. Populate subplots
+    for row in range(ndim_phys):
+        for col in range(ndim_phys):
+            ax = axes_phys[row, col]
+            
+            if row == col:
+                # Diagonal: 1D Histograms per cluster
+                ax.clear()
+                for ci, cl in enumerate(unique_cl):
+                    cmask = cluster_labels == cl
+                    if cmask.sum() == 0:
+                        continue
+                    ax.hist(phys_data[cmask, row], bins=20, range=phys_ranges[row],
+                            alpha=0.55, color=cluster_colors[ci], density=True,
+                            histtype='stepfilled', edgecolor='none')
+                
+                ax.set_xlim(phys_ranges[row])
+                ax.set_yticks([])
+                for spine in ['top', 'left', 'right']:
+                    ax.spines[spine].set_visible(False)
+                if row == ndim_phys - 1:
+                    ax.set_xlabel(phys_labels[row], fontsize=13)
+                    
+            elif row > col:
+                # Off-diagonal: 2D Scatter coloured by cluster
+                for ci, cl in enumerate(unique_cl):
+                    cmask = cluster_labels == cl
+                    ax.scatter(phys_data[cmask, col], phys_data[cmask, row],
+                               color=cluster_colors[ci], s=2.0, alpha=0.35,
+                               linewidths=0, rasterized=True)
+                
+                if col == 0:
+                    ax.set_ylabel(phys_labels[row], fontsize=13)
+                if row == ndim_phys - 1:
+                    ax.set_xlabel(phys_labels[col], fontsize=13)
+                
+                ax.tick_params(labelsize=8)
+                ax.grid(True, alpha=0.15)
 
-    # PCA space coloured by coefficient-space mode
-    hierarchical_clustering(
-        data=scores,
-        label=f'PCA_coloured_by_LDC_clustering_{model}',
-        save_path=save_data_path,
-        feature_labels=[f'PC{k+1}' for k in range(n_components)],
-        cutoff=75,
-        external_labels=mode_per_profile,
-        clustering_metric='mahalanobis',
-        method='ward',
-        plot_corner=True,
+    # 4. Add custom legend mapping colors to clusters
+    handles_phys = [
+        plt.Line2D([0], [0], marker='o', color='w',
+                   markerfacecolor=cluster_colors[ci],
+                   markersize=8, label=f'Cluster {cl}')
+        for ci, cl in enumerate(unique_cl)
+    ]
+    fig_phys.legend(handles=handles_phys, loc='upper right', fontsize=12,
+                    framealpha=0.85, title='NLLD Cluster', title_fontsize=13,
+                    bbox_to_anchor=(0.95, 0.95))
+
+    fig_phys.suptitle(f'Physical parameters coloured by NLLD cluster — {model}',
+                      fontsize=14, y=1.02)
+    fig_phys.savefig(save_data_path + f'Corner_PhysParams_byCluster_{model}.png',
+                     dpi=150, bbox_inches='tight')
+    plt.close(fig_phys)
+
+    # ── Generate profiles ────────────────────────────────────────
+    typical_profile  = corner_profiles[typical_idx]
+    typical_coeff    = corner_data[typical_idx]
+    typical_mu       = mus_array[typical_idx]
+    outlier_profiles = [corner_profiles[cidx] for cidx in outlier_indices]
+    outlier_coeffs   = [corner_data[cidx] for cidx in outlier_indices]
+    outlier_mus      = [mus_array[cidx]        for cidx in outlier_indices]    
+
+    # ── Figure 4: NLLD curves for mode and outliers, identified in coefficient space ──
+    print('    FIGURE 4 - NLLD curves for mode and outlier profiles')
+
+    # Bundle specials: (label, 4-element coefficient vector, line style, colour)
+    special_styles = [
+        ('mode', typical_mu, typical_profile, typical_coeff,  'orange',  2.5),
+    ] + [
+        (f'outlier {i_out+1}', mu, op, oc, f'C{i_out}', 1.8)
+        for i_out, (mu, op, oc) in enumerate(zip(outlier_mus, outlier_profiles, outlier_coeffs))
+    ]
+
+    # ── Panel layout: left = NLLD curves, right = pairwise residuals vs mode ──
+    fig4, ax4 = plt.subplots(
+        n_cl+1, 2, figsize=(10, 4 * (n_cl + 1)),
+        gridspec_kw={'hspace': 0.05, 'wspace': 0.3},
+            sharex=True,
     )
 
-    np.save(save_data_path + f'mode_labels_corner_{model}.npy', mode_labels_corner)
-    np.save(save_data_path + f'mode_labels_pca_{model}.npy', mode_per_profile)
-    print(f'  Saved mode label arrays to {save_data_path}')
+    for plot_idx, (sp_label, mu_plot, prof, coeffs, col, lw) in enumerate(special_styles):
+        curve = fourNLLD(mu_plot, coeffs)
+
+        # Left panel: NLLD curves
+        ax4[plot_idx, 0].plot(mu_plot, curve, '--', color='black', linewidth=lw,zorder=2)
+        ax4[plot_idx, 0].plot(mu_plot, prof ,'-', color=col, linewidth=lw,zorder=1)
+
+        # Right panel: difference relative to mode (mode itself is zero by definition)
+        ax4[plot_idx, 1].plot(mu_plot, 100 * (curve - prof) / prof,
+                        '--', color=col, linewidth=lw, label=sp_label)
+
+        ax4[plot_idx, 0].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)
+        ax4[plot_idx, 0].set_ylabel('Normalised intensity $I(\\mu)/I(1)$', fontsize=12)
+        ax4[plot_idx, 0].grid(True)
+
+        ax4[plot_idx, 1].axhline(0, color='black', linestyle='-', linewidth=1.2, alpha=0.4)
+        ax4[plot_idx, 1].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)
+        ax4[plot_idx, 1].set_ylabel('Relative difference from mode (%)', fontsize=12)
+        ax4[plot_idx, 1].grid(True)
+
+    fig4.savefig(save_data_path + f'4thOrderNLLD_ModesOutliers_{model}.pdf',
+                 dpi=150, bbox_inches='tight')
+    plt.close(fig4)
+
+    # Print a summary table of all coefficients for easy copy-paste
+    print(f'\n  {"Profile":<14}  {"c1":>8}  {"c2":>8}  {"c3":>8}  {"c4":>8}')
+    print(f'  {"-"*54}')
+    for sp_label, coeffs, *_ in special_styles:
+        print(f'  {sp_label:<14}  '
+              f'{coeffs[0]:>8.4f}  {coeffs[1]:>8.4f}  '
+              f'{coeffs[2]:>8.4f}  {coeffs[3]:>8.4f}')
