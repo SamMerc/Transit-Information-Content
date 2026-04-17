@@ -103,7 +103,7 @@ colors = cmap(np.linspace(0, 1, n_components))
 
 wav_region = [6000, 53000]  # 0.6 – 5.3 micron
 
-intr_prof_mode = 'build'  # 'build' or 'load'
+intr_prof_mode = 'load'  # 'build' or 'load'
 
 # ── Profile subsampling ───────────────────────────────────────────────────────
 # If True, randomly draw n_subsample_profiles from the valid profiles before
@@ -1047,7 +1047,7 @@ for model in models:
                 for ci, cl in enumerate(unique_cl):
                     cmask = cluster_labels == cl
                     ax.scatter(phys_data[cmask, col], phys_data[cmask, row],
-                               color=cluster_colors[ci], s=2.0, alpha=0.35,
+                               color=cluster_colors[ci], s=20.0, alpha=0.35,
                                linewidths=0, rasterized=True)
                 
                 if col == 0:
@@ -1076,59 +1076,88 @@ for model in models:
     plt.close(fig_phys)
 
     # ── Generate profiles ────────────────────────────────────────
-    typical_profile  = corner_profiles[typical_idx]
-    typical_coeff    = corner_data[typical_idx]
-    typical_mu       = mus_array[typical_idx]
-    outlier_profiles = [corner_profiles[cidx] for cidx in outlier_indices]
-    outlier_coeffs   = [corner_data[cidx] for cidx in outlier_indices]
-    outlier_mus      = [mus_array[cidx]        for cidx in outlier_indices]    
+    # Global mode: profile closest to its own cluster centroid across ALL clusters
+    typical_profile = corner_profiles[typical_idx]
+    typical_coeff   = corner_data[typical_idx]
+    typical_mu      = mus_array[typical_idx]
 
-    # ── Figure 4: NLLD curves for mode and outliers, identified in coefficient space ──
-    print('    FIGURE 4 - NLLD curves for mode and outlier profiles')
+    # Per-cluster mode: profile closest to each cluster's centroid
+    cluster_mode_indices = []
+    for cl in unique_cl:
+        mask     = cluster_labels == cl
+        members  = corner_data[mask]
+        centroid = members.mean(axis=0)
+        dists    = np.linalg.norm(members - centroid, axis=1)
+        cluster_mode_indices.append(int(np.where(mask)[0][np.argmin(dists)]))
 
-    # Bundle specials: (label, 4-element coefficient vector, line style, colour)
+    cluster_mode_profiles = [corner_profiles[cidx] for cidx in cluster_mode_indices]
+    cluster_mode_coeffs   = [corner_data[cidx]     for cidx in cluster_mode_indices]
+    cluster_mode_mus      = [mus_array[cidx]        for cidx in cluster_mode_indices]
+
+    # ── Figure 4: NLLD curves for overall mode and per-cluster mode profiles ──
+    print('    FIGURE 4 - NLLD curves for overall mode and per-cluster mode profiles')
+
+    # Bundle specials: (label, mu array, raw profile, coeff vector, colour, linewidth)
     special_styles = [
-        ('mode', typical_mu, typical_profile, typical_coeff,  'orange',  2.5),
+        ('Overall mode', typical_mu, typical_profile, typical_coeff, 'orange', 2.5),
     ] + [
-        (f'outlier {i_out+1}', mu, op, oc, f'C{i_out}', 1.8)
-        for i_out, (mu, op, oc) in enumerate(zip(outlier_mus, outlier_profiles, outlier_coeffs))
+        (f'Cluster {cl} mode', mu, cp, cc, cluster_colors[ci], 1.8)
+        for ci, (cl, mu, cp, cc) in enumerate(
+            zip(unique_cl, cluster_mode_mus, cluster_mode_profiles, cluster_mode_coeffs))
     ]
 
-    # ── Panel layout: left = NLLD curves, right = pairwise residuals vs mode ──
+    # ── Panel layout: left = NLLD curves, right = residuals vs overall mode ──
     fig4, ax4 = plt.subplots(
-        n_cl+1, 2, figsize=(10, 4 * (n_cl + 1)),
+        n_cl + 1, 2, figsize=(10, 4 * (n_cl + 1)),
         gridspec_kw={'hspace': 0.05, 'wspace': 0.3},
-            sharex=True,
+        sharex=True,
     )
+
+    # Pre-compute the overall mode NLLD curve for residuals in cluster rows
+    typical_curve = fourNLLD(typical_mu, typical_coeff)
 
     for plot_idx, (sp_label, mu_plot, prof, coeffs, col, lw) in enumerate(special_styles):
         curve = fourNLLD(mu_plot, coeffs)
 
-        # Left panel: NLLD curves
-        ax4[plot_idx, 0].plot(mu_plot, curve, '--', color='black', linewidth=lw,zorder=2)
-        ax4[plot_idx, 0].plot(mu_plot, prof ,'-', color=col, linewidth=lw,zorder=1)
-
-        # Right panel: difference relative to mode (mode itself is zero by definition)
-        ax4[plot_idx, 1].plot(mu_plot, 100 * (curve - prof) / prof,
-                        '--', color=col, linewidth=lw, label=sp_label)
-
-        ax4[plot_idx, 0].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)
+        # Left panel: raw intensity profile (solid) + NLLD fit (dashed)
+        ax4[plot_idx, 0].plot(mu_plot, curve, '--', color='black', linewidth=lw, zorder=2)
+        ax4[plot_idx, 0].plot(mu_plot, prof,  '-',  color=col,     linewidth=lw, zorder=1)
         ax4[plot_idx, 0].set_ylabel('Normalised intensity $I(\\mu)/I(1)$', fontsize=12)
+        ax4[plot_idx, 0].set_title(sp_label, fontsize=11, pad=3)
         ax4[plot_idx, 0].grid(True)
 
+        # Right panel: residuals
+        if plot_idx == 0:
+            # Overall mode row: NLLD fit vs raw profile
+            safe_prof = np.where(np.abs(prof) < 1e-10, 1.0, prof)
+            resid = 100 * (curve - prof) / safe_prof
+            ylabel_str = 'Fit \u2212 profile (%)'
+        else:
+            # Cluster mode rows: this cluster's NLLD fit vs overall mode NLLD fit
+            if np.allclose(mu_plot, typical_mu):
+                ref_curve = typical_curve
+            else:
+                ref_curve = np.interp(mu_plot, typical_mu[::-1], typical_curve[::-1])[::-1]
+            safe_ref = np.where(np.abs(ref_curve) < 1e-10, 1.0, ref_curve)
+            resid = 100 * (curve - ref_curve) / safe_ref
+            ylabel_str = 'Residual vs overall mode (%)'
+
+        ax4[plot_idx, 1].plot(mu_plot, resid, '--', color=col, linewidth=lw, label=sp_label)
         ax4[plot_idx, 1].axhline(0, color='black', linestyle='-', linewidth=1.2, alpha=0.4)
-        ax4[plot_idx, 1].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)
-        ax4[plot_idx, 1].set_ylabel('Relative difference from mode (%)', fontsize=12)
+        ax4[plot_idx, 1].set_ylabel(ylabel_str, fontsize=12)
         ax4[plot_idx, 1].grid(True)
 
-    fig4.savefig(save_data_path + f'4thOrderNLLD_ModesOutliers_{model}.pdf',
+    ax4[-1, 0].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)
+    ax4[-1, 1].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)
+
+    fig4.savefig(save_data_path + f'4thOrderNLLD_Modes_{model}.pdf',
                  dpi=150, bbox_inches='tight')
     plt.close(fig4)
 
     # Print a summary table of all coefficients for easy copy-paste
     print(f'\n  {"Profile":<14}  {"c1":>8}  {"c2":>8}  {"c3":>8}  {"c4":>8}')
     print(f'  {"-"*54}')
-    for sp_label, coeffs, *_ in special_styles:
-        print(f'  {sp_label:<14}  '
+    for sp_label, _mu, _prof, coeffs, _col, _lw in special_styles:
+        print(f'  {sp_label:<20}  '
               f'{coeffs[0]:>8.4f}  {coeffs[1]:>8.4f}  '
               f'{coeffs[2]:>8.4f}  {coeffs[3]:>8.4f}')
