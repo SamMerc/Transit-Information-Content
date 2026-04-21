@@ -38,3 +38,12 @@ rule Fig3:
         "tex/figures/Fig5.pdf"
     script:
         "src/scripts/Fig3_plot.py"
+
+rule Appendix1:
+    input:
+        script="src/scripts/Appendix1_plot.py",
+        data="src/data/Appendix1_Storage"
+    output:
+        "tex/figures/Appendix1.pdf",
+    script:
+        "src/scripts/Appendix1_plot.py"
