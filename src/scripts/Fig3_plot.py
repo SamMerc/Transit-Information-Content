@@ -558,8 +558,6 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
             ax.set_xlim([param2_vals[0], param2_vals[-1]])
             ax.set_ylim([param1_vals[0], param1_vals[-1]])
 
-fig.tight_layout()
-plt.savefig(paths.figures / "Fig5.pdf", bbox_inches="tight")
 plt.close(fig)
 
 # Figure 3
