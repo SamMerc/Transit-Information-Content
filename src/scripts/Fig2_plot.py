@@ -65,14 +65,15 @@ init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.1, u2=0.2, u3=0.4, u4=0.3)
+# Overall LDCs : c1 = 1.1515 c2 = -1.4951 c3 = 1.2000 c4 = -0.3880
+init_NLLD_coeffs = nonlinear_4param_ld_law(u1=1.1515, u2=-1.4951, u3=1.2000, u4=-0.3880)
 
 #Updating initial state dictionary
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
 #Get starting points for the LD coefficients
-init_LD_prop = nonlinear_4param_ld_law(u1=0.1, u2=0.2, u3=0.4, u4=0.3, order=3)
+init_LD_prop = nonlinear_4param_ld_law(u1=1.1515, u2=-1.4951, u3=1.2000, u4=-0.3880, order=3)
 
 #%%%% Calculate transit duration
 # Convert angles to radians
@@ -105,7 +106,7 @@ init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
 
 #%% Storing outputs of nested sampling and plots
-raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_Storage/'
+raw_save_dir = str(paths.data / "Fig2_Storage") + "/"
 
 #%% Model parameters
 mod_prop = {
@@ -139,16 +140,138 @@ fixed_args['fix_param_list']=fix_param_list
 fixed_args['fix_param_val']=fix_param_val
 
 #%% Number of burn-in steps
-fixed_args['nburn'] = 700000
+fixed_args['nburn'] = 70000
 
 #%% Model scatter and seed to use for the plot
 model_scatter =  16.68100537200059 
 seed = 80
 
+# Filtering parameters
+THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
+ROUNDS = 3
+verbose = True
 ##############################
 ##### Relevant functions #####
 ##############################
+def load_result(args):
+    """
+    Optimized file loading with iterative 2D sigma clipping.
+    
+    FILTERING STRATEGY:
+    - Maintains a 2D mask of shape (n_walkers, n_steps_post) throughout
+    - At each round, sigma clipping is computed over all currently-surviving
+      (walker, step) pairs for chi2 and each parameter independently
+    - Individual (walker, step) pairs are removed without discarding the
+      entire walker chain
+    - Returns good_steps_mask (n_walkers, n_steps_post) for fine-grained use
+    """
+    raw_save_dir, model_scatter, seed, return_full = args
+    print(f"  Processing scatter{model_scatter:.3f}, seed{seed}...")
+    try:
+        path_base = f'{raw_save_dir}/{jnp.floor(model_scatter)}ppm/Seed{seed}/'
 
+        # Load with memory mapping
+        raw_chain = np.load(path_base + 'chains.npy', mmap_mode='r')
+        logprob   = np.load(path_base + 'logprob.npy', mmap_mode='r')
+        chi2      = np.load(path_base + 'chi2_chain.npy', mmap_mode='r')
+
+        n_walkers, n_steps, n_params = raw_chain.shape
+        n_steps_post = n_steps - fixed_args['nburn']
+
+        # ======================================================================
+        # BURN: slice to post-burnin only
+        # All arrays are (n_walkers, n_steps_post) or (n_walkers, n_steps_post, n_params)
+        # ======================================================================
+        burnt_chain   = np.array(raw_chain[:, fixed_args['nburn']:, :])   # (n_walkers, n_steps_post, n_params)
+        burnt_chi2    = np.array(chi2[:,    fixed_args['nburn']:])         # (n_walkers, n_steps_post)
+        burnt_logprob = np.array(logprob[:, fixed_args['nburn']:])         # (n_walkers, n_steps_post)
+
+        # ======================================================================
+        # 2D MASK: True = this (walker, step) pair is still alive
+        # ======================================================================
+        good_steps_mask = np.ones((n_walkers, n_steps_post), dtype=bool)  # (n_walkers, n_steps_post)
+
+        # ======================================================================
+        # ITERATIVE SIGMA CLIPPING - operates on surviving pairs each round
+        # ======================================================================
+        for round_idx in range(ROUNDS):
+
+            THRESHOLD  = THRESHOLDS[round_idx]
+            n_alive    = np.sum(good_steps_mask)
+            if verbose:print(f'    ROUND {round_idx+1}/{ROUNDS} (threshold={THRESHOLD}σ, {n_alive} pairs alive)')
+
+            # ------------------------------------------------------------------
+            # FILTER 1: CHI2
+            # Extract the chi2 values of currently-alive (walker, step) pairs
+            # ------------------------------------------------------------------
+            alive_chi2 = burnt_chi2[good_steps_mask]                      # (n_alive,)
+
+            quartiles  = np.percentile(alive_chi2, [25, 50, 75])
+            mu, iqr    = quartiles[1], quartiles[2] - quartiles[0]
+
+            # Build a 2D bad mask: False everywhere, then flag outliers among alive pairs
+            chi2_bad_2d                  = np.zeros((n_walkers, n_steps_post), dtype=bool)
+            chi2_bad_2d[good_steps_mask] = (alive_chi2 < mu - THRESHOLD * iqr) | (alive_chi2 > mu + THRESHOLD * iqr)
+
+            if verbose:print(f"      Chi2:  flagged {np.sum(chi2_bad_2d)} / {n_alive} ({100*np.sum(chi2_bad_2d)/n_alive:.1f}%)")
+
+            # ------------------------------------------------------------------
+            # FILTER 2: PARAMETERS
+            # Same pattern: extract alive values per parameter, flag outliers
+            # ------------------------------------------------------------------
+            param_bad_2d = np.zeros((n_walkers, n_steps_post), dtype=bool)
+
+            for param_idx in range(n_params):
+                alive_param = burnt_chain[:, :, param_idx][good_steps_mask]  # (n_alive,)
+
+                quartiles = np.percentile(alive_param, [25, 50, 75])
+                mu, iqr   = quartiles[1], quartiles[2] - quartiles[0]
+
+                outliers_flat = (alive_param < mu - THRESHOLD * iqr) | (alive_param > mu + THRESHOLD * iqr)
+                param_bad_2d[good_steps_mask] |= outliers_flat
+
+                param_name = fixed_args['var_param_list'][param_idx] if param_idx < len(fixed_args['var_param_list']) else f'param_{param_idx}'
+                if verbose:print(f"      {param_name}: flagged {np.sum(outliers_flat)} / {n_alive} ({100*np.sum(outliers_flat)/n_alive:.1f}%)")
+
+            # ------------------------------------------------------------------
+            # UPDATE 2D MASK
+            # ------------------------------------------------------------------
+            round_bad_2d  = chi2_bad_2d | param_bad_2d
+            good_steps_mask &= ~round_bad_2d
+
+            if verbose:print(f"      Round removed {np.sum(round_bad_2d)} / {n_alive} ({100*np.sum(round_bad_2d)/n_alive:.1f}%)")
+
+        if verbose:print(f"    Final: {np.sum(good_steps_mask)} / {n_walkers * n_steps_post} (walker, step) pairs survived ({100 * np.sum(good_steps_mask)/(n_walkers * n_steps_post)} %)")
+
+        # ======================================================================
+        # EXTRACT DATA
+        # ======================================================================
+
+        # Best-fit: find the best logprob among surviving pairs
+        masked_logprob         = np.where(good_steps_mask, burnt_logprob, -np.inf)
+        best_walker, best_step = np.unravel_index(np.argmax(masked_logprob), masked_logprob.shape)
+        bestfit_r              = float(burnt_chain[best_walker, best_step, 0])
+
+        # r chain: collect parameter 0 from all surviving (walker, step) pairs
+        r_chain_post_burnin = burnt_chain[:, :, 0][good_steps_mask]       # (n_surviving_pairs,)
+
+        if return_full:
+            full_chain   = np.array(raw_chain)
+            full_logprob = np.array(logprob)
+            full_chi2    = np.array(chi2)
+
+            return (model_scatter, seed, r_chain_post_burnin, bestfit_r,
+                    True, full_chain, full_logprob, full_chi2, good_steps_mask) 
+        else:
+            return (model_scatter, seed, r_chain_post_burnin, bestfit_r,
+                    False, None, None, None, None)
+
+    except Exception as e:
+        print(f"Error loading scatter{model_scatter:.3f}, seed{seed}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    
 def create_jaxoplanet_model(x, p):
     
     #Retrieving ecc and w
@@ -222,6 +345,8 @@ for i, param in enumerate(fixed_args['var_param_list']):
 for idx, param in enumerate(fixed_args['fix_param_list']):
     best_params[param] = fixed_args['fix_param_val'][idx]
 
+_, _, _, _, _, _, _, _, good_steps_mask = load_result((raw_save_dir, model_scatter, seed, True))
+
 # Compute bestfit model
 bestfit_lc = create_jaxoplanet_model(init_state_dic['times'], best_params)
 bestfit_RMS = jnp.sqrt(jnp.average((noisy_LC - bestfit_lc)**2))
@@ -253,12 +378,12 @@ for param, paramlabel, perturbation_sigma, color, shape in zip(
 
     #Get the perturbation value
     if param=='stellar_rho':
-        period_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('period')]
-        a_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('a')]
+        period_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('period')][good_steps_mask]
+        a_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('a')][good_steps_mask]
         stellar_rho_chain = ( ( 3 * jnp.pi ) / ( G_cgday * period_chain**2 ) ) * a_chain**3
         perturbation = perturbation_sigma * jnp.std(stellar_rho_chain)
     else:
-        param_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index(param)]
+        param_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index(param)][good_steps_mask]
         perturbation = perturbation_sigma * jnp.std(param_chain)
 
     
@@ -276,12 +401,12 @@ for param, paramlabel, perturbation_sigma, color, shape in zip(
     axes['A'].set_xlim([-0.0425, -0.033])
     axes['C'].plot(plot_phase, (bestfit_lc - tr_perturbed_LC)*1e6, shape, color=color, label=paramlabel, markersize=marksize)
     axes['C'].set_xlim([-0.02, 0.02])
-    axes['C'].set_ylim([-55, 40])
+    axes['C'].set_ylim([-10, 20])
 
 #Plotting contours for stellar density vs i in top right panel 
 # Build flattened sample vectors (ensure 1D arrays) before feeding KDE
 rho_chain = np.asarray(stellar_rho_chain).ravel()
-sqrtesinw_chain = np.asarray(raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('sqrtesinw')]).ravel()
+sqrtesinw_chain = np.asarray(raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('sqrtesinw')])[good_steps_mask]
 
 # Create a 2D kernel density estimate on a grid and draw filled contours in axes['B']
 ax = axes['B']
@@ -329,5 +454,5 @@ axes['A'].set_xticks([-0.041, -0.038, -0.035], [-0.041, -0.038, -0.035])
 axes['C'].set_xticks([-0.015, -0.005, 0.005, 0.015], [-0.015, -0.005, 0.005, 0.015])
 axes['C'].legend(handletextpad=0.01, loc='lower center', frameon=True, ncol=4)
 for mosaic_elem in ['A','C']:axes[mosaic_elem].grid(True)
-plt.savefig(raw_save_dir+'/Fig2.pdf', bbox_inches="tight")
+plt.savefig(paths.figures / "Fig2.pdf", bbox_inches="tight")
 plt.close()

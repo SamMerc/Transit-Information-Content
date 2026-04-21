@@ -67,14 +67,15 @@ init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.1, u2=0.2, u3=0.4, u4=0.3)
+# Overall LDCs : c1 = 1.1515 c2 = -1.4951 c3 = 1.2000 c4 = -0.3880
+init_NLLD_coeffs = nonlinear_4param_ld_law(u1=1.1515, u2=-1.4951, u3=1.2000, u4=-0.3880)
 
 #Updating initial state dictionary
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
 #Get starting points for the LD coefficients
-init_LD_prop = nonlinear_4param_ld_law(u1=0.1, u2=0.2, u3=0.4, u4=0.3, order=3)
+init_LD_prop = nonlinear_4param_ld_law(u1=1.1515, u2=-1.4951, u3=1.2000, u4=-0.3880, order=3)
 
 #%%%% Calculate transit duration
 # Convert angles to radians
@@ -107,7 +108,7 @@ init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
 
 #%% Storing outputs of nested sampling and plots
-raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig2_Storage/'
+raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig2_Storage/'
 
 #%% Model parameters
 mod_prop = {
@@ -164,8 +165,8 @@ fixed_args['nthreads'] = jax.device_count()
 
 #%% MCMC specific settings
 fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 1000000 
-fixed_args['nburn'] = 700000
+fixed_args['nsteps'] = 100000
+fixed_args['nburn'] = 70000
 fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
 #%% Numpyro specific - set to False for faster
 fixed_args['adapt_step_size'] = True

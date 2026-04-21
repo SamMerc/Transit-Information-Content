@@ -919,14 +919,14 @@ for model in models:
             min_dist    = dists.min()
             typical_idx = closest
 
-    # Outlier profiles: furthest from centroid per cluster
-    outlier_indices = []
+    # Clulster mode profiles: furthest from centroid per cluster
+    cluster_mode_indices = []
     for cl in unique_cl:
         mask     = cluster_labels == cl
         members  = corner_data[mask]
         centroid = members.mean(axis=0)
         dists    = np.linalg.norm(members - centroid, axis=1)
-        outlier_indices.append(int(np.where(mask)[0][np.argmax(dists)]))
+        cluster_mode_indices.append(int(np.where(mask)[0][np.argmin(dists)]))
 
     # ── Figure 3a: NLLD corner scatter coloured by cluster ─────────────────
     print('    FIGURE 3 - NLLD corner scatter')
@@ -934,9 +934,9 @@ for model in models:
     cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
     cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
 
-    special_indices = [typical_idx] + outlier_indices
-    special_labels  = ['Typical'] + [f'Outlier {c}' for c in range(len(outlier_indices))]
-    special_colors  = ['blue'] + ['red'] * len(outlier_indices)
+    special_indices = [typical_idx] + cluster_mode_indices
+    special_labels  = ['Typical'] + [f'Mode {c}' for c in range(len(cluster_mode_indices))]
+    special_colors  = ['blue'] + ['red'] * len(cluster_mode_indices)
 
     fig3a, axes3a = plt.subplots(4, 4,
                                     figsize=(3 * 4, 3 * 4))
@@ -1019,7 +1019,16 @@ for model in models:
     )
     axes_phys = np.array(fig_phys.axes).reshape(ndim_phys, ndim_phys)
 
-    # 3. Populate subplots
+    # -------------------------------------------------------------------------
+    # 3. PRE-PROCESS: Determine plot order (Z-Ordering)
+    # We sort clusters from largest to smallest. By plotting the largest first,
+    # they stay in the background, allowing the smaller clusters to be visible on top.
+    # -------------------------------------------------------------------------
+    cluster_counts = {cl: np.sum(cluster_labels == cl) for cl in unique_cl}
+    # Sort clusters descending by size
+    clusters_sorted_by_size = sorted(unique_cl, key=lambda c: cluster_counts[c], reverse=True)
+
+    # 4. Populate subplots
     for row in range(ndim_phys):
         for col in range(ndim_phys):
             ax = axes_phys[row, col]
@@ -1027,12 +1036,16 @@ for model in models:
             if row == col:
                 # Diagonal: 1D Histograms per cluster
                 ax.clear()
+                # For histograms, order doesn't matter as much, but we'll stick to the original unique_cl order
                 for ci, cl in enumerate(unique_cl):
                     cmask = cluster_labels == cl
                     if cmask.sum() == 0:
                         continue
+                    
+                    # density=True normalizes the area under the curve to 1.
+                    # This ensures the 435-point cluster is visible alongside the 11k-point cluster.
                     ax.hist(phys_data[cmask, row], bins=20, range=phys_ranges[row],
-                            alpha=0.55, color=cluster_colors[ci], density=True,
+                            alpha=0.4, color=cluster_colors[ci], density=True,
                             histtype='stepfilled', edgecolor='none')
                 
                 ax.set_xlim(phys_ranges[row])
@@ -1044,10 +1057,15 @@ for model in models:
                     
             elif row > col:
                 # Off-diagonal: 2D Scatter coloured by cluster
-                for ci, cl in enumerate(unique_cl):
+                # We iterate through the SORTED list so largest goes first (bottom layer)
+                for cl in clusters_sorted_by_size:
+                    ci = list(unique_cl).index(cl) # Get original index for correct color
                     cmask = cluster_labels == cl
+                    
+                    # Notice the much smaller size (s=2.0) and lower alpha (0.15) 
+                    # to handle the density of 11,000+ points overlapping.
                     ax.scatter(phys_data[cmask, col], phys_data[cmask, row],
-                               color=cluster_colors[ci], s=20.0, alpha=0.35,
+                               color=cluster_colors[ci], s=2.0, alpha=0.15,
                                linewidths=0, rasterized=True)
                 
                 if col == 0:
@@ -1058,7 +1076,7 @@ for model in models:
                 ax.tick_params(labelsize=8)
                 ax.grid(True, alpha=0.15)
 
-    # 4. Add custom legend mapping colors to clusters
+    # 5. Add custom legend mapping colors to clusters
     handles_phys = [
         plt.Line2D([0], [0], marker='o', color='w',
                    markerfacecolor=cluster_colors[ci],
@@ -1127,24 +1145,9 @@ for model in models:
         ax4[plot_idx, 0].grid(True)
 
         # Right panel: residuals
-        if plot_idx == 0:
-            # Overall mode row: NLLD fit vs raw profile
-            safe_prof = np.where(np.abs(prof) < 1e-10, 1.0, prof)
-            resid = 100 * (curve - prof) / safe_prof
-            ylabel_str = 'Fit \u2212 profile (%)'
-        else:
-            # Cluster mode rows: this cluster's NLLD fit vs overall mode NLLD fit
-            if np.allclose(mu_plot, typical_mu):
-                ref_curve = typical_curve
-            else:
-                ref_curve = np.interp(mu_plot, typical_mu[::-1], typical_curve[::-1])[::-1]
-            safe_ref = np.where(np.abs(ref_curve) < 1e-10, 1.0, ref_curve)
-            resid = 100 * (curve - ref_curve) / safe_ref
-            ylabel_str = 'Residual vs overall mode (%)'
-
+        resid = 100 * (curve - prof) / prof
         ax4[plot_idx, 1].plot(mu_plot, resid, '--', color=col, linewidth=lw, label=sp_label)
         ax4[plot_idx, 1].axhline(0, color='black', linestyle='-', linewidth=1.2, alpha=0.4)
-        ax4[plot_idx, 1].set_ylabel(ylabel_str, fontsize=12)
         ax4[plot_idx, 1].grid(True)
 
     ax4[-1, 0].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)

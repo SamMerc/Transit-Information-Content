@@ -9,7 +9,7 @@
 ######################################
 ########## Import libraries ##########
 ######################################
-from jax import random, jit, vmap
+from jax import random, jit
 import jax
 import paths
 print(f"JAX devices: {jax.devices()}")
@@ -37,6 +37,7 @@ from scipy.optimize import curve_fit
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
+from matplotlib.patches import Patch
 
 #############################################
 ########## Define hyper-parameters ##########
@@ -93,7 +94,7 @@ num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2)
                         (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
 
 #%% Location of MCMC results and where plot will be output
-raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig1_Storage/'
+raw_save_dir = str(paths.data / "Fig2_Storage") + "/"
 
 #%% Model parameters
 mod_prop = {
@@ -648,7 +649,7 @@ if __name__ == '__main__':
     model_scatters = [0.01, 0.03162277660168379, 0.09999999999999995, 0.31622776601683783,\
                       0.9999999999999994, 3.162277660168377, 9.999999999999995,\
                       99.9999999999999, 999.999999999998, 3162.2776601683763,
-                      9999.99999999998, 31622.77660168373, 100000.0] + [16.0, 27.0, 46.0, 77.0, 129.0, 215.0, 359.0, 599.0]
+                      9999.99999999998, 31622.77660168373] + [16.0, 27.0, 46.0, 77.0, 129.0, 215.0, 359.0, 599.0]
     seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
     PLD_orders = [2, 3, 4]
 
@@ -844,6 +845,74 @@ if __name__ == '__main__':
     ax_left.set_xticklabels([])
     ax_left.set_yticklabels([])
 
+    # --- Left panel annotations ---
+    # Get axis limits for positioning
+    xlim = ax_left.get_xlim()
+    ylim = ax_left.get_ylim()
+
+    x_left  = xlim[0]
+    x_right = xlim[1]
+    x_range = x_right - x_left
+    y_range = ylim[1] - ylim[0]
+
+    # --- σ_OOT: vertical double-headed arrow on the right, in the out-of-transit region ---
+    # Place it just to the right of the transit, at the out-of-transit flux level
+    x_arrow_oot = x_left + x_range * 0.37   # right of transit egress
+    y_oot_center = float(true_lc.max())-float(noisy_std.mean())    # out-of-transit flux ~ 1.0
+    y_oot_top    = y_oot_center + float(noisy_std.mean())
+    y_oot_bot    = y_oot_center - 2*float(noisy_std.mean())
+
+    ax_left.annotate("", xy=(x_arrow_oot, y_oot_top), xytext=(x_arrow_oot, y_oot_bot),
+                    arrowprops=dict(arrowstyle="<->", color="black", lw=1.2))
+    ax_left.text(x_arrow_oot + x_range * 0.02, y_oot_center - 0.5*float(noisy_std.mean()),
+                r'$\sigma_{\rm OOT}$', fontsize=11, va='center', ha='left')
+
+    # --- σ_ref label on the left side ---
+    ax_left.text(x_left + x_range * 0.3, y_oot_center - y_range * 0.15,
+                r'$\sigma_{\rm ref} = \dfrac{\sigma_{\rm OOT}}{\sqrt{N}}$',
+                fontsize=10, va='center', ha='right')
+
+    # --- Transit Depth D: vertical double-headed arrow on the left side ---
+    y_bottom = float(true_lc.min())   # bottom of transit
+    y_top    = float(true_lc.max())   # out-of-transit level
+
+    x_arrow_D = x_left + x_range * 0.5   # slightly inside left edge
+
+    ax_left.annotate("", xy=(x_arrow_D, y_top), xytext=(x_arrow_D, y_bottom),
+                    arrowprops=dict(arrowstyle="<->", color="black", lw=1.2))
+    ax_left.text(x_arrow_D - x_range * 0.03, (y_top + y_bottom) / 2,
+                r'Transit Depth, $D$', fontsize=10, va='center', ha='right',
+                rotation=90)
+
+    # --- A definition: placed in the middle-right of the left panel ---
+    x_def = x_right * 0.35
+    y_def = y_bottom - y_range * 0.02
+    ax_left.text(x_def, y_def,
+                r'$A := \dfrac{\sigma_D}{\sigma_{\rm ref}}$' + '\n' +
+                r'$= \sqrt{3}$, in theory',
+                fontsize=10, va='bottom', ha='left')
+
+    # Arrow from "= sqrt(3), in theory" pointing toward the dashed line on right panel
+    # (This is a cross-axes annotation; we use figure coordinates)
+    # Simpler: just add a small rightward arrow from the text
+    ax_left.annotate("",
+                    xy=(x_right * 0.9, y_def + y_range * 0.02),
+                    xytext=(x_def + x_range * 0.48, y_def + y_range * 0.02),
+                    arrowprops=dict(arrowstyle="<-", color="black", lw=1.0))
+
+    # --- N in-transit points: horizontal arrow along the bottom ---
+    # Find the transit duration extent in time
+    in_transit_mask = (init_state_dic['times'] > init_state_dic['t0'] - T_dur/2) & \
+                    (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)
+    t_ingress = float(init_state_dic['times'][in_transit_mask][0])
+    t_egress  = float(init_state_dic['times'][in_transit_mask][-1])
+
+    y_N = y_bottom - y_range * 0.09   # just below the transit bottom
+
+    ax_left.annotate("", xy=(t_egress, y_N), xytext=(t_ingress, y_N),
+                    arrowprops=dict(arrowstyle="|-|", color="black", lw=1.2))
+    ax_left.text(0.0, y_N - y_range * 0.04,
+                r'$N$ in-transit points', fontsize=10, va='top', ha='center')
 
 
     # --- Right-hand plot ---
@@ -954,8 +1023,8 @@ if __name__ == '__main__':
     ax_right.set_ylabel(r'Amplification Factor ($A$)', fontsize=12)
     ax_right.tick_params(axis='x', labelsize=12)
     ax_right.tick_params(axis='y', labelsize=12)
-    ax_right.set_xticks([0.01, 0.1, 1, 10, 100, 1000, 10000, 100000], labels = [0.01, 0.1, 1, 10, 100, 1000, 10000, 100000])
-    ax_right.set_xlim([0.008, 70000])
+    ax_right.set_xticks([0.01, 0.1, 1, 10, 100, 1000, 10000], labels = [0.01, 0.1, 1, 10, 100, 1000, 10000])
+    ax_right.set_xlim([0.008, 100000])
     ax_right.set_yticks([1, 10], labels = [1, 10])
     ax_right.grid(which='both', linestyle='--', alpha=0.5)
     ax_right.set_ylim([0.85, 60])
@@ -984,15 +1053,15 @@ if __name__ == '__main__':
                 shading='auto', cmap='Greys', alpha=alpha_2d, zorder=0)
 
     ax_right.axhline(np.sqrt(3), color='k', linestyle='dashed')
-    ax_right.text(0.4, np.sqrt(3) - 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
+    ax_right.text(0.009, np.sqrt(3) - 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
     ax_right.text(200, 50, 'Transition region', fontsize=12, color='black')
-    ax_right.text(9000, 50, 'Noise limited', fontsize=12, color='black')
+    ax_right.text(12000, 50, 'Noise limited', fontsize=12, color='black')
     ax_right.text(5.5, 50, 'Model limited', fontsize=12, color='black')
     ax_right.text(0.03, 50, 'Sampler limited', fontsize=12, color='black')
 
     # Add arrows from "Transition Region" to the other two regions
     ax_right.annotate("",
-                xy=(8200, 52), xycoords="data",   # Noise Limited
+                xy=(10000, 52), xycoords="data",   # Noise Limited
                 xytext=(2100, 52), textcoords="data",  # Transition Region
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
 
@@ -1101,8 +1170,48 @@ if __name__ == '__main__':
             ax_right.text(text_loc, y_asym_right - (y_asym_right/5), f'asymptote @ A = {y_asym_right:.0f}', fontsize=12, color=asym_color)
         else:
             ax_right.text(text_loc, y_asym_right + (y_asym_right/5), f'asymptote @ A = {y_asym_right:.0f}', fontsize=12, color=asym_color)
+
+    # --- Convergence to theoretical limit text ---
+    ax_right.text(9000, 15, 
+                  'Convergence to\ntheoretical limit', 
+                  fontsize=12, 
+                  color='black',
+                  bbox=dict(facecolor='white', alpha=0.7, edgecolor='silver', boxstyle='round,pad=0.5', lw=1.5))
+
+    ax_right.annotate("",
+                xy=(31622, 46), xycoords="data",   # Noise Limited
+                xytext=(31622, 22), textcoords="data",  # Convergence Text
+                arrowprops=dict(arrowstyle="<-", color="black", lw=1.5))
+    
+    ax_right.annotate("",
+                xy=(31622, 12), xycoords="data",   # Convergence Text
+                xytext=(31622, 2.4), textcoords="data",  # 30,000ppm points
+                arrowprops=dict(arrowstyle="<-", color="black", lw=1.5))
+    
+    # --- Right panel legend: Injection/Retrieval LD law ---
+    legend_elements = [
+        Patch(facecolor='lightblue',   edgecolor='blue',   label=r'$2^{\rm nd}$ order poly.'),
+        Patch(facecolor='lightgreen',  edgecolor='green',  label=r'$3^{\rm rd}$ order poly.'),
+        Patch(facecolor='lightsalmon', edgecolor='salmon',  label=r'$4^{\rm th}$ order poly.'),
+    ]
+
+    legend = ax_right.legend(
+        handles=legend_elements,
+        title=r'Injection/Retrieval LD law :',
+        title_fontsize=11,
+        fontsize=11,
+        loc='lower center',
+        framealpha=0.85,
+        edgecolor='gray',
+        fancybox=False,
+        bbox_to_anchor=[0.55, 0.],
+        ncol=4,                        
+        handlelength=1.5,
+        handleheight=1.5,
+        borderpad=0.8,
+    )
+
     print(f"\nPlotting complete in {time.time() - t_plot_start:.2f} seconds")
 
-    plt.savefig(raw_save_dir+'Fig1_opt.png')
-    # fig.savefig(paths.figures / "Fig1.pdf", bbox_inches="tight", dpi=300)
-    plt.show()
+    # plt.savefig(raw_save_dir+'Fig1_opt.pdf', bbox_inches="tight")
+    plt.savefig(paths.figures / "Fig1.pdf", bbox_inches="tight")
