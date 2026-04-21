@@ -7,10 +7,18 @@ dependencies:
   - matplotlib
   - jax
   - astropy
+  - astroquery
   - scipy
   - arviz
   - corner
+  - tqdm
+  - lmfit
+  - numpyro
+  - scikit-learn
+  - pandas
   - pip:
     - jaxoplanet
+    - exotic-ld
+    - squishyplanet
     - git+https://github.com/SamMerc/emcee-jax.git
 
