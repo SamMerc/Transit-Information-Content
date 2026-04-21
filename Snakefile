@@ -23,7 +23,7 @@ rule Fig3_run:
         script="src/scripts/Fig3_run.py",
         data="src/data/Fig2_Storage"
     output:
-        directory("src/data/Fig3_Storage")
+        "src/data/Fig3_Storage/chi2_r_r.npy"
     script:
         "src/scripts/Fig3_run.py"
 
@@ -31,7 +31,8 @@ rule Fig3_run:
 rule Fig3:
     input:
         script="src/scripts/Fig3_plot.py",
-        data="src/data/Fig3_Storage"
+        data="src/data/Fig3_Storage",
+        chi2="src/data/Fig3_Storage/chi2_r_r.npy"
     output:
         "tex/figures/Fig3.pdf",
         "tex/figures/Fig5.pdf"
