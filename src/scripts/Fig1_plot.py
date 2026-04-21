@@ -94,7 +94,7 @@ num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T_dur/2)
                         (init_state_dic['times'] < init_state_dic['t0'] + T_dur/2)))
 
 #%% Location of MCMC results and where plot will be output
-raw_save_dir = str(paths.data / "Fig2_Storage") + "/"
+raw_save_dir = str(paths.data / "Fig1_Storage") + "/"
 
 #%% Model parameters
 mod_prop = {
