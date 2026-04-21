@@ -42,7 +42,8 @@ rule Fig3:
 rule Appendix1:
     input:
         script="src/scripts/Appendix1_plot.py",
-        data="src/data/Appendix1_Storage"
+        data="src/data/Fig3_Storage",
+        chi2="src/data/Fig3_Storage/chi2_r_r.npy"
     output:
         "tex/figures/Appendix1.pdf",
     script:

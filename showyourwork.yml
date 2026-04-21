@@ -33,6 +33,8 @@ datasets:
 dependencies:
   src/scripts/Fig3_plot.py:
     - src/data/Fig3_Storage/chi2_r_r.npy
+  src/scripts/Appendix1_plot.py:
+    - src/data/Fig3_Storage/chi2_r_r.npy
   # src/tex/ms.tex:
   #   - src/tex/stylesheet.tex
 
