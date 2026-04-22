@@ -960,7 +960,7 @@ for model in models:
                 for ci, cl in enumerate(unique_cl):
                     cmask = cluster_labels == cl
                     ax.scatter(corner_data[cmask, col], corner_data[cmask, row],
-                                color=cluster_colors[ci], s=6, alpha=0.35,
+                                color=cluster_colors[ci], s=6, alpha=0.5,
                                 linewidths=0, label=f'C{cl}', rasterized=True)
                 for cidx, slabel, scol in zip(special_indices, special_labels, special_colors):
                     ax.scatter(corner_data[cidx, col], corner_data[cidx, row],

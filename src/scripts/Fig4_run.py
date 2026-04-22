@@ -63,7 +63,13 @@ init_state_dic['e'] = 0.                                      #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-init_NLLD_coeffs = [0.1, 0.2, 0.4, 0.3]
+#C1 : 1.4394   -1.8472    1.4695   -0.4682
+init_NLLD_coeffs = [1.4394, -1.8472, 1.4695, -0.4682]
+#C3 : -0.0115    1.7520   -1.9378    0.7261
+# init_NLLD_coeffs = [-0.0115, 1.7520, -1.9378, 0.7261]
+#C4 : 0.8329   -0.6523    0.9283   -0.3483
+# init_NLLD_coeffs = [0.8329, -0.6523, 0.9283, -0.3483]
+
 init_PLD_coeffs = nonlinear_4param_ld_law(u1=init_NLLD_coeffs[0], u2=init_NLLD_coeffs[1], u3=init_NLLD_coeffs[2], u4=init_NLLD_coeffs[3])
 
 #Updating initial state dictionary
@@ -100,7 +106,7 @@ num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number 
 init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
 #%% Storing outputs of nested sampling and plots
-raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig4_Storage/'
+raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig4_Storage/C1/'
 
 #%% Model parameters
 mod_prop = {
@@ -131,8 +137,8 @@ fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$",
 
 #%% MCMC specific settings
 fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 1000
-fixed_args['nburn'] = 700
+fixed_args['nsteps'] = 100000
+fixed_args['nburn'] = 70000
 fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
 #%% Numpyro specific - set to False for faster
 fixed_args['adapt_step_size'] = True
@@ -140,7 +146,7 @@ fixed_args['dense_matrix'] = True
 fixed_args['regularize_mass_matrix'] = True
 
 #%% Set model scatter
-model_scatter = 16.68100537200059
+model_scatter = 46.0
 
 #############################################
 ########## Define parrallelization ##########
@@ -172,6 +178,7 @@ if 'PLD' in LDL:
     PLD_order = int(LDL[-1])
 
     best_fit_LDCs = nonlinear_4param_ld_law(u1=init_NLLD_coeffs[0], u2=init_NLLD_coeffs[1], u3=init_NLLD_coeffs[2], u4=init_NLLD_coeffs[3], order=PLD_order)
+    true_LD_coeffs = {f'LD_u{i+1}': best_fit_LDCs[i] for i in range(PLD_order)}
 
     #Update model variables
     for iLDC in range(1,PLD_order+1):
@@ -212,13 +219,15 @@ if 'PLD' in LDL:
 
 elif LDL == '4NLLD':
 
+    true_LD_coeffs = {f'LD_u{i+1}': init_NLLD_coeffs[i] for i in range(4)}
+
     #Update model variables
     mod_prop.update(
         {
-            'LD_u1'     : {'vary':True, 'guess':0.1, 'bounds':[-0.4, 0.7]},
-            'LD_u2'     : {'vary':True, 'guess':0.2, 'bounds':[-0.3, 0.7]},
-            'LD_u3'     : {'vary':True, 'guess':0.4, 'bounds':[-0.1, 0.9]},
-            'LD_u4'     : {'vary':True, 'guess':0.3, 'bounds':[-0.2, 0.8]},
+            'LD_u1'     : {'vary':True, 'guess':init_NLLD_coeffs[0], 'bounds':[init_NLLD_coeffs[0] - 0.5, init_NLLD_coeffs[0] + 0.5]},
+            'LD_u2'     : {'vary':True, 'guess':init_NLLD_coeffs[1], 'bounds':[init_NLLD_coeffs[1] - 0.5, init_NLLD_coeffs[1] + 0.5]},
+            'LD_u3'     : {'vary':True, 'guess':init_NLLD_coeffs[2], 'bounds':[init_NLLD_coeffs[2] - 0.5, init_NLLD_coeffs[2] + 0.5]},
+            'LD_u4'     : {'vary':True, 'guess':init_NLLD_coeffs[3], 'bounds':[init_NLLD_coeffs[3] - 0.5, init_NLLD_coeffs[3] + 0.5]},
         }
     )
 
@@ -233,10 +242,10 @@ elif LDL == '4NLLD':
         #Set prior based on value obtain from intensity curve fit
         priors_dic.update(
             {
-            'LD_u1'         : {'type':'gauss', 'val':0.1, 's_val':0.1 * (strength / 100)},
-            'LD_u2'         : {'type':'gauss', 'val':0.2, 's_val':0.2 * (strength / 100)},
-            'LD_u3'         : {'type':'gauss', 'val':0.4, 's_val':0.4 * (strength / 100)},
-            'LD_u4'         : {'type':'gauss', 'val':0.3, 's_val':0.3 * (strength / 100)},
+            'LD_u1'         : {'type':'gauss', 'val':init_NLLD_coeffs[0], 's_val':init_NLLD_coeffs[0] * (strength / 100)},
+            'LD_u2'         : {'type':'gauss', 'val':init_NLLD_coeffs[1], 's_val':init_NLLD_coeffs[1] * (strength / 100)},
+            'LD_u3'         : {'type':'gauss', 'val':init_NLLD_coeffs[2], 's_val':init_NLLD_coeffs[2] * (strength / 100)},
+            'LD_u4'         : {'type':'gauss', 'val':init_NLLD_coeffs[3], 's_val':init_NLLD_coeffs[3] * (strength / 100)},
             }
         )
     
@@ -308,7 +317,7 @@ def create_jaxoplanet_model(x, p, fitting):
     #Retrieving ecc and w
     if ('sqrtecosw' in p) and ('sqrtesinw' in p):
         ecc = p['sqrtecosw']**2 + p['sqrtesinw']**2
-        w = jnp.arccos(p['sqrtecosw']/jnp.sqrt(ecc))
+        w = jnp.arctan2(p['sqrtesinw'], p['sqrtecosw'])
     elif ('e' in p) and ('omega' in p):
         ecc = p['e']
         w = p['omega']
@@ -485,6 +494,61 @@ def emcee_log_probability(p_step, x, y, yerr):
     lk = jnp.where(jnp.isnan(lk), -jnp.inf, lk)
 
     return lp + lk, {'step_chi2': step_chi2}
+
+def next_pow_two(n):
+    """Find the next power of two greater than or equal to n."""
+    i = 1
+    while i < n:
+        i = i << 1
+    return i
+
+
+def autocorr_func_1d(x, norm=True):
+    """Estimate the normalized autocorrelation function of a 1-D series via FFT."""
+    x = np.atleast_1d(x)
+    if len(x.shape) != 1:
+        raise ValueError("invalid dimensions for 1D autocorrelation function")
+    n = next_pow_two(len(x))
+
+    # Compute the FFT and then (auto-)correlation function
+    f = np.fft.fft(x - np.mean(x), n=2 * n)
+    acf = np.fft.ifft(f * np.conjugate(f))[: len(x)].real
+    acf /= 4 * n
+
+    # Optionally normalize
+    if norm:
+        acf /= acf[0]
+
+    return acf
+
+
+def auto_window(taus, c):
+    """Automated windowing procedure following Sokal (1989)."""
+    m = np.arange(len(taus)) < c * taus
+    if np.any(m):
+        return np.argmin(m)
+    return len(taus) - 1
+
+
+def autocorr_gw2010(y, c=5.0):
+    """Autocorrelation-time estimator following Goodman & Weare (2010).
+    Averages the chain across walkers before computing the ACF."""
+    f = autocorr_func_1d(np.mean(y, axis=0))
+    taus = 2.0 * np.cumsum(f) - 1.0
+    window = auto_window(taus, c)
+    return taus[window]
+
+
+def autocorr_new(y, c=5.0):
+    """Improved autocorrelation-time estimator.
+    Computes per-walker ACF then averages."""
+    f = np.zeros(y.shape[1])
+    for yy in y:
+        f += autocorr_func_1d(yy)
+    f /= len(y)
+    taus = 2.0 * np.cumsum(f) - 1.0
+    window = auto_window(taus, c)
+    return taus[window]
 
 #############################################
 ################ Running code ###############
@@ -700,7 +764,7 @@ print('STEP 3: CORNER')
 truth_dic={}
 for param,parlabel in zip(fixed_args['var_param_list'],fixed_args['labels']): 
     if ('LD' in param):
-        truth_dic[parlabel] = init_state_dic[param]
+        truth_dic[parlabel] = true_LD_coeffs[param]
     elif param=='sqrtecosw':
         truth_dic[parlabel] = jnp.sqrt(init_state_dic['e'])*jnp.cos(init_state_dic['omega'])
     elif param=='sqrtesinw':
@@ -807,3 +871,65 @@ scatter_in_bin = (model_scatter*1e-6)/jnp.sqrt(num_IT_pts)
 #% Print results
 print(f'Median radius ratio: {median_r} +/- {jnp.std(r_chain)}. Median amplification factor: {median_r_error/scatter_in_bin}')
 print(f'Bestfit radius ratio: {bestfit_r} +/- {jnp.std(r_chain)}. Bestfit amplification factor: {bestfit_r_error/scatter_in_bin}')
+
+# 6. Plot the autocorrelation time estimates for each parameter
+print('STEP 6: AUTOCORRELATION TIME')
+
+# Number of chain-length evaluation points
+n_eval = 15
+# Use the post-burn-in chain: shape (nwalkers, nsteps_postburn, ndim)
+postburn_chain = np.array(raw_chain[:, fixed_args['nburn']:, :])
+nsteps_postburn = postburn_chain.shape[1]
+
+# Chain lengths at which to evaluate tau
+N_eval = np.unique(
+    np.exp(np.linspace(np.log(100), np.log(nsteps_postburn), n_eval)).astype(int)
+)
+
+# Set up figure: one subplot per free parameter
+ncols = 3
+nrows = int(np.ceil(fixed_args['ndim'] / ncols))
+fig_ac, axes_ac = plt.subplots(
+    nrows, ncols, figsize=(6 * ncols, 4 * nrows), squeeze=False
+)
+
+for iparam in range(fixed_args['ndim']):
+    ax = axes_ac[iparam // ncols, iparam % ncols]
+
+    # Extract this parameter's chain across all walkers: shape (nwalkers, nsteps_postburn)
+    y_param = postburn_chain[:, :, iparam]
+
+    gw2010_vals = np.full(len(N_eval), np.nan)
+    new_vals = np.full(len(N_eval), np.nan)
+
+    for idx, n in enumerate(N_eval):
+        try:
+            gw2010_vals[idx] = autocorr_gw2010(y_param[:, :n])
+        except Exception:
+            pass
+        try:
+            new_vals[idx] = autocorr_new(y_param[:, :n])
+        except Exception:
+            pass
+
+    # Plot both estimators
+    ax.loglog(N_eval, gw2010_vals, "o-", label="G&W 2010", color="C0", markersize=4)
+    ax.loglog(N_eval, new_vals, "o-", label="New", color="C1", markersize=4)
+
+    # Plot the tau = N/50 convergence threshold
+    ylim = ax.get_ylim()
+    ax.loglog(N_eval, N_eval / 50.0, "--k", label=r"$\tau = N/50$")
+    ax.set_ylim(ylim)
+
+    ax.set_xlabel("Number of samples, $N$")
+    ax.set_ylabel(r"$\tau$ estimates")
+    ax.set_title(fixed_args['labels'][iparam])
+    ax.legend(fontsize=8)
+
+# Turn off any unused subplots
+for iparam in range(fixed_args['ndim'], nrows * ncols):
+    axes_ac[iparam // ncols, iparam % ncols].set_visible(False)
+
+fig_ac.tight_layout()
+plt.savefig(fixed_args['save_loc'] + 'autocorrelation.pdf')
+plt.close()
