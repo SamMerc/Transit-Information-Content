@@ -1054,10 +1054,10 @@ if __name__ == '__main__':
 
     ax_right.axhline(np.sqrt(3), color='k', linestyle='dashed')
     ax_right.text(0.009, np.sqrt(3) - 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
-    ax_right.text(200, 50, 'Transition region', fontsize=12, color='black')
-    ax_right.text(12000, 50, 'Noise limited', fontsize=12, color='black')
-    ax_right.text(5.5, 50, 'Model limited', fontsize=12, color='black')
-    ax_right.text(0.03, 50, 'Sampler limited', fontsize=12, color='black')
+    ax_right.text(200, 50, 'Transition region', fontsize=11, color='black')
+    ax_right.text(12000, 50, 'Noise limited', fontsize=11, color='black')
+    ax_right.text(5.5, 50, 'Model limited', fontsize=11, color='black')
+    ax_right.text(0.03, 50, 'Sampler limited', fontsize=11, color='black')
 
     # Add arrows from "Transition Region" to the other two regions
     ax_right.annotate("",
@@ -1174,7 +1174,7 @@ if __name__ == '__main__':
     # --- Convergence to theoretical limit text ---
     ax_right.text(9000, 15, 
                   'Convergence to\ntheoretical limit', 
-                  fontsize=12, 
+                  fontsize=11, 
                   color='black',
                   bbox=dict(facecolor='white', alpha=0.7, edgecolor='silver', boxstyle='round,pad=0.5', lw=1.5))
 

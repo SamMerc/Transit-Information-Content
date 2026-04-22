@@ -1,5 +1,5 @@
 # Enable rule caching on Zenodo?
-cache_on_zenodo: true
+cache_on_zenodo: false
 
 # Workflow graph (DAG) generation
 dag:
