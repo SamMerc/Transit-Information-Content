@@ -48,6 +48,15 @@ rule Fig3:
     script:
         "src/scripts/Fig3_plot.py"
 
+rule Fig5:
+    input:
+        script="src/scripts/Fig5_plot.py",
+        cache="src/data/Fig5_Storage/mps1/data.pkl",
+    output:
+        "src/tex/figures/Fig5.pdf"
+    cache: True
+    script:
+        "src/scripts/Fig5_plot.py"
 
 rule Appendix1:
     input:

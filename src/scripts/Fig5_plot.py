@@ -2,801 +2,584 @@
 ########## Purpose ##########
 #############################
 
-# Figure 5 showcases the amplification factor change across wavelength, orbital geometry, and stellar type.
-# The goal of this file is to run injection-retrievals for a grid of 1. wavelengths, 2. impact parameters, 3. stellar effective temperatures, and 4. noise seeds.
-# In particular the grid is 0.6-5.3 micron with R=300 wavelengths by 5 impact parameters by 10 stellar effective temperatures by 10 noise seeds, i.e. 327,500 injection-retrievals.
-# In these tests, the injected LC is done with a 4th order non-linear LDL, while the retrieval is done with polynomial LDLs going from 2-9 and 4NLLD.
+# Figures 2, 3, and 4 require a 4-th order non-linear limb-darkening law for the injection / simulation of the LC.
+# Given that we are working with a made up fiducial system, we need to identify the limb-darkening values to use for this.
+# In order to do this, we explore all available intensity profiles for a given grid of stellar properties, fit these profiles
+# with a 4th order NLLD and perform a clustering algorithm to identify clusters, the overall mode, and the cluster modes. This
+# file plots the intensity profiles selected for the analyses in figures 2, 3, and 4. To see how these intensity profiles are
+# generated see Fig2_helper.py
+#
+# This version works exclusively with global (disc-integrated) stellar intensity profiles — no transit
+# chord / impact-parameter / planet-size dependence. For that see the Paper2 related files.
+
 
 ######################################
 ########## Import libraries ##########
 ######################################
-from jax import random
-import jax
-print(f"JAX devices: {jax.devices()}")
-print(f"Default backend: {jax.default_backend()}")
-import jax.numpy as jnp
-import emcee_jax
-import matplotlib.pyplot as plt
-from jaxoplanet.orbits.keplerian import System, Central
-import astropy.units as u
-from astropy.constants import G
-from jaxoplanet.light_curves import limb_dark_light_curve
-from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
-import corner
-import time
-import arviz as az
+
 import numpy as np
-import os, itertools, sys
-import numpyro
-from numpyro.distributions import Normal, Uniform
-from numpyro.infer import MCMC, NUTS, HMC, init_to_value
+import matplotlib
+import os
+import paths
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
+import pickle
+from lmfit import minimize, Parameters
+from tqdm import tqdm
+from scipy.cluster.hierarchy import (linkage, fcluster,
+                                     dendrogram as scipy_dendrogram,
+                                     optimal_leaf_ordering)
+from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import cdist
 
-# For multi-core parallelism (useful when running multiple MCMC chains in parallel)
-numpyro.set_host_device_count(1)
 
-# For CPU (use "gpu" for GPU)
-numpyro.set_platform("cpu")
+######################################
+########## Hyper-parameters ##########
+######################################
 
-# For 64-bit precision since JAX defaults to 32-bit
-jax.config.update("jax_enable_x64", True)
+input_save_path = str(paths.data / "Fig5_Storage") + "/"
 
-# Set random seed
-jaxnoise_key = jax.random.PRNGKey(0)
+models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
-#############################################
-########## Define hyper-parameters ##########
-#############################################
-#%% Mock light curve
+# Number of points in the grid of stellar parameters (Teff, logg, metallicity).
+N_star = 10
 
-#%%%% Define G in units needed now to avoid JAX tracing issues
-G_solar_units = G.to(u.Rsun**3 / (u.Msun * u.day**2)).value
-R_star = (1.0 * u.R_sun).value
-#%%%% Mock system - fiducial
-init_state_dic = {}
-init_state_dic['period'] = 1.                                 #days
-a_meters = ( (G.value * (1.0 * u.M_sun).to(u.kg).value * (init_state_dic['period'] * 24 * 3600)**2)/(4 * jnp.pi**2) )**(1/3)  
-init_state_dic['a'] = a_meters / (1.0 * u.R_sun).to(u.m).value  #stellar radius
-init_state_dic['r'] = 0.1                                     #stellar radius
-init_state_dic['i'] = jnp.deg2rad(90)                         #radians
-init_state_dic['omega'] = 0.0                                 #radians
-init_state_dic['e'] = 0.                                      #unitless
-init_state_dic['t0'] = 0.0                                    #days
+# Number of mu values to interpolate to — set to EJ16 value.
+n_mu_fine = 100
 
-# Wavelength array parameters
-lambda_min = 0.6  # microns
-lambda_max = 5.3  # microns
-R = 300
+# ── Profile subsampling ───────────────────────────────────────────────────────
+# If True, randomly draw n_subsample_profiles from the valid profiles before
+# running clustering, fitting, etc.  Set to False to use all valid profiles.
+subsample_profiles   = True
+n_subsample_profiles = 50000
+subsample_seed       = 42  # for reproducibility
 
-#%% Storing outputs of nested sampling and plots
-raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig5_Storage/'
+# Whether to plot the dendrogram of the hierarchical clustering step.
+plot_dendogram = False
 
-#%% Model parameters
-mod_prop = {
-    'r'         : {'vary':True, 'guess':0.11, 'bounds':[0.07, 0.15]},
-    'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(92.)]},
-    'a'         : {'vary':True, 'guess':init_state_dic['a']-1, 'bounds':[init_state_dic['a']-2, init_state_dic['a']+2]},
-    'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]}, #Gaussian prior
-    'sqrtecosw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
-    'sqrtesinw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
-    't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
-}
 
-#%% Priors
-priors_dic = {
-    'r'             : {'type':'uf', 'bounds':[0., 1.]},
-    'i'             : {'type':'uf', 'bounds':[jnp.deg2rad(70), jnp.deg2rad(110)]},
-    'a'             : {'type':'uf', 'bounds':[0, 50]},
-    'period'        : {'type':'gauss', 'val':1.0000, 's_val':0.0005},
-    'sqrtecosw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
-    'sqrtesinw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
-}
+############################
+###### Function block ######
+############################
 
-#%% Fitting mode
-fixed_args={}
-fixed_args['run_mode'] = 'use'
-fixed_args['nthreads'] = jax.device_count()
-fixed_args['labels'] = ["RpR$_*$", 'i', "aR$_*$", "P", "$\sqrt{e}\cos{\omega}$", "$\sqrt{e}\sin{\omega}$", 'u$_1$', 'u$_2$', 'u$_3$']
-
-#%% MCMC specific settings
-fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 1000
-fixed_args['nburn'] = 700
-fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
-#%% Numpyro specific - set to False for faster
-fixed_args['adapt_step_size'] = True
-fixed_args['dense_matrix'] = True
-fixed_args['regularize_mass_matrix'] = True
-
-#%% Set model scatter
-model_scatter = 16.68100537200059
-
-#%% Set PLD order to use
-PLD_order = 3
-
-#############################################
-########## Define parrallelization ##########
-#############################################
-def create_wavelength_array(lambda_min, lambda_max, R):
+def hierarchical_clustering(
+    data,
+    label,
+    save_path,
+    feature_labels    = None,
+    cutoff            = None,
+    method            = 'complete',
+    max_display       = 60,
+    n_subsample       = 30_000,
+    external_labels   = None,
+    clustering_metric = 'euclidean',
+    plot_corner       = False,
+):
     """
-    Create a wavelength array with constant spectral resolution R.
-    
-    Parameters:
-    -----------
-    lambda_min : float
-        Minimum wavelength (microns)
-    lambda_max : float
-        Maximum wavelength (microns)
-    R : float
-        Spectral resolution (R = lambda / delta_lambda)
-    
-    Returns:
-    --------
-    wavelengths : ndarray
-        Array of wavelength values with constant R
+    Hierarchical clustering with scipy pairwise distance computation.
+
+    Parameters
+    ----------
+    data             : np.ndarray (N, D)
+    label            : str
+    save_path        : str
+    feature_labels   : list of str, optional
+    cutoff           : float or None
+    method           : str   linkage method  ('single', 'complete', 'average',
+                             'weighted', 'centroid', 'median', 'ward')
+    max_display      : int   max dendrogram leaves shown
+    n_subsample      : int   scatter plot cap per cluster
+    external_labels  : np.ndarray or None   pre-computed labels (skips clustering)
+    clustering_metric: str   distance metric for cdist
+
+    Returns
+    -------
+    labels       : np.ndarray (N,)   1-indexed cluster labels
+    cutoff_used  : float
+    Z            : np.ndarray (N-1, 3) or None
     """
-    wavelengths = [lambda_min]
-    
-    while wavelengths[-1] < lambda_max:
-        current_lambda = wavelengths[-1]
-        # Calculate delta_lambda for current wavelength
-        delta_lambda = current_lambda / R
-        next_lambda = current_lambda + delta_lambda
-        
-        if next_lambda > lambda_max:
-            break
-        wavelengths.append(next_lambda)
-    
-    print(f"Number of wavelength points: {len(wavelengths)}")
-    
-    return np.array(wavelengths)
+    N, D = data.shape
+    if feature_labels is None:
+        feature_labels = [f'Feature {d}' for d in range(D)]
 
-# Define the fit parameters
-impact_params = [0., 0.2, 0.4, 0.6, 0.8]
-wavelengths = create_wavelength_array(lambda_min, lambda_max, R)
-#See Fig5_helper.py to learn how this temperature array is made
-Teffs = [3566.7, 4493.2, 4928.8, 5234.4, 5481.0, 5648.2, 5775.0, 5937.2, 6108.0, 6405.0]
-seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
+    # ── External-labels path — skip clustering, go straight to plotting ───────
+    if external_labels is not None:
+        valid_ext  = external_labels >= 0
+        data       = data[valid_ext]
+        labels     = (external_labels[valid_ext] + 1).astype(int)
+        unique_cl  = np.unique(labels)
+        n_cls      = len(unique_cl)
+        cutoff_used = np.nan
+        Z           = None
+        print(f'  [{label}] External labels: {n_cls} modes, '
+              f'{valid_ext.sum():,} valid profiles')
 
-# # Distribute tasks - for HPC usage
-# task_arrays = [impact_params, wavelengths, Teffs, seeds]
-# param_combos = list(itertools.product(*task_arrays))
-# param_combos = [list(c) for c in param_combos]
+        cls_colors = plt.cm.tab10(np.linspace(0, 1, min(n_cls, 10)))
+        if n_cls > 10:
+            cls_colors = plt.cm.hsv(np.linspace(0, 0.9, n_cls))
 
-# my_task_id = int(sys.argv[1])
-# impact_param, wavelength, Teff, seed = param_combos[my_task_id - 1]
-
-impact_param = 0.6
-wavelength = wavelengths[0]
-Teff = 3566.7
-seed = 50
-
-#################################################################
-########## Setting limb-darkening and orbital geometry ##########
-#################################################################
-
-#Setting orbital geometry
-if impact_param != 0.0:
-
-    #Updating the initial state dictionary
-    init_state_dic['i'] = jnp.arccos(impact_param / init_state_dic['a'])
-
-    #Update model variables dictionary
-    mod_prop.update(
-        {
-        'i'         : {'vary':True, 'guess':jnp.deg2rad(jnp.rad2deg(init_state_dic['i']) - 1), 'bounds':[jnp.deg2rad(jnp.rad2deg(init_state_dic['i']) - 2), jnp.deg2rad(jnp.rad2deg(init_state_dic['i']) + 2)]},
-        }
-    )
-
-    #Update priors dictionary 
-    priors_dic.update(
-        {
-            'i'             : {'type':'uf', 'bounds':[jnp.deg2rad(70), jnp.deg2rad(90)]},
-        }
-    )
-
-# Calculate transit duration
-# Impact parameter (eccentricity-corrected)
-b = (
-    (init_state_dic['a'] * jnp.cos(init_state_dic['i'])) / R_star
-    * (1 - init_state_dic['e']**2) / (1 + init_state_dic['e'] * jnp.sin(init_state_dic['omega']))
-)
-# Argument inside arcsin
-arg = (
-    (1/init_state_dic['a'])
-    * jnp.sqrt((1 + init_state_dic['r'])**2 - b**2)
-    / jnp.sin(init_state_dic['i'])
-)
-# Numerical safety
-arg = np.clip(arg, -1.0, 1.0)
-# Transit duration
-T_dur = (
-    (init_state_dic['period'] / jnp.pi)
-    * jnp.sqrt(1 - init_state_dic['e']**2) / (1 + init_state_dic['e'] * jnp.sin(init_state_dic['omega']))
-    * jnp.arcsin(arg)
-)
-
-#%%%% Model time - ensure pre- and post-transit are same duration as transit
-low_t = -1.5*T_dur                                                      #days
-high_t = 1.5*T_dur                                                      #days
-exposure_time = 5                                                       #seconds
-num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number of points
-init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
-
-#Setting limb-darkening
-# Use Teff and wavelength to set the limb darkening coefficients used in the initialization
-init_NLLD_coeffs = #TODO
-init_PLD_coeffs = nonlinear_4param_ld_law(u1=init_NLLD_coeffs[0], u2=init_NLLD_coeffs[1], u3=init_NLLD_coeffs[2], u4=init_NLLD_coeffs[3])
-
-#Updating initial state dictionary
-for iLD, LD_coeff in enumerate(init_PLD_coeffs):
-    init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
-
-#Find the coefficients to use for initialization of model
-model_init_coeffs = nonlinear_4param_ld_law(u1=init_NLLD_coeffs[0], u2=init_NLLD_coeffs[1], u3=init_NLLD_coeffs[2], u4=init_NLLD_coeffs[3], order=PLD_order)
-
-#Update model variables dictionary
-for iLDC in range(1,PLD_order+1):
-    mod_prop.update(
-        {
-            f'LD_u{iLDC}' : {'vary':True, 'guess':model_init_coeffs[iLDC-1], 'bounds':[model_init_coeffs[iLDC-1] - 0.5, model_init_coeffs[iLDC-1] + 0.5]},
-        }
-    )
-
-#Update priors dictionary 
-priors_dic.update(
-    {
-    'LD_u1'         : {'type':'uf', 'bounds':[-100, 100]},
-    'LD_u2'         : {'type':'uf', 'bounds':[-100, 100]},
-    'LD_u3'         : {'type':'uf', 'bounds':[-100, 100]},
-    }
-)
-
-
-#######################################
-##### Finalizing hyper-parameters #####
-#######################################
-
-#%% Defining important lists
-ndim=0
-var_param_list = []
-fix_param_list = []
-fix_param_val = []
-for key in mod_prop:
-    if mod_prop[key]['vary']:
-        var_param_list.append(str(key))
-        ndim+=1
     else:
-        fix_param_list.append(str(key))
-        fix_param_val.append(mod_prop[key]['guess'])
+        # ── 1. Standardise ────────────────────────────────────────────────────
+        scaler      = StandardScaler()
+        data_scaled = scaler.fit_transform(data).astype(np.float32)
 
-#%% Defining dictionary to store additional info. needed for the model
-fixed_args['priors_dic']=priors_dic
-fixed_args['var_param_list']=var_param_list
-fixed_args['fix_param_list']=fix_param_list
-fixed_args['fix_param_val']=fix_param_val
-fixed_args['ndim']=ndim
+        # ── 2. Chunked scipy cdist ────────────────────────────────────────────
+        n_pairs  = N * (N - 1) // 2
+        dist_vec = np.empty(n_pairs, dtype=np.float32)
+        CHUNK    = max(1, N // 50)
 
-#Uniform distribution of walker starting positions
-if fixed_args['kernel'] == 'emcee':
-    fixed_args['pos'] = np.zeros((fixed_args['nwalkers'], fixed_args['ndim']), dtype=float)
-    for i in range(fixed_args['ndim']):
-        fixed_args['pos'][:, i] = jax.random.uniform(jaxnoise_key, minval=mod_prop[var_param_list[i]]['bounds'][0], maxval=mod_prop[var_param_list[i]]['bounds'][1], shape=(fixed_args['nwalkers'],))
-else:
-    fixed_args['pos'] = {}
-    for i in range(fixed_args['ndim']):
-        fixed_args['pos'][var_param_list[i]] = jnp.array(mod_prop[var_param_list[i]]['guess'])
+        cdist_kwargs = {}
+        if clustering_metric == 'mahalanobis':
+            cov = np.cov(data_scaled, rowvar=False)
+            VI  = np.linalg.inv(cov).astype(np.float64)
+            cdist_kwargs['VI'] = VI
 
+        ptr = 0
+        print(f'  [{label}] Computing {N:,}x{N:,} distance matrix '
+              f'({n_pairs:,} pairs) with scipy cdist in row-chunks of {CHUNK} ...')
 
-##############################
-##### Relevant functions #####
-##############################
-#Helper function to check the existence of directories
-def check_dir(dir_name):
-    if not os.path.isdir(dir_name):os.makedirs(dir_name)
-    return dir_name
+        with tqdm(
+            total         = N,
+            desc          = f'  [{label}] pdist',
+            unit          = ' rows',
+            dynamic_ncols = True,
+            bar_format    = ('{l_bar}{bar}| {n_fmt}/{total_fmt} rows '
+                             '[{elapsed}<{remaining}, {rate_fmt}]'),
+        ) as pbar:
+            for chunk_start in range(0, N, CHUNK):
+                chunk_end  = min(chunk_start + CHUNK, N)
+                query_rows = data_scaled[chunk_start:chunk_end]
 
-def create_jaxoplanet_model(x, p):
-    
-    #Retrieving ecc and w
-    if ('sqrtecosw' in p) and ('sqrtesinw' in p):
-        ecc = p['sqrtecosw']**2 + p['sqrtesinw']**2
-        w = jnp.arccos(p['sqrtecosw']/jnp.sqrt(ecc))
-    elif ('e' in p) and ('omega' in p):
-        ecc = p['e']
-        w = p['omega']
-    else:
-        ecc = 0.
-        w = 0.
+                for local_i, global_i in enumerate(range(chunk_start, chunk_end)):
+                    if global_i == N - 1:
+                        break
+                    right_cols = data_scaled[global_i + 1:]
+                    row_dists  = cdist(
+                        query_rows[local_i:local_i + 1],
+                        right_cols,
+                        metric=clustering_metric,
+                        **cdist_kwargs,
+                    )[0]
+                    n_vals = len(row_dists)
+                    if clustering_metric == 'cityblock':
+                        dist_vec[ptr:ptr + n_vals] = row_dists / D
+                    else:
+                        dist_vec[ptr:ptr + n_vals] = row_dists
+                    ptr += n_vals
 
-    #Retrieving inclination
-    if 'cosi' in p:
-        inc = jnp.arccos(p['cosi'])
-    else:
-        inc = p['i']
-
-    #Define star
-    stellar_rho =  (3 * jnp.pi * p['a']**3)/ ( p['period']**2 * G_solar_units )
-    star = Central(density=stellar_rho)
-
-    #Define planet
-    planet = System(star).add_body(
-        time_transit = p['t0'],
-        period = p['period'],
-        inclination = inc,
-        eccentricity = ecc,
-        omega_peri = w, 
-        radius = (p['r'] * R_star),
-    )
-
-    #Apply limb-darkening
-    max_coeff = len([param for param in p if 'LD' in param])
-    ld_u_coeffs = jnp.array([p[f"LD_u{i}"] for i in range(1, max_coeff+1)])
-
-    jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
-    return jaxo_lc.reshape((-1))
-
-
-def fit_func_numpyro(x, y, yerr):
-
-    p_step = []
-    lp = 0.0
-
-    #% Defining the priors
-    for param in fixed_args['var_param_list']:
-
-        #Parameter prior properties
-        prior=fixed_args['priors_dic'][param]
-
-        #Uniform prior
-        if prior['type']=='uf':
-            sample_val = numpyro.sample( param, Uniform( jnp.array(prior['bounds'][0]), jnp.array(prior['bounds'][1]) ) )
-            lp += -jnp.log(prior['bounds'][1] - prior['bounds'][0])
-        #Gaussian prior
-        elif prior['type']=='gauss':
-            sample_val = numpyro.sample( param, Normal( jnp.array(prior['val']), jnp.array(prior['s_val']) ) )
-            lp += -0.5 * (jnp.log(2*jnp.pi*prior['s_val']**2) + ((sample_val - prior['val'])/prior['s_val'])**2)
-        #Undefined prior
-        else:raise KeyError(f"Undefined prior type for '{param}'")
-
-        #Appending values
-        p_step.append(sample_val)
-
-    #% Formatting the dictionary of parameters
-    p_step_all={}
-    for parname in fixed_args['var_param_list']:
-        p_step_all[parname] = p_step[fixed_args['var_param_list'].index(parname)]
-    for parname in fixed_args['fix_param_list']:
-        p_step_all[parname] = fixed_args['fix_param_val'][fixed_args['fix_param_list'].index(parname)]
-    
-    #% Generate predicted LC
-    y_pred = create_jaxoplanet_model(x, p_step_all)
-
-    # The likelihood function assuming Gaussian uncertainty
-    numpyro.sample("obs", Normal(y_pred, yerr), obs=y)
-
-    #% Keep track of chi2
-    step_chi2 = jnp.sum( (y_pred - y)**2/yerr**2 )
-    numpyro.deterministic("step_chi2", jnp.array(step_chi2))
-
-    #% Keep track of log-probability 
-    lk = -0.5 * (step_chi2 + jnp.sum(jnp.log(2*jnp.pi*yerr**2)))
-    numpyro.deterministic("logprob", lk + lp)
-
-
-
-#Prior function
-def emcee_log_prior(param_dict):
-
-    p=param_dict.copy()
-    
-    ln_p = 0.
-    
-    #Restricting sqrtecosw and sqrtesinw to physical values
-    if ('sqrtecosw' in p) and ('sqrtesinw' in p):
-        ecc = p['sqrtecosw']**2 + p['sqrtesinw']**2
-        ln_p += jnp.where(ecc <= 1.0, 0.0, -jnp.inf)
-    
-    if ((('sqrtecosw' in p) and ('sqrtecosw' not in fixed_args['priors_dic'])) or (('sqrtesinw' in p) and ('sqrtesinw' not in fixed_args['priors_dic']))) and (('e' in fixed_args['priors_dic']) and ('w' in fixed_args['priors_dic'])):
-        #Get the values
-        ecc = p['sqrtecosw']**2 + p['sqrtesinw']**2
-        w = jnp.rad2deg(jnp.arccos(p['sqrtecosw']/jnp.sqrt(ecc)))
-
-        #Get prior info.
-        prior_e = fixed_args['priors_dic']['e']
-        prior_w = fixed_args['priors_dic']['omega']
-
-        #Update log-prior
-        for param_prior, param_val in zip([prior_e,prior_w], [ecc,w]):
-            if param_prior['type']=='uf':
-                in_bounds = (param_val >= param_prior['bounds'][0]) & (param_val <= param_prior['bounds'][1])
-                ln_p += jnp.where(
-                    in_bounds,
-                    -jnp.log(param_prior['bounds'][1] - param_prior['bounds'][0]),
-                    -jnp.inf,
+                pbar.update(chunk_end - chunk_start)
+                pbar.set_postfix(
+                    pairs_filled=f'{ptr:,}/{n_pairs:,}',
+                    pct=f'{100 * ptr / n_pairs:.1f}%',
+                    refresh=False,
                 )
-            
-            #Gaussian prior
-            elif param_prior['type']=='gauss':
-                ln_p += - 0.5*(jnp.log(2.*jnp.pi*param_prior['s_val']**2.) + ( (param_val - param_prior['val'])/param_prior['s_val']  )**2.)        
-            
-            else:raise KeyError(f"Undefined prior type for '{param}'")
 
-        #Remove the concerned parameter from p
-        if (('sqrtecosw' in p) and ('sqrtecosw' not in fixed_args['priors_dic'])):p.pop('sqrtecosw')
-        if (('sqrtesinw' in p) and ('sqrtesinw' not in fixed_args['priors_dic'])):p.pop('sqrtesinw')
+        assert ptr == n_pairs, f'Distance vector incomplete: {ptr} / {n_pairs}'
 
-    #Going through parameters
-    for param in p:
+        # ── 3. Linkage tree ───────────────────────────────────────────────────
+        print(f'  [{label}] Building linkage tree ...')
+        with tqdm(total=1, desc=f'  [{label}] linkage',
+                  bar_format='{l_bar}{bar}| {elapsed}') as pbar:
+            Z = linkage(dist_vec.astype(np.float64), method=method)
+            pbar.update(1)
 
-        #Looking only at variable parameters
-        if param not in fixed_args['fix_param_list']:
-            
-            #Check if parameter's priors have been defined
-            if param not in fixed_args['priors_dic']:
-                raise KeyError(f"Parameter '{param}' is missing priors.")
-            
-            prior = fixed_args['priors_dic'][param]
-            #Uniform prior
-            if prior['type']=='uf':
-                in_bounds = (p[param] >= prior['bounds'][0]) & (p[param] <= prior['bounds'][1])
-                ln_p += jnp.where(
-                    in_bounds,
-                    -jnp.log(prior['bounds'][1] - prior['bounds'][0]),
-                    -jnp.inf,
-                )
-            
-            #Gaussian prior
-            elif prior['type']=='gauss':
-                ln_p += - 0.5*(jnp.log(2.*jnp.pi*prior['s_val']**2.) + ( (p[param] - prior['val'])/prior['s_val']  )**2.)        
-            
-            else:raise KeyError(f"Undefined prior type for '{param}'")
-    
-    return ln_p
-
-#Posterior function
-def emcee_log_probability(p_step, x, y, yerr):
-    
-    #Format p_step into what is required for further functions
-    p = {}
-    for ipar, parname in enumerate(fixed_args['var_param_list']):
-        p[parname] = p_step[ipar]
-    for ipar, parname in enumerate(fixed_args['fix_param_list']):
-        p[parname] = fixed_args['fix_param_val'][ipar]
-    
-    #Log-prior
-    lp = emcee_log_prior(p)
-    lp = jnp.where(jnp.isfinite(lp), lp, -jnp.inf)
-
-    #Log-likelihood
-    y_pred = create_jaxoplanet_model(x, p)
-    step_chi2 = jnp.sum( (y_pred - y)**2/yerr**2 )
-    lk = -0.5 * (step_chi2 + jnp.sum(jnp.log(2*jnp.pi*yerr**2)))
-    lk = jnp.where(jnp.isnan(lk), -jnp.inf, lk)
-
-    return lp + lk, {'step_chi2': step_chi2}
-
-#############################################
-################ Running code ###############
-#############################################
-#Check directory exists
-check_dir(raw_save_dir)
-print(f"MODEL SCATTER = {model_scatter:.2f}")
-
-#Check orbital geometry directory exists
-b_dir = check_dir(raw_save_dir+f'B{impact_param}/')
-print(f"IMPACT PARAMETER = {impact_param}, INCLINATION = {jnp.rad2deg(init_state_dic['i']):.2f}")
-
-#Check wavelength directory exists
-wav_dir = check_dir(b_dir+f'LAMBDA{wavelength}/')
-print(f"WAVELENGTH = {wavelength:.2f}")
-
-#Check Teff directory exists
-Teff_dir = check_dir(wav_dir+f'TEMP{jnp.floor(Teff)}/')
-print(f"STELLAR EFFECTIVE TEMPERATURE = {Teff}")
-
-#Check seed directory exists
-fixed_args['save_loc'] = check_dir(Teff_dir+f'Seed{seed}/')
-print(f"SEED = {seed}")
-
-#############################
-####### Generate data #######
-#############################
-print('GENERATING DATA')
-
-#Pure data
-true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
-
-#Build noisy data
-std = model_scatter * 1e-6
-noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
-noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
-
-# evaluate this likelihood
-print(f"initial chi2: {jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 )}, initial chi2: {-0.5* ( jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 ) + jnp.sum(jnp.log(2*jnp.pi*noisy_std**2)) ) }")
-
-#Plotting
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=[10, 6], sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-ax1.errorbar(init_state_dic['times'], noisy_LC, yerr=noisy_std, fmt='.', zorder=1)
-ax1.plot(init_state_dic['times'], true_lc, color='red', zorder=2)
-ax2.errorbar(init_state_dic['times'], 1e6*(noisy_LC - true_lc), yerr=noisy_std, fmt='r.', zorder=1)
-for ax in [ax1, ax2]:
-    ax.axvline(-0.5 * T_dur, color='black', linestyle='dashed')
-    ax.axvline(0.5 * T_dur, color='black', linestyle='dashed')
-    ax.axvline(-1.5 * T_dur, color='black', linestyle='dotted')
-    ax.axvline(1.5 * T_dur, color='black', linestyle='dotted')
-ax1.set_title('Model LC with %.f ppm scatter'%model_scatter)
-ax2.set_xlabel('Time (BJD)')
-ax1.set_ylabel('Flux')
-ax2.set_ylabel('Difference (ppm)')
-fig.tight_layout()
-plt.savefig(fixed_args['save_loc']+'init_guess.pdf')
-plt.close()
-
-
-
-#########################
-##### Emcee fitting #####
-#########################
-
-# Running the MCMC
-if fixed_args['run_mode']=='use':
-    print(f"Running MCMC") 
-
-    if fixed_args['kernel']=='emcee':
-        st0 = time.time()
-        emceejax_key1, emceejax_key2 = jax.random.split(jaxnoise_key, 2)
-
-        sampler = emcee_jax.EnsembleSampler(emcee_log_probability, log_prob_args=(init_state_dic['times'],noisy_LC,noisy_std))
-        state = sampler.init(emceejax_key1, fixed_args['pos'])
-        if fixed_args['nthreads']>1:
-            trace = sampler.sample_parallel(emceejax_key2, state, num_steps=fixed_args['nsteps'], progress=True)
+        # ── 4. Auto-select cutoff ─────────────────────────────────────────────
+        if cutoff is None:
+            merge_dists = Z[:, 2]
+            gaps        = np.diff(merge_dists)
+            elbow       = np.argmax(gaps)
+            cutoff      = float((merge_dists[elbow] + merge_dists[elbow + 1]) / 2)
+            print(f'  [{label}] Auto cutoff : {cutoff:.4f}  '
+                  f'(gap {merge_dists[elbow]:.4f} → {merge_dists[elbow+1]:.4f})')
         else:
-            trace = sampler.sample(emceejax_key2, state, num_steps=fixed_args['nsteps'], progress=True)
-        raw_chain = np.asarray(trace.samples.coordinates).reshape(fixed_args['nwalkers'],fixed_args['nsteps'],fixed_args['ndim'])  # shape (walkers, nsteps, nparams)
-        logprob = np.asarray(trace.samples.log_probability.T) # shape (nwalkers, nsteps)
-        chi2_chain = np.asarray(trace.samples.deterministics['step_chi2'].T) # shape (nwalkers, nsteps)
+            print(f'  [{label}] Using cutoff: {cutoff:.4f}')
+        cutoff_used = cutoff
 
-        #Convert to ArviZ data structure
-        inf_data = az.from_dict(
-        posterior={
-            p: raw_chain[:, fixed_args['nburn']:, i]
-            for i, p in enumerate(fixed_args['var_param_list'])
-        },
-        log_likelihood={"log_like": logprob},
-        )
+        # ── 5. Cut tree ───────────────────────────────────────────────────────
+        labels    = fcluster(Z, t=cutoff, criterion='distance')
+        unique_cl = np.unique(labels)
+        n_cls     = len(unique_cl)
+        print(f'  [{label}] {n_cls} clusters found')
+        for cl in unique_cl:
+            print(f'    Cluster {cl}: {np.sum(labels == cl):6d} profiles')
 
-    else:
-        st0 = time.time()
-        #Define the kernel
-        if fixed_args['kernel'] == 'NUTS':
-            kernel = NUTS(fit_func_numpyro, 
-                            dense_mass=fixed_args['dense_matrix'],
-                            regularize_mass_matrix=fixed_args['regularize_mass_matrix'],
-                            adapt_step_size=fixed_args['adapt_step_size'],
-                            init_strategy=init_to_value(values=fixed_args['pos']))
-        elif fixed_args['kernel'] == 'HMC':
-            kernel = HMC(fit_func_numpyro, 
-                            dense_mass=fixed_args['dense_matrix'],
-                            regularize_mass_matrix=fixed_args['regularize_mass_matrix'],
-                            adapt_step_size=fixed_args['adapt_step_size'],
-                            init_strategy=init_to_value(values=fixed_args['pos']))
-        else:print('Invalid kernel specified')
-        
-        # Define the MCMC sampler
-        mcmc = MCMC(kernel, num_warmup=fixed_args['nburn'], num_samples=fixed_args['nsteps']-fixed_args['nburn'], num_chains=fixed_args['nwalkers'], progress_bar=True)
-        
-        #Run the MCMC
-        mcmc.run(random.PRNGKey(0), init_state_dic['times'], noisy_LC, noisy_std)
+        # ── 6. Reassign singleton clusters ────────────────────────────────────
+        unique_cl      = np.unique(labels)
+        singleton_cls  = [cl for cl in unique_cl if np.sum(labels == cl) == 1]
+        non_singleton_cls = [cl for cl in unique_cl if np.sum(labels == cl) > 1]
 
-        #Convert to ArviZ data structure
-        inf_data = az.from_numpyro(mcmc)
-        #Remove unneeded variables
-        inf_data.posterior = inf_data.posterior.drop_vars(
-            ["step_chi2","logprob"]
-        )
+        if len(singleton_cls) > 0 and len(non_singleton_cls) > 0:
+            print(f'  [{label}] Reassigning {len(singleton_cls)} singleton cluster(s)')
+            centroids = np.array([
+                data_scaled[labels == cl].mean(axis=0)
+                for cl in non_singleton_cls
+            ])
+            for scl in singleton_cls:
+                idx_singleton = np.where(labels == scl)[0][0]
+                point   = data_scaled[idx_singleton:idx_singleton + 1]
+                dists   = cdist(point, centroids, metric='euclidean')[0]
+                nearest = non_singleton_cls[np.argmin(dists)]
+                print(f'    Singleton cluster {scl} (idx={idx_singleton}) → cluster {nearest}')
+                labels[idx_singleton] = nearest
 
-        #Walkers chain
-        #     - pyro_chains is of shape (nwalkers, nsteps, n_free)
-        #     - parameters have the same order as in 'initial_distribution' and 'var_param_list'
-        pyro_chains = mcmc.get_samples(group_by_chain=True)
-        
-        # Collect parameter arrays in consistent order
-        raw_chains = []
-        for p in fixed_args['var_param_list']:
-            raw_chains.append(pyro_chains[p][..., None])  # add trailing dim for stacking
-        # Stack into shape (nwalkers, nprodsteps, nparams)
-        raw_chain = jnp.concatenate(raw_chains, axis=-1)
+            unique_cl = np.unique(labels)
+            n_cls     = len(unique_cl)
+            print(f'  [{label}] After reassignment: {n_cls} clusters')
+            for cl in unique_cl:
+                print(f'    Cluster {cl}: {np.sum(labels == cl):6d} profiles')
 
-        #%Retrieve step-by-step chi2
-        chi2_chain = pyro_chains['step_chi2']
+        cls_colors = plt.cm.tab10(np.linspace(0, 1, min(n_cls, 10)))
+        if n_cls > 10:
+            cls_colors = plt.cm.hsv(np.linspace(0, 0.9, n_cls))
 
-        #%Retrieve log-probability
-        logprob =  pyro_chains['logprob']
+        # ── 7. Dendrogram ─────────────────────────────────────────────────────
+        if plot_dendogram:
+            print(f'  [{label}] Plotting dendrogram ...')
+            fig_d, axes_d = plt.subplots(1, 2, figsize=(16, 6),
+                                         gridspec_kw={'width_ratios': [3, 1]})
+            fig_d.suptitle(f'Hierarchical clustering — {label}', fontsize=12)
 
-        fixed_args['nsteps'] = fixed_args['nsteps'] - fixed_args['nburn']
-        fixed_args['nburn'] = 0  
+            Z_ol = optimal_leaf_ordering(Z, dist_vec.astype(np.float64))
+            scipy_dendrogram(
+                Z_ol,
+                ax=axes_d[0],
+                truncate_mode='lastp',
+                p=max_display,
+                color_threshold=cutoff,
+                above_threshold_color='gray',
+                no_labels=True,
+            )
+            axes_d[0].axhline(cutoff, color='red', linestyle='--',
+                              linewidth=1.5, label=f'cutoff = {cutoff:.3f}')
+            axes_d[0].set_xlabel('Profiles (truncated to last merges)')
+            axes_d[0].set_ylabel('Merge distance')
+            axes_d[0].set_title('Dendrogram')
+            axes_d[0].legend(fontsize=8)
+            axes_d[0].grid(True, alpha=0.2)
+
+            counts = [np.sum(labels == cl) for cl in unique_cl]
+            axes_d[1].barh(unique_cl, counts, color=cls_colors[:n_cls],
+                           edgecolor='k', linewidth=0.5)
+            axes_d[1].set_xlabel('Profiles per cluster')
+            axes_d[1].set_ylabel('Cluster label')
+            axes_d[1].set_title('Cluster sizes')
+            axes_d[1].set_yticks(unique_cl)
+            axes_d[1].grid(True, alpha=0.2, axis='x')
+
+            fig_d.tight_layout()
+            path_d = os.path.join(save_path, f'HC_Dendrogram_{label}.pdf')
+            fig_d.savefig(path_d, dpi=150, bbox_inches='tight')
+            plt.close(fig_d)
+            print(f'  [{label}] Saved dendrogram → {path_d}')
+
+    # ── 8. Corner scatter ─────────────────────────────────────────────────────
+    if plot_corner:
+        print(f'  [{label}] Plotting corner scatter ...')
+        fig_c, axes_c = plt.subplots(D, D, figsize=(3 * D, 3 * D))
+        if D == 1:
+            axes_c = np.array([[axes_c]])
+        elif D > 1:
+            axes_c = np.atleast_2d(axes_c)
+        fig_c.suptitle(f'Corner plot — {label}', fontsize=12, y=1.01)
+
+        for row in range(D):
+            for col in range(D):
+                ax = axes_c[row, col]
+                if row == col:
+                    for ci, cl in enumerate(unique_cl):
+                        mask = labels == cl
+                        ax.hist(data[mask, row], bins=40, alpha=0.55,
+                                color=cls_colors[ci % len(cls_colors)],
+                                density=True, histtype='stepfilled', edgecolor='none')
+                    ax.set_xlabel(feature_labels[row], fontsize=8)
+                    for spine in ['top', 'left', 'right']:
+                        ax.spines[spine].set_visible(False)
+                    ax.set_yticks([])
+                    ax.tick_params(labelsize=7)
+                elif row > col:
+                    step = max(1, N // n_subsample)
+                    for ci, cl in enumerate(unique_cl):
+                        mask = labels == cl
+                        idx  = np.where(mask)[0][::step]
+                        ax.scatter(data[idx, col], data[idx, row],
+                                color=cls_colors[ci % len(cls_colors)],
+                                s=4, alpha=0.3, linewidths=0, rasterized=True)
+                    if col == 0:
+                        ax.set_ylabel(feature_labels[row], fontsize=8)
+                    if row == D - 1:
+                        ax.set_xlabel(feature_labels[col], fontsize=8)
+                    ax.tick_params(labelsize=6)
+                    ax.grid(True, alpha=0.15)
+                else:
+                    ax.set_visible(False)
+
+        handles_c = [
+            plt.Line2D([0], [0], marker='o', color='w',
+                    markerfacecolor=cls_colors[ci % len(cls_colors)],
+                    markersize=7, label=f'Cluster {cl}')
+            for ci, cl in enumerate(unique_cl)
+        ]
+        fig_c.legend(handles=handles_c, loc='upper right', fontsize=8,
+                    framealpha=0.85, title='HC cluster', title_fontsize=8)
+        fig_c.tight_layout()
+        path_c = os.path.join(save_path, f'HC_Corner_{label}.pdf')
+        fig_c.savefig(path_c, dpi=150, bbox_inches='tight')
+        plt.close(fig_c)
+        print(f'  [{label}] Saved corner plot → {path_c}')
+
+    return labels, cutoff_used, Z
 
 
-    #%% Storing the chains
-    output_file = fixed_args['save_loc']+"chains.npy"
-    jnp.save(output_file, raw_chain)
+def fourNLLD(x, coeffs):
+    """4th-order non-linear limb-darkening law."""
+    return (1
+            - coeffs[0] * (1 - x ** 0.5)
+            - coeffs[1] * (1 - x)
+            - coeffs[2] * (1 - x ** 1.5)
+            - coeffs[3] * (1 - x ** 2))
 
-    #%% Storing the log probability
-    output_file = fixed_args['save_loc']+"logprob.npy"
-    jnp.save(output_file, logprob)
 
-    #%% Storing the chi2 values
-    output_file = fixed_args['save_loc']+"chi2_chain.npy"
-    jnp.save(output_file, chi2_chain) 
+def residual_fn(params, x, base_prof):
+    """Residual function for lmfit minimisation of NLLD coefficients."""
+    return fourNLLD(x, [params[f'c{ic+1}'].value for ic in range(4)]) - base_prof
 
-elif fixed_args['run_mode']=='reuse':
-    print(f'Retrieving MCMC')
-    raw_chain = jnp.load(fixed_args['save_loc']+"chains.npy")
-    logprob = jnp.load(fixed_args['save_loc']+"logprob.npy")
-    chi2_chain = jnp.load(fixed_args['save_loc']+"chi2_chain.npy", allow_pickle=True)
 
-    # Convert to ArviZ data structure
-    inf_data = az.from_dict(
-    posterior={
-        p: raw_chain[:, fixed_args['nburn']:, i]
-        for i, p in enumerate(fixed_args['var_param_list'])
-    },
-    log_likelihood={"log_like": logprob},
+################################
+########## Code block ##########
+################################
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Iterate over all stellar models
+# ─────────────────────────────────────────────────────────────────────────────
+for model in models:
+
+    save_data_path = input_save_path + f'{model}/'
+
+    with open(save_data_path + 'data.pkl', 'rb') as f:
+        gen_dict = pickle.load(f)
+
+    print('MASKING')
+
+    # ── Count valid profiles per wavelength bin ───────────────────────────
+    n_considered    = 0
+    n_valid         = 0
+
+    # Each entry: profile (n_wav, n_mu_fine), normalized at mu=1 (centre).
+    # A profile/wavelength slice is valid when the intensity is monotonically
+    # non-increasing from centre to limb (no upward steps).
+    for i in range(N_star):
+        for j in range(N_star):
+            for k in range(N_star):
+                prof = gen_dict['global_intensity_profiles'][model][i, j, k]  # (n_wav, n_mu_fine)
+                # Normalise each wavelength slice to its centre value
+                center_vals = prof[:, 0:1]  # (n_wav, 1)  — mu=1 is the first column
+                safe_center = np.where(np.abs(center_vals) < 1e-10, 1.0, center_vals)
+                norm_prof   = prof / safe_center  # (n_wav, n_mu_fine)
+
+                # Valid = monotonically non-increasing (no positive differences)
+                mask = ~np.any(np.diff(norm_prof, axis=1) > 0.0, axis=1)  # (n_wav,)
+
+                n_considered += mask.size
+                n_valid      += int(np.sum(mask))
+
+    print(f"=== Profile filtering summary ===")
+    print(f"Total profiles considered : {n_considered}")
+    print(f"Total valid               : {n_valid} ({100 * n_valid / n_considered:.1f} %)")
+
+    # ── Pass 2 — pre-allocate and fill profile matrix ─────────────────────
+    # Metadata columns: [i_Teff, j_logg, k_met, i_wav]
+    int_profile = np.empty((n_valid, n_mu_fine), dtype=np.float32)
+    mus_array       = np.empty((n_valid, n_mu_fine), dtype=np.float32)
+    ptr             = 0
+
+    for i in range(N_star):
+        for j in range(N_star):
+            for k in range(N_star):
+                prof = gen_dict['global_intensity_profiles'][model][i, j, k]  # (n_wav, n_mu_fine)
+                mus  = gen_dict['global_mus'][model][i, j, k]                 # (n_mu_fine,)
+
+                center_vals = prof[:, 0:1]
+                safe_center = np.where(np.abs(center_vals) < 1e-10, 1.0, center_vals)
+                norm_prof   = prof / safe_center
+
+                mask = ~np.any(np.diff(norm_prof, axis=1) > 0.0, axis=1)  # (n_wav,)
+                n_ok = int(np.sum(mask))
+                if n_ok == 0:
+                    continue
+
+                int_profile[ptr:ptr + n_ok] = norm_prof[mask].astype(np.float32)
+                mus_array[ptr:ptr + n_ok]       = np.broadcast_to(mus, (n_ok, n_mu_fine)).astype(np.float32)
+
+                ptr += n_ok
+
+    assert ptr == n_valid, f'Pointer mismatch: {ptr} vs {n_valid}'
+
+    # ── Optional subsampling ──────────────────────────────────────────────
+    if subsample_profiles:
+        rng    = np.random.default_rng(subsample_seed)
+        n_draw = min(n_subsample_profiles, n_valid)
+        if n_draw < n_valid:
+            idx = np.sort(rng.choice(n_valid, size=n_draw, replace=False))
+            print(f'\nSUBSAMPLING: {n_valid} → {n_draw} profiles (seed={subsample_seed})')
+        else:
+            idx = np.arange(n_valid)
+            print(f'\nSUBSAMPLING: {n_valid} profiles (fewer than '
+                    f'{n_subsample_profiles}, keeping all)')
+        int_profile = int_profile[idx]
+        mus_array       = mus_array[idx]
+        n_valid         = n_draw
+
+    # ── Fit ALL profiles with 4th-order NLLD ──────────────────────────────────
+    print('Fitting ALL profiles with 4th-order NLLD')
+
+    n_profs  = int_profile.shape[0]
+    all_coeffs = np.zeros((n_profs, 4), dtype=np.float64)
+    print(f'  Fitting {n_profs} global intensity profiles ...')
+
+    for idx in tqdm(range(n_profs)):
+        prof_idx = int_profile[idx]
+        mus_idx  = mus_array[idx]
+
+        if np.all(np.abs(prof_idx) < 1e-10):
+            all_coeffs[idx] = np.nan
+            continue
+
+        params = Parameters()
+        for ip in range(4):
+            params.add(f'c{ip+1}', value=np.random.uniform(0, 1))
+        try:
+            result = minimize(residual_fn, params, args=(mus_idx, prof_idx))
+            all_coeffs[idx] = [result.params[f'c{ic+1}'].value for ic in range(4)]
+        except Exception:
+            all_coeffs[idx] = np.nan
+
+    # ── Corner data: [c1, c2, c3, c4] ────────────────────────────────────────
+    valid_mask  = ~np.any(np.isnan(all_coeffs), axis=1)
+    corner_data = all_coeffs[valid_mask]
+    corner_profiles = int_profile[valid_mask]
+    print(f'  Corner plot for {corner_data.shape[0]} valid profiles')
+
+    # ── Mode identification in coefficient space ──────────────────────────────
+    print('\n=== MODE IDENTIFICATION IN COEFFICIENT SPACE ===')
+
+    mode_labels_corner, _, _ = hierarchical_clustering(
+        data=corner_data,
+        label=f'LDC_clustering_{model}',
+        save_path=save_data_path,
+        feature_labels=[r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$'],
+        cutoff=80,
+        clustering_metric='mahalanobis',
+        method='ward',
     )
 
-else:
-    raise KeyError('Invalid run mode')
+    cluster_labels = mode_labels_corner - 1  # 0-indexed
+    unique_cl      = np.unique(cluster_labels)
 
-##################
-#### Plotting ####
-##################
-if fixed_args['run_mode']=='use':
-    elapsed = time.time() - st0
-    print(f'MCMC took {elapsed:.2f} seconds / {elapsed/60.:.2f} minutes / {elapsed/3600.:.2f} hours.')
+    for m in unique_cl:
+        mask_m = mode_labels_corner == m
+        print(
+            f'  Mode {m}: n={mask_m.sum():5d}  '
+            f'c=[{corner_data[mask_m, 0].mean():.3f}, '
+            f'{corner_data[mask_m, 1].mean():.3f}, '
+            f'{corner_data[mask_m, 2].mean():.3f}, '
+            f'{corner_data[mask_m, 3].mean():.3f}]'
+        )
 
-print('PLOTTING')
+    # Typical profile: closest to its cluster's centroid (globally nearest centroid)
+    typical_idx = None
+    min_dist    = np.inf
+    for cl in unique_cl:
+        mask     = cluster_labels == cl
+        members  = corner_data[mask]
+        centroid = members.mean(axis=0)
+        dists    = np.linalg.norm(members - centroid, axis=1)
+        closest  = int(np.where(mask)[0][np.argmin(dists)])
+        if dists.min() < min_dist:
+            min_dist    = dists.min()
+            typical_idx = closest
 
-# 0. Plotting the chi2 chains
-print('STEP 0: CHI2 CHAINS')
-plt.figure(figsize=[12, 6])
-for iwalk in range(fixed_args['nwalkers']):
-    plt.loglog(jnp.arange(fixed_args['nsteps']), chi2_chain[iwalk, :])
-plt.xlabel('Steps')
-plt.ylabel('Chi-squared')
-plt.savefig(fixed_args['save_loc']+'chi2.pdf')
-plt.close()
+    # Clulster mode profiles: furthest from centroid per cluster
+    cluster_mode_indices = []
+    for cl in unique_cl:
+        mask     = cluster_labels == cl
+        members  = corner_data[mask]
+        centroid = members.mean(axis=0)
+        dists    = np.linalg.norm(members - centroid, axis=1)
+        cluster_mode_indices.append(int(np.where(mask)[0][np.argmin(dists)]))
 
-# 1. Plotting the log probability
-print('STEP 1: LOG PROB')
-plt.figure(figsize=[12, 6])
-for w in range(fixed_args['nwalkers']):
-    plt.loglog(jnp.arange(fixed_args['nburn']), -logprob[w, :fixed_args['nburn']], color='red', alpha=0.5, lw=0.7, zorder=1)
-    plt.loglog(jnp.arange(fixed_args['nburn'], fixed_args['nsteps']), -logprob[w, fixed_args['nburn']:], color='blue', alpha=0.5, lw=0.7, zorder=1)
-plt.ylabel('Log-probability')
-plt.xlabel("Step")
-plt.savefig(fixed_args['save_loc']+'logprob.pdf')
-plt.close()
+    n_cl = len(unique_cl)
+    cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
+    cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
 
-# 2. Plot the trace of each parameter's chains
-print('STEP 2: TRACE')
-_ = az.plot_trace(
-    inf_data,
-    var_names=fixed_args['var_param_list'],
-    backend_kwargs={"constrained_layout": True},
-)
-plt.savefig(fixed_args['save_loc']+'trace.pdf')
-plt.close()
+    # ── Generate profiles ────────────────────────────────────────
+    # Global mode: profile closest to its own cluster centroid across ALL clusters
+    typical_profile = corner_profiles[typical_idx]
+    typical_coeff   = corner_data[typical_idx]
+    typical_mu      = mus_array[typical_idx]
 
-# 3. Plot the cornerplot of the chains
-print('STEP 3: CORNER')
-#% Build truth dictionary
-truth_dic={}
-for param,parlabel in zip(fixed_args['var_param_list'],fixed_args['labels']): 
-    if ('LD' in param):
-        truth_dic[parlabel] = init_state_dic[param]
-    elif param=='sqrtecosw':
-        truth_dic[parlabel] = jnp.sqrt(init_state_dic['e'])*jnp.cos(init_state_dic['omega'])
-    elif param=='sqrtesinw':
-        truth_dic[parlabel] = jnp.sqrt(init_state_dic['e'])*jnp.sin(init_state_dic['omega'])
-    elif param=='cosi':
-        truth_dic[parlabel] = jnp.cos(init_state_dic['i'])
-    else:
-        truth_dic[parlabel] = init_state_dic[param]
-truth_list = [truth_dic.get(label, None) for label in fixed_args['labels']]
+    # Per-cluster mode: profile closest to each cluster's centroid
+    cluster_mode_indices = []
+    for cl in unique_cl:
+        mask     = cluster_labels == cl
+        members  = corner_data[mask]
+        centroid = members.mean(axis=0)
+        dists    = np.linalg.norm(members - centroid, axis=1)
+        cluster_mode_indices.append(int(np.where(mask)[0][np.argmin(dists)]))
 
-#% Plot
-fig1 = corner.corner(
-    inf_data,
-    labels=fixed_args['labels'],
-    show_titles=True,
-    title_kwargs={"fontsize": 10},
-    label_kwargs={"fontsize": 10},
-    title_fmt=".4f",
-    truths = truth_list,
-)
-#Find bestfit parameters
-max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
-best_fit_params = raw_chain[max_walker, max_step, :]
+    cluster_mode_profiles = [corner_profiles[cidx] for cidx in cluster_mode_indices]
+    cluster_mode_coeffs   = [corner_data[cidx]     for cidx in cluster_mode_indices]
+    cluster_mode_mus      = [mus_array[cidx]        for cidx in cluster_mode_indices]
 
-# Flatten the chain
-medians = jnp.median(raw_chain.reshape(-1, raw_chain.shape[-1]), axis=0)
+    # ── Figure 5: NLLD curves for overall mode and per-cluster mode profiles ──
+    print('    FIGURE 5 - NLLD curves for overall mode and per-cluster mode profiles')
 
-# Dynamically determine how many parameters were plotted
-flat_chain = raw_chain.reshape(-1, raw_chain.shape[-1])
-nparams = flat_chain.shape[1]
-axes = np.array(fig1.axes).reshape((nparams, nparams))
+    # Bundle specials: (label, mu array, raw profile, coeff vector, colour, linewidth)
+    special_styles = [
+        ('Overall mode', typical_mu, typical_profile, typical_coeff, 'orange', 2.5),
+    ] + [
+        (f'Cluster {cl} mode', mu, cp, cc, cluster_colors[ci], 1.8)
+        for ci, (cl, mu, cp, cc) in enumerate(
+            zip(unique_cl, cluster_mode_mus, cluster_mode_profiles, cluster_mode_coeffs))
+    ]
 
-# Add median lines
-for i in range(nparams):
-    axes[i, i].axvline(medians[i], color='red', linestyle='--')
-    axes[i, i].axvline(best_fit_params[i], color='yellow', linestyle='--')
-    for j in range(i):
-        axes[i, j].axvline(medians[j], color='red', linestyle='--')
-        axes[i, j].axhline(medians[i], color='red', linestyle='--')
-        axes[i, j].scatter(medians[j], medians[i], color='red', s=20, zorder=10)
+    # ── Panel layout: left = NLLD curves, right = residuals vs overall mode ──
+    fig5, ax5 = plt.subplots(
+        2, n_cl + 1, figsize=(4 * (n_cl + 1), 10),
+        gridspec_kw={'wspace': 0.1, 'hspace': 0.1},
+        sharex=True, sharey='row',
+    )
 
-        axes[i, j].axvline(best_fit_params[j], color='yellow', linestyle='--')
-        axes[i, j].axhline(best_fit_params[i], color='yellow', linestyle='--')
-        axes[i, j].scatter(best_fit_params[j], best_fit_params[i], color='yellow', s=20, zorder=10)
+    # Pre-compute the overall mode NLLD curve for residuals in cluster rows
+    typical_curve = fourNLLD(typical_mu, typical_coeff)
 
-plt.savefig(fixed_args['save_loc']+'corner.pdf')
-plt.close()
+    for plot_idx, (sp_label, mu_plot, prof, coeffs, col, lw) in enumerate(special_styles):
+        curve = fourNLLD(mu_plot, coeffs)
 
-# 4. Plot the best-fit and median models against the data
-print('STEP 4: BESTFIT LC')
-# Compute median parameter values
-median_params = {}
-for i, param in enumerate(fixed_args['var_param_list']):
-    median_params[param] = jnp.median(raw_chain[:, fixed_args['nburn']:, i])
-for idx, param in enumerate(fixed_args['fix_param_list']):
-    median_params[param] = fixed_args['fix_param_val'][idx]
+        # Left panel: raw intensity profile (solid) + NLLD fit (dashed)
+        ax5[0, plot_idx].plot(mu_plot, curve, '--', color='black', linewidth=lw, zorder=2)
+        ax5[0, plot_idx].plot(mu_plot, prof,  '-',  color=col,     linewidth=lw, zorder=1)
+        ax5[0, plot_idx].set_title(sp_label, fontsize=11, pad=3)
+        ax5[0, plot_idx].grid(True)
 
-# Compute median model
-median_lc = create_jaxoplanet_model(init_state_dic['times'], median_params)
-median_RMS = jnp.sqrt(jnp.average((noisy_LC - median_lc)**2))
+        # Right panel: residuals
+        resid = 100 * (curve - prof) / prof
+        ax5[1, plot_idx].plot(mu_plot, resid, '--', color=col, linewidth=lw, label=sp_label)
+        ax5[1, plot_idx].axhline(0, color='black', linestyle='-', linewidth=1.2, alpha=0.4)
+        ax5[1, plot_idx].grid(True)
 
-# Get highest log probability parameters
-best_params = {}
-for i, param in enumerate(fixed_args['var_param_list']):
-    best_params[param] = raw_chain[max_walker, max_step, i]
-for idx, param in enumerate(fixed_args['fix_param_list']):
-    best_params[param] = fixed_args['fix_param_val'][idx]
+        ax5[1, plot_idx].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)
 
-# Compute bestfit model
-bestfit_lc = create_jaxoplanet_model(init_state_dic['times'], best_params)
-bestfit_RMS = jnp.sqrt(jnp.average((noisy_LC - bestfit_lc)**2))
+    ax5[0, -1].set_ylabel('Normalised intensity $I(\\mu)/I(1)$', fontsize=12)
+    ax5[1, -1].set_ylabel('Normalised intensity $I(\\mu)/I(1)$', fontsize=12)
 
-fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios':[3,1]}, figsize=(12, 6))
-ax1.errorbar(init_state_dic['times'], noisy_LC, yerr=noisy_std, fmt='.', label='Data', color='0.7')
-ax1.plot(init_state_dic['times'], median_lc, color='orange', label='Median model')
-ax1.plot(init_state_dic['times'], bestfit_lc, color='blue', label='Best-fit model')
-ax2.errorbar(init_state_dic['times'], 1e6*(median_lc - noisy_LC), yerr=noisy_std, fmt='.', color='orange', label=f'RMS = {1e6*median_RMS:.0f} ppm')
-ax2.errorbar(init_state_dic['times'], 1e6*(bestfit_lc - noisy_LC), yerr=noisy_std, fmt='.', color='blue', label=f'RMS = {1e6*bestfit_RMS:.0f} ppm')
-ax2.set_xlabel("Time [days]")
-ax1.set_ylabel("Relative flux")
-ax2.set_ylabel("Residuals (ppm)")
-ax1.legend()
-ax2.legend()
-plt.tight_layout()
-plt.savefig(fixed_args['save_loc']+'bestfit.pdf')
-plt.close()
+    # fig5.savefig(output_save_path + f'4thOrderNLLD_Modes_{model}.pdf',
+    #              dpi=150, bbox_inches='tight')
+    plt.savefig(paths.figures / "Fig5.pdf", bbox_inches="tight")
 
-# 5. Compute the amplification factor between the retrieved transit depth error and the expected error
-print('STEP 5: AMP FACTOR')       
-#% Get chain of radius ratio values
-r_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('r')]
-#% Get bestfit and median values
-median_r = jnp.median(r_chain)
-bestfit_r = raw_chain[max_walker, max_step, fixed_args['var_param_list'].index('r')]
-#% Get error on median and bestfit values
-median_r_error = 2*jnp.std(r_chain)*median_r
-bestfit_r_error = 2*jnp.std(r_chain)*bestfit_r
-#% Get the number of in transit points
-T14 = (init_state_dic['period']/jnp.pi) * jnp.arcsin( (1/init_state_dic['a']) * ( jnp.sqrt( (1+init_state_dic['r'])**2 - (init_state_dic['a'] * jnp.cos(init_state_dic['i']) ) ) / jnp.sin(init_state_dic['i']) ) ) * ( jnp.sqrt( 1 - init_state_dic['e']**2 ) / ( 1 + init_state_dic['e']*jnp.sin(init_state_dic['omega']) ) )
-num_IT_pts = jnp.sum(((init_state_dic['times'] > init_state_dic['t0'] - T14/2) & (init_state_dic['times'] < init_state_dic['t0'] + T14/2)))
-scatter_in_bin = (model_scatter*1e-6)/jnp.sqrt(num_IT_pts)
-#% Get the scatter in an out-of-transit bin
-
-#% Print results
-print(f'Median radius ratio: {median_r} +/- {jnp.std(r_chain)}. Median amplification factor: {median_r_error/scatter_in_bin}')
-print(f'Bestfit radius ratio: {bestfit_r} +/- {jnp.std(r_chain)}. Bestfit amplification factor: {bestfit_r_error/scatter_in_bin}')
+    # Print a summary table of all coefficients for easy copy-paste
+    print(f'\n  {"Profile":<14}  {"c1":>8}  {"c2":>8}  {"c3":>8}  {"c4":>8}')
+    print(f'  {"-"*54}')
+    for sp_label, _mu, _prof, coeffs, _col, _lw in special_styles:
+        print(f'  {sp_label:<20}  '
+              f'{coeffs[0]:>8.4f}  {coeffs[1]:>8.4f}  '
+              f'{coeffs[2]:>8.4f}  {coeffs[3]:>8.4f}')
