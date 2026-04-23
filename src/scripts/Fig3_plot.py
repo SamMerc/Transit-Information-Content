@@ -565,27 +565,37 @@ print('STEP 2: FIGURE 3')
 
 # Place correlation matrix on top and bottom triangle
 full_corr_matrix = (corr_matrix + corr_matrix.T)
-corr_df = pd.DataFrame(full_corr_matrix, index=fixed_args['labels'], columns=fixed_args['labels'])   
+corr_df = pd.DataFrame(full_corr_matrix, index=fixed_args['labels'], columns=fixed_args['labels'])
 #Re-order the matrix
 desired_order_labels = [r'R$_p$/R$_{\star}$', 'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)', 'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'u$_1$', r'u$_2$', r'u$_3$']
 corr_df_reordered = corr_df.loc[desired_order_labels, desired_order_labels]
 
-
-#% Make corrplot 
+#% Make corrplot
 print('BUILD CORRELATION HEATMAP')
 plot_labels = [r'D', 'i',r'$\rho_{\star}$', r'P', r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'u$_1$', r'u$_2$', r'u$_3$']
 matrix = corr_df_reordered.values
 labels = plot_labels
 n = len(labels)
 
-fig, ax = plt.subplots(figsize=(20, 16))
+from matplotlib.patches import FancyBboxPatch
+import matplotlib.colors as mcolors
+import matplotlib.gridspec as gridspec
+
+FIG_W, FIG_H = 32, 14
+fig = plt.figure(figsize=(FIG_W, FIG_H))
+gs = gridspec.GridSpec(1, 1, figure=fig,
+                       left=0.04, right=0.54, bottom=0.07, top=0.97)
+ax = fig.add_subplot(gs[0])
+# ax_diag is created AFTER the matrix is drawn (see below) so it
+# renders on top. Full-figure coverage + transparent background mean it
+# is never blocked by ax's clipping box or background patch.
 
 ax.set_xlim(-0.5, n - 0.5)
 ax.set_ylim(-0.5, n - 0.5)
 ax.set_xticks(range(n))
 ax.set_yticks(range(n))
-ax.set_xticklabels(labels, ha='center', rotation = 45, fontsize=18)
-ax.set_yticklabels(labels, ha='center', rotation = 45, fontsize=18)
+ax.set_xticklabels(labels, ha='center', rotation=45, fontsize=18)
+ax.set_yticklabels(labels, ha='center', rotation=45, fontsize=18)
 ax.tick_params(axis='y', pad=32)
 ax.invert_yaxis()
 ax.set_aspect('equal')
@@ -612,13 +622,144 @@ for i in range(n):
             ax.add_patch(rect)
             ax.text(j, i, f"{corr_val:.2f}", ha='center', va='center', color='black', fontsize=18)
 
+# Group-highlight boxes: transparent fill, thick outline, one color per group
+def add_group_box(ax_target, row_range, col_range, color, lw=5.5, pad=0.1):
+    r0, r1 = row_range
+    c0, c1 = col_range
+    box = FancyBboxPatch(
+        (c0 - 0.5 + pad, r0 - 0.5 + pad),
+        (c1 - c0 + 1) - 2 * pad,
+        (r1 - r0 + 1) - 2 * pad,
+        boxstyle="round,pad=0.06",
+        linewidth=lw, edgecolor=color, facecolor='none', zorder=10,
+    )
+    ax_target.add_patch(box)
+
+add_group_box(ax, (1, 5), (1, 5), '#e26952')   # system params 5x5 block
+add_group_box(ax, (6, 8), (6, 8), '#f7a789')         # LD 3x3 block
+add_group_box(ax, (0, 0), (6, 8), '#ecd1c2')   # D vs LD (upper triangle)
+
 # Add colorbar
 sm = cm.ScalarMappable(cmap=cmap_diverging)
 sm.set_array([])
-cbar = plt.colorbar(sm, ax=ax, fraction=0.046, pad = -0.00005)
+cbar = plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.02)
 cbar.set_label('Correlation', fontsize=18)
 cbar.ax.tick_params(labelsize=18)
 
-# Title
-plt.savefig(paths.figures / "Fig3.pdf", bbox_inches="tight")
+# -----------------------------------------------------------------------
+# Node diagram – full-figure overlay added AFTER ax so it renders on top.
+# xlim=[0, FIG_W] / ylim=[0, FIG_H] match the figure's inch dimensions,
+# so 1 data unit = 1 physical inch and plt.Circle appears perfectly round
+# without needing set_aspect('equal').  Transparent background ensures ax
+# content shows through wherever the diagram does not draw anything.
+# -----------------------------------------------------------------------
+ax_diag = fig.add_axes([0, 0, 1, 1])   # covers the full figure
+ax_diag.patch.set_visible(False)
+ax_diag.axis('off')
+ax_diag.set_xlim(0, FIG_W)
+ax_diag.set_ylim(0, FIG_H)
+
+col_sys  = '#e26952'
+col_ld   = '#f7a789'
+col_d    = '#ecd1c2'
+line_col = '#cbe0ef'
+node_fs  = 18
+lbl_fs   = 19
+
+# All radii and positions are now in INCHES (matching xlim/ylim = figure dims).
+# plt.Circle with these values renders as a true circle without set_aspect.
+r_sys    = 0.75    # inch
+r_d      = 0.75    # inch
+r_ld     = 0.75     # inch
+pad_box  = 0.02    # inch – gap between circle edge and bounding box
+node_gap = 0.05    # inch – gap between adjacent circle edges in a block
+
+# --- System parameters ---
+sys_cx       = 19.5                                   # inch from figure left
+node_spacing = 2 * r_sys + node_gap                   # 2.15 inch
+sys_ys       = 6.0 + np.arange(5) * node_spacing      # [6.0, 8.15, 10.3, 12.45, 14.6]
+sys_bx = sys_cx - r_sys - pad_box
+sys_bw = 2 * (r_sys + pad_box)
+sys_by = sys_ys[0]  - r_sys - pad_box
+sys_bh = (sys_ys[-1] - sys_ys[0]) + 2 * (r_sys + pad_box)
+
+ax_diag.add_patch(FancyBboxPatch(
+    (sys_bx, sys_by), sys_bw, sys_bh,
+    boxstyle="round,pad=0.06", linewidth=2.5, edgecolor=col_sys,
+    facecolor=(*mcolors.to_rgb(col_sys), 0.10), zorder=2,
+))
+ax_diag.text(sys_cx, sys_by + 8.25, 'System parameters',
+             ha='center', va='top', fontsize=lbl_fs, color=col_sys, fontweight='bold')
+
+sys_node_labels = [r'$\mathbf{\sqrt{e}}$sin$\mathbf{(\omega)}$', 
+                   r'$\mathbf{\sqrt{e}}$cos$\mathbf{(\omega)}$',
+                    'P',r'$\mathbf{\rho_{\star}}$', 'i']
+
+for lbl, cy in zip(sys_node_labels, sys_ys):
+    ax_diag.add_patch(plt.Circle((sys_cx, cy), r_sys, color=col_sys, zorder=3))
+    ax_diag.text(sys_cx, cy, lbl, ha='center', va='center',
+                 fontsize=node_fs, fontweight='bold', zorder=4)
+
+# --- Transit depth ---
+d_cx, d_cy  = 27.0, 12.2
+d_bx = d_cx - r_d - pad_box
+d_bw = 2 * (r_d + pad_box)
+d_by = d_cy - r_d - pad_box
+d_bh = 2 * (r_d + pad_box)
+
+ax_diag.add_patch(FancyBboxPatch(
+    (d_bx, d_by), d_bw, d_bh,
+    boxstyle="round,pad=0.06", linewidth=2.5, edgecolor=col_d,
+    facecolor=(*mcolors.to_rgb(col_d), 0.20), zorder=2,
+))
+ax_diag.text(d_cx, d_by + d_bh + 0.25, 'Transit depth',
+             ha='center', va='bottom', fontsize=lbl_fs, color=col_d, fontweight='bold')
+ax_diag.add_patch(plt.Circle((d_cx, d_cy), r_d, color=col_d, zorder=3))
+ax_diag.text(d_cx, d_cy, 'D', ha='center', va='center',
+             fontsize=node_fs, fontweight='bold', zorder=4)
+
+# --- Limb-darkening coefficients ---
+ld_cy        = 3.0
+ld_spacing   = 2 * r_ld + node_gap                    # 2.15 inch
+ld_xs        = 25.5 + np.arange(3) * ld_spacing       # [21.5, 23.65, 25.8]
+ld_bx = ld_xs[0]  - r_ld - pad_box
+ld_bw = (ld_xs[-1] - ld_xs[0]) + 2 * (r_ld + pad_box)
+ld_by = ld_cy - r_ld - pad_box
+ld_bh = 2 * (r_ld + pad_box)
+
+ax_diag.add_patch(FancyBboxPatch(
+    (ld_bx, ld_by), ld_bw, ld_bh,
+    boxstyle="round,pad=0.06", linewidth=2.5, edgecolor=col_ld,
+    facecolor=(*mcolors.to_rgb(col_ld), 0.12), zorder=2,
+))
+ax_diag.text((ld_xs[0] + ld_xs[-1]) / 2, ld_by - 0.35,
+             'Limb-darkening coefficients', ha='center', va='top',
+             fontsize=lbl_fs, color=col_ld, fontweight='bold')
+ld_node_labels = [r'$\mathbf{u_1}$', r'$\mathbf{u_2}$', r'$\mathbf{u_3}$']
+for lbl, cx in zip(ld_node_labels, ld_xs):
+    ax_diag.add_patch(plt.Circle((cx, ld_cy), r_ld, color=col_ld, zorder=3))
+    ax_diag.text(cx, ld_cy, lbl, ha='center', va='center',
+                 fontsize=node_fs, fontweight='bold', zorder=4)
+
+# Connection lines: center-to-center, specific pairs only
+# sys_ys: [i=4, ρ★=3, P=2, √ecos=1, √esin=0]   ld_xs: [u1=0, u2=1, u3=2]
+P_y    = sys_ys[2]
+cosw_y = sys_ys[1]
+
+for lx in ld_xs:          # D → u1, u2, u3
+    ax_diag.plot([d_cx, lx], [d_cy, ld_cy], color=line_col, lw=3.5, zorder=1)
+for lx in ld_xs:          # P → u1, u2, u3
+    ax_diag.plot([sys_cx, lx], [P_y, ld_cy], color=line_col, lw=3.5, zorder=1)
+for lx in ld_xs[1:]:      # √ecos(ω) → u2, u3
+    ax_diag.plot([sys_cx, lx], [cosw_y, ld_cy], color=line_col, lw=3.5, zorder=1)
+
+# ---- Manual crop: set these in inches (figure is FIG_W x FIG_H inches) ----
+crop_left   = 2.5    # increase to trim left whitespace
+crop_right  = 29.5   # decrease to trim right whitespace
+crop_bottom = 0.0    # increase to trim bottom whitespace
+crop_top    = 14.0   # decrease to trim top whitespace
+
+from matplotlib.transforms import Bbox
+plt.savefig(paths.figures / "Fig3.pdf",
+            bbox_inches=Bbox([[crop_left, crop_bottom], [crop_right, crop_top]]))
 plt.close()
