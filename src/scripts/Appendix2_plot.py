@@ -2,10 +2,13 @@
 ########## Purpose ##########
 #############################
 
-# Appendix 2 shows corner plots of the 4th-order NLLD coefficients [c1, c2, c3, c4]
-# coloured by each physical parameter: effective temperature, surface gravity,
-# metallicity, and wavelength. Data are produced by Fig5_run.py and downloaded
-# from Zenodo as results.npz.
+# Appendix 2 shows a double corner plot of the 4th-order NLLD coefficients [c1, c2, c3, c4]:
+#   - Bottom-left triangle : scatter coloured by Teff (inferno).
+#   - Top-right triangle   : scatter coloured by wavelength (turbo).
+#   - Diagonal             : variable labels (c1, c2, c3, c4), no histograms.
+#   - Left extra column    : 1D histograms decomposed by Teff value.
+#   - Right extra column   : 1D histograms decomposed by wavelength bin.
+# Data produced by Fig5_run.py and downloaded from Zenodo as results.npz.
 
 
 ######################################
@@ -19,8 +22,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-import corner
-from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
 
 ######################################
@@ -47,220 +49,170 @@ for model in models:
     m_vals_arr  = res['m_vals_arr']
     wavs_ref    = res['wavs_ref']
 
-    # ── Recover physical parameter values from metadata indices ───────────────
-    corner_wav_um  = wavs_ref[corner_meta[:, 3]] / 1e4  # microns
+    # ── Physical parameter arrays ─────────────────────────────────────────────
+    teff_vals = T_vals_arr[corner_meta[:, 0]]
+    wav_vals  = wavs_ref[corner_meta[:, 3]] / 1e4   # µm
 
-    labels_4d = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
-    ranges_4d = [
-        (np.percentile(corner_data[:, ic], 1),
-         np.percentile(corner_data[:, ic], 99))
-        for ic in range(4)
-    ]
-    ndim_4d = 4
+    # ── Colormaps ─────────────────────────────────────────────────────────────
+    # Teff: discrete inferno with exactly one colour per sampled grid point
+    teff_unique = np.unique(teff_vals)
+    n_teff      = len(teff_unique)
+    hw_t        = np.diff(teff_unique) / 2
+    teff_bounds = np.concatenate([[teff_unique[0] - hw_t[0]],
+                                   teff_unique[:-1] + hw_t,
+                                   [teff_unique[-1] + hw_t[-1]]])
+    teff_cmap   = plt.cm.get_cmap('inferno', n_teff)
+    teff_norm   = mcolors.BoundaryNorm(teff_bounds, ncolors=teff_cmap.N)
+    sm_t_disc   = cm.ScalarMappable(cmap=teff_cmap, norm=teff_norm)
 
-    # ── Shared scatter subsample (sorted by colour value for proper layering) ─
-    rng = np.random.default_rng(42)
+    # Wavelength: continuous turbo
+    wav_cmap  = plt.cm.turbo
+    wav_norm  = mcolors.Normalize(vmin=wav_vals.min(),  vmax=wav_vals.max())
 
-    with PdfPages(paths.figures / "Appendix2.pdf") as pdf:
+    # ── Plot configuration ────────────────────────────────────────────────────
+    ndim   = 4
+    labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
+    ranges = [(np.percentile(corner_data[:, i], 0.1),
+               np.percentile(corner_data[:, i], 99.9)) for i in range(ndim)]
 
-        # ── Figure 2a : density corner (black) ───────────────────────────────
-        print('    FIGURE 2a - All coefficients corner plot')
-        fig_a = corner.corner(
-            corner_data,
-            labels=labels_4d, range=ranges_4d, bins=50,
-            smooth=1.0, smooth1d=1.0,
-            plot_datapoints=True, plot_density=False, fill_contours=False,
-            levels=(0.5, 0.68, 0.95, 0.99),
-            hist_kwargs={'color': 'black', 'linewidth': 1.5},
-            label_kwargs={'fontsize': 13}, title_kwargs={'fontsize': 11},
-            show_titles=False,
-            data_kwargs={'alpha': 0.2, 'ms': 1.5, 'color': 'black'},
-            contourf_kwargs={'alpha': 0.5},
-            contour_kwargs={'colors': ['brown', 'red', 'orange', 'yellow']},
-        )
-        for i in range(ndim_4d):
-            ax = fig_a.axes[i * ndim_4d + i]
-            for spine in ['top', 'left', 'right']:
-                ax.spines[spine].set_visible(False)
-        fig_a.suptitle(f'4th-order NLLD coefficients — {model}', fontsize=13, y=1.02)
-        pdf.savefig(fig_a, bbox_inches='tight')
-        plt.close(fig_a)
+    # ── Scatter subsamples sorted by colour value for correct Z-ordering ──────
+    N    = len(corner_data)
+    n_sc = min(N, 40_000)
+    rng_t = np.random.default_rng(42)
+    idx_t = rng_t.choice(N, size=n_sc, replace=False)
+    idx_t = idx_t[np.argsort(teff_vals[idx_t])]
+    rng_w = np.random.default_rng(43)
+    idx_w = rng_w.choice(N, size=n_sc, replace=False)
+    idx_w = idx_w[np.argsort(wav_vals[idx_w])]
 
-        # ── Figures 2b–d : coloured by Teff, logg, [M/H] ────────────────────
-        meta_col_names = [r'$T_{\rm eff}$ (K)', r'$\log\,g$', r'[M/H]']
-        meta_col_keys  = ['Teff', 'logg', 'MH']
-        meta_col_vals  = [T_vals_arr[corner_meta[:, 0]],
-                          g_vals_arr[corner_meta[:, 1]],
-                          m_vals_arr[corner_meta[:, 2]]]
-        meta_cmaps     = [plt.cm.inferno, plt.cm.cividis, plt.cm.coolwarm]
+    # ── Figure layout ─────────────────────────────────────────────────────────
+    # Outer GridSpec: 4 rows × 5 cols
+    #   col 0 : Teff colorbar   (narrow)
+    #   col 1 : Teff 1D histograms
+    #   col 2 : 4×4 corner block  (subdivided below, wspace=0.05)
+    #   col 3 : wavelength 1D histograms
+    #   col 4 : wavelength colorbar  (narrow)
+    # wspace=0.30 gives the wide gap between histograms and the corner block.
+    fig = plt.figure(figsize=(16, 11))
+    outer_gs = GridSpec(ndim, 5, figure=fig,
+                        wspace=0.05, hspace=0.2,
+                        width_ratios=[0.10, 1.4, 4.0, 1.4, 0.10])
 
-        for imeta in range(3):
-            col_vals  = meta_col_vals[imeta]
-            col_label = meta_col_names[imeta]
-            col_key   = meta_col_keys[imeta]
-            col_cmap  = meta_cmaps[imeta]
-            col_norm  = mcolors.Normalize(vmin=col_vals.min(), vmax=col_vals.max())
+    # Inner GridSpec: 4×4 within the corner block, with tight wspace
+    inner_gs = GridSpecFromSubplotSpec(ndim, ndim,
+                                       subplot_spec=outer_gs[:, 2],
+                                       wspace=0.05, hspace=0.05)
 
-            print(f'    FIGURE 2{chr(98 + imeta)} - Corner plot coloured by {col_key}')
+    # Colorbar axes span all rows
+    cax_t = fig.add_subplot(outer_gs[:, 0])
+    cax_w = fig.add_subplot(outer_gs[:, 4])
 
-            fig_cm = corner.corner(
-                corner_data, labels=labels_4d, range=ranges_4d, bins=50, smooth1d=1.0,
-                plot_datapoints=False, plot_density=False, fill_contours=False, no_fill_contours=True,
-                levels=(0.5, 0.68, 0.95, 0.99),
-                hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
-                label_kwargs={'fontsize': 13}, show_titles=False,
-                contour_kwargs={'colors': 'none'},
-            )
-            axes_cm = np.array(fig_cm.axes).reshape(ndim_4d, ndim_4d)
+    # Histogram and corner axes
+    ax_ht = np.empty(ndim, dtype=object)
+    ax_hw = np.empty(ndim, dtype=object)
+    ax_c  = np.empty((ndim, ndim), dtype=object)
+    for d in range(ndim):
+        ax_ht[d] = fig.add_subplot(outer_gs[d, 1])
+        ax_hw[d] = fig.add_subplot(outer_gs[d, 3])
+    for ir in range(ndim):
+        for ic in range(ndim):
+            ax_c[ir, ic] = fig.add_subplot(inner_gs[ir, ic])
 
-            idx_sub = (np.sort(rng.choice(len(corner_data), size=40_000, replace=False))
-                       if len(corner_data) > 40_000 else np.arange(len(corner_data)))
-            idx_sub = idx_sub[np.argsort(col_vals[idx_sub])]
+    # ── Left column: 1D histograms decomposed by Teff ─────────────────────────
+    for d in range(ndim):
+        a = ax_ht[d]
+        for uv in teff_unique:
+            m = teff_vals == uv
+            a.hist(corner_data[m, d], bins=50, range=ranges[d],
+                   alpha=0.55, color=sm_t_disc.to_rgba(uv), density=True,
+                   histtype='stepfilled', edgecolor='none')
+        a.set_xlim(ranges[d])
+        a.set_yticks([])
+        for sp in ['top', 'right', 'left']:
+            a.spines[sp].set_visible(False)
+        a.tick_params(labelsize=7)
+        a.set_xlabel(labels[d], fontsize=10)
 
-            for row in range(ndim_4d):
-                for col in range(row):
-                    axes_cm[row, col].scatter(
-                        corner_data[idx_sub, col], corner_data[idx_sub, row],
-                        c=col_vals[idx_sub], cmap=col_cmap, norm=col_norm,
-                        s=1.5, alpha=0.35, linewidths=0, rasterized=True)
+    # ── Right column: 1D histograms decomposed by wavelength ──────────────────
+    n_wb    = 10
+    w_edges = np.linspace(wav_vals.min(), wav_vals.max(), n_wb + 1)
+    w_ctrs  = 0.5 * (w_edges[:-1] + w_edges[1:])
+    for d in range(ndim):
+        a = ax_hw[d]
+        for ib, ctr in enumerate(w_ctrs):
+            m = (wav_vals >= w_edges[ib]) & (wav_vals < w_edges[ib + 1])
+            if ib == n_wb - 1:
+                m |= (wav_vals == w_edges[ib + 1])
+            if not m.any():
+                continue
+            a.hist(corner_data[m, d], bins=50, range=ranges[d],
+                   alpha=0.55, color=wav_cmap(wav_norm(ctr)), density=True,
+                   histtype='stepfilled', edgecolor='none')
+        a.set_xlim(ranges[d])
+        a.set_yticks([])
+        for sp in ['top', 'left', 'right']:
+            a.spines[sp].set_visible(False)
+        a.tick_params(labelsize=7)
+        a.set_xlabel(labels[d], fontsize=10)
 
-            unique_vals = np.unique(col_vals)
-            for d in range(ndim_4d):
-                ax = axes_cm[d, d]
-                ax.clear()
-                if len(unique_vals) <= 20:
-                    for uv in unique_vals:
-                        mask_uv = col_vals == uv
-                        if mask_uv.sum() == 0:
-                            continue
-                        ax.hist(corner_data[mask_uv, d], bins=50, range=ranges_4d[d],
-                                alpha=0.55, color=col_cmap(col_norm(uv)), density=True,
-                                histtype='stepfilled', edgecolor='none')
-                else:
-                    n_bins = 8
-                    edges  = np.linspace(col_vals.min(), col_vals.max(), n_bins + 1)
-                    ctrs   = 0.5 * (edges[:-1] + edges[1:])
-                    for ib_m, ctr in enumerate(ctrs):
-                        mask_bm = ((col_vals >= edges[ib_m]) &
-                                   (col_vals < edges[ib_m + 1]))
-                        if ib_m == len(ctrs) - 1:
-                            mask_bm |= (col_vals == edges[ib_m + 1])
-                        if mask_bm.sum() == 0:
-                            continue
-                        ax.hist(corner_data[mask_bm, d], bins=50, range=ranges_4d[d],
-                                alpha=0.55, color=col_cmap(col_norm(ctr)), density=True,
-                                histtype='stepfilled', edgecolor='none')
-                ax.set_xlim(ranges_4d[d])
-                ax.set_yticks([])
-                for spine in ['top', 'left', 'right']:
-                    ax.spines[spine].set_visible(False)
-                if d == ndim_4d - 1:
-                    ax.set_xlabel(labels_4d[d], fontsize=13)
+    # ── Inner 4×4 double corner ───────────────────────────────────────────────
+    for ir in range(ndim):
+        for ic in range(ndim):
+            a = ax_c[ir, ic]
 
-            for row in range(ndim_4d):
-                for col in range(row):
-                    ax = axes_cm[row, col]
-                    if col == 0:
-                        ax.set_ylabel(labels_4d[row], fontsize=13)
-                    if row == ndim_4d - 1:
-                        ax.set_xlabel(labels_4d[col], fontsize=13)
-                    ax.tick_params(labelsize=8)
-                    ax.grid(True, alpha=0.15)
+            if ir == ic:
+                # Diagonal — variable name only, no frame
+                a.axis('off')
+                a.text(0.5, 0.5, labels[ir],
+                       ha='center', va='center',
+                       fontsize=17, fontweight='bold',
+                       transform=a.transAxes)
 
-            cbar_ax = fig_cm.add_axes([0.72, 0.72, 0.025, 0.20])
-            sm_cm   = cm.ScalarMappable(cmap=col_cmap, norm=col_norm)
-            sm_cm.set_array([])
-            cbar_cm = fig_cm.colorbar(sm_cm, cax=cbar_ax)
-            cbar_cm.set_label(col_label, fontsize=13)
-            cbar_cm.ax.tick_params(labelsize=10)
-            if len(unique_vals) <= 15:
-                cbar_cm.set_ticks(unique_vals)
-                cbar_cm.set_ticklabels(
-                    [f'{v:.0f}' for v in unique_vals] if col_key == 'Teff'
-                    else [f'{v:.2f}' for v in unique_vals])
+            elif ir > ic:
+                # Below diagonal — scatter coloured by Teff
+                a.scatter(corner_data[idx_t, ic], corner_data[idx_t, ir],
+                          c=teff_vals[idx_t], cmap=teff_cmap, norm=teff_norm,
+                          s=1.5, alpha=0.35, linewidths=0, rasterized=True)
+                a.set_xlim(ranges[ic])
+                a.set_ylim(ranges[ir])
+                a.grid(True, alpha=0.15)
+                a.tick_params(labelsize=7)
+                # Ticks on inner sides (right + top, toward the diagonal)
+                a.yaxis.tick_right()
+                a.xaxis.tick_top()
+                # Labels only on cells immediately adjacent to the diagonal
+                if ic != ir - 1:
+                    a.tick_params(labelright=False, labeltop=False)
 
-            fig_cm.suptitle(
-                f'4th-order NLLD coefficients coloured by {col_label} — {model}',
-                fontsize=13, y=1.02)
-            pdf.savefig(fig_cm, bbox_inches='tight')
-            plt.close(fig_cm)
+            else:   # ir < ic
+                # Above diagonal — scatter coloured by wavelength, mirrored axes
+                a.scatter(corner_data[idx_w, ic], corner_data[idx_w, ir],
+                          c=wav_vals[idx_w], cmap=wav_cmap, norm=wav_norm,
+                          s=1.5, alpha=0.35, linewidths=0, rasterized=True)
+                a.set_xlim(ranges[ic])
+                a.set_ylim(ranges[ir])
+                a.grid(True, alpha=0.15)
+                a.tick_params(labelsize=7)
+                # Ticks on inner sides (left + bottom, toward the diagonal)
+                # Labels only on cells immediately adjacent to the diagonal
+                if ic != ir + 1:
+                    a.tick_params(labelleft=False, labelbottom=False)
 
-        # ── Figure 2e : coloured by wavelength ───────────────────────────────
-        print('    FIGURE 2e - Corner plot coloured by wavelength')
-        wav_cmap = plt.cm.turbo
-        wav_norm = mcolors.Normalize(vmin=corner_wav_um.min(), vmax=corner_wav_um.max())
+    # ── Colorbars ─────────────────────────────────────────────────────────────
+    sm_t_disc.set_array([])
+    cb_t = fig.colorbar(sm_t_disc, cax=cax_t)
+    cb_t.set_label(r'$T_{\rm eff}$ (K)', fontsize=11)
+    cb_t.set_ticks(teff_unique)
+    cb_t.set_ticklabels([f'{v:.0f}' for v in teff_unique])
+    cb_t.ax.tick_params(labelsize=9)
+    cax_t.yaxis.set_ticks_position('left')
+    cax_t.yaxis.set_label_position('left')
 
-        fig_wav = corner.corner(
-            corner_data, labels=labels_4d, range=ranges_4d, bins=50, smooth1d=1.0,
-            plot_datapoints=False, plot_density=False, fill_contours=False, no_fill_contours=True,
-            levels=(0.5, 0.68, 0.95, 0.99),
-            hist_kwargs={'color': 'gray', 'linewidth': 1.2, 'alpha': 0.5},
-            label_kwargs={'fontsize': 13}, show_titles=False,
-            contour_kwargs={'colors': 'none'},
-        )
-        axes_wav = np.array(fig_wav.axes).reshape(ndim_4d, ndim_4d)
+    sm_w = cm.ScalarMappable(cmap=wav_cmap, norm=wav_norm)
+    sm_w.set_array([])
+    cb_w = fig.colorbar(sm_w, cax=cax_w)
+    cb_w.set_label(r'Wavelength ($\mu$m)', fontsize=11)
+    cb_w.ax.tick_params(labelsize=9)
 
-        idx_sub_wav = (np.sort(rng.choice(len(corner_data), size=40_000, replace=False))
-                       if len(corner_data) > 40_000 else np.arange(len(corner_data)))
-        idx_sub_wav = idx_sub_wav[np.argsort(corner_wav_um[idx_sub_wav])]
-
-        for row in range(ndim_4d):
-            for col in range(row):
-                axes_wav[row, col].scatter(
-                    corner_data[idx_sub_wav, col], corner_data[idx_sub_wav, row],
-                    c=corner_wav_um[idx_sub_wav], cmap=wav_cmap, norm=wav_norm,
-                    s=1.5, alpha=0.35, linewidths=0, rasterized=True)
-
-        n_wav_hist_bins = 10
-        wav_edges   = np.linspace(corner_wav_um.min(), corner_wav_um.max(), n_wav_hist_bins + 1)
-        wav_centres = 0.5 * (wav_edges[:-1] + wav_edges[1:])
-
-        for d in range(ndim_4d):
-            ax = axes_wav[d, d]
-            ax.clear()
-            for ibin, centre in enumerate(wav_centres):
-                mask_bin = ((corner_wav_um >= wav_edges[ibin]) &
-                            (corner_wav_um <  wav_edges[ibin + 1]))
-                if ibin == n_wav_hist_bins - 1:
-                    mask_bin |= (corner_wav_um == wav_edges[ibin + 1])
-                if mask_bin.sum() == 0:
-                    continue
-                ax.hist(corner_data[mask_bin, d], bins=50, range=ranges_4d[d],
-                        alpha=0.55, color=wav_cmap(wav_norm(centre)), density=True,
-                        histtype='stepfilled', edgecolor='none')
-            ax.set_xlim(ranges_4d[d])
-            ax.set_yticks([])
-            for spine in ['top', 'left', 'right']:
-                ax.spines[spine].set_visible(False)
-            if d == ndim_4d - 1:
-                ax.set_xlabel(labels_4d[d], fontsize=13)
-
-        for row in range(ndim_4d):
-            for col in range(row):
-                ax = axes_wav[row, col]
-                if col == 0:
-                    ax.set_ylabel(labels_4d[row], fontsize=13)
-                if row == ndim_4d - 1:
-                    ax.set_xlabel(labels_4d[col], fontsize=13)
-                ax.tick_params(labelsize=8)
-                ax.grid(True, alpha=0.15)
-
-        cbar_ax_wav = fig_wav.add_axes([0.72, 0.72, 0.025, 0.20])
-        sm_wav      = cm.ScalarMappable(cmap=wav_cmap, norm=wav_norm)
-        sm_wav.set_array([])
-        cbar_wav    = fig_wav.colorbar(sm_wav, cax=cbar_ax_wav)
-        cbar_wav.set_label(r'Wavelength ($\mu$m)', fontsize=13)
-        cbar_wav.ax.tick_params(labelsize=10)
-        wav_tick_step = 0.5
-        wav_ticks = np.arange(
-            np.ceil(corner_wav_um.min() / wav_tick_step) * wav_tick_step,
-            corner_wav_um.max() + wav_tick_step / 2,
-            wav_tick_step)
-        cbar_wav.set_ticks(wav_ticks)
-        cbar_wav.set_ticklabels([f'{t:.1f}' for t in wav_ticks])
-
-        fig_wav.suptitle(
-            f'4th-order NLLD coefficients coloured by wavelength — {model}',
-            fontsize=13, y=1.02)
-        pdf.savefig(fig_wav, bbox_inches='tight')
-        plt.close(fig_wav)
+    plt.savefig(paths.figures / "Appendix2.pdf", bbox_inches='tight', dpi=150)
+    plt.close(fig)

@@ -58,6 +58,16 @@ rule Fig5:
     script:
         "src/scripts/Fig5_plot.py"
 
+rule Appendix1:
+    input:
+        script="src/scripts/Appendix1_plot.py",
+        chi2="src/data/Fig3_Storage/chi2_r_r.npy"
+    output:
+        "src/tex/figures/Appendix1.pdf"
+    cache: True
+    script:
+        "src/scripts/Appendix1_plot.py"
+        
 rule Appendix2:
     input:
         script="src/scripts/Appendix2_plot.py",
@@ -68,12 +78,12 @@ rule Appendix2:
     script:
         "src/scripts/Appendix2_plot.py"
 
-rule Appendix1:
+rule Appendix3:
     input:
-        script="src/scripts/Appendix1_plot.py",
-        chi2="src/data/Fig3_Storage/chi2_r_r.npy"
+        script="src/scripts/Appendix3_plot.py",
+        results="src/data/Fig5_Storage/mps1/results.npz",
     output:
-        "src/tex/figures/Appendix1.pdf"
+        "src/tex/figures/Appendix3.pdf"
     cache: True
     script:
-        "src/scripts/Appendix1_plot.py"
+        "src/scripts/Appendix3_plot.py"

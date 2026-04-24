@@ -59,10 +59,27 @@ for model in models:
     cluster_mode_mus      = res['cluster_mode_mus']
     cluster_mode_profiles = res['cluster_mode_profiles']
     cluster_mode_coeffs   = res['cluster_mode_coeffs']
+    typical_idx          = int(res['typical_idx'])
+    cluster_mode_indices = res['cluster_mode_indices']
+    corner_meta          = res['corner_meta']
+    T_vals_arr           = res['T_vals_arr']
+    g_vals_arr           = res['g_vals_arr']
+    m_vals_arr           = res['m_vals_arr']
+    wavs_ref             = res['wavs_ref']
 
     n_cl           = len(unique_cl)
     cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
     cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
+
+    # ── Physical-parameter lookup for each mode ───────────────────────────────
+    def get_phys(idx):
+        m = corner_meta[idx]
+        return dict(Teff=T_vals_arr[m[0]], logg=g_vals_arr[m[1]],
+                    MH=m_vals_arr[m[2]],   wav=wavs_ref[m[3]] / 1e4)
+
+    mode_phys = {'Overall mode': get_phys(typical_idx)}
+    for ci, cl in enumerate(unique_cl):
+        mode_phys[f'Cluster {cl} mode'] = get_phys(int(cluster_mode_indices[ci]))
 
     # ── Figure 5: NLLD curves for overall mode and per-cluster mode profiles ──
     print('    FIGURE 5 - NLLD curves for overall mode and per-cluster mode profiles')
@@ -92,7 +109,17 @@ for model in models:
         # Left panel: raw intensity profile (solid) + NLLD fit (dashed)
         ax5[0, plot_idx].plot(mu_plot, curve, '--', color='black', linewidth=lw, zorder=2, label='4th-order NLLD fit' if plot_idx == 0 else None)
         ax5[0, plot_idx].plot(mu_plot, prof,  '-',  color=col,     linewidth=lw, zorder=1)
-        ax5[0, plot_idx].set_title(sp_label, fontsize=11, pad=3)
+        p = mode_phys[sp_label]
+        title = (
+            f'{sp_label}\n'
+            f'$c_1={coeffs[0]:.4f}$,  $c_2={coeffs[1]:.4f}$,  '
+            f'$c_3={coeffs[2]:.4f}$,  $c_4={coeffs[3]:.4f}$\n'
+            f'$\\lambda={p["wav"]:.2f}\\,\\mu$m,  '
+            f'$T_{{\\rm eff}}={p["Teff"]:.0f}\\,$K,  '
+            f'$\\log_{{10}} g={p["logg"]:.2f}$,  '
+            f'$[{{\\rm M/H}}]={p["MH"]:.2f}$'
+        )
+        ax5[0, plot_idx].set_title(title, fontsize=8.5, pad=5)
         ax5[0, plot_idx].grid(True)
         if plot_idx==0:ax5[0, plot_idx].legend(fontsize=12, loc='lower right')
 

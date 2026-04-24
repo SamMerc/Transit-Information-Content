@@ -186,7 +186,7 @@ else:
 
 #%% Model scatter and seed to use for the plot
 model_scatter =  16.68100537200059 
-seed = 80
+seed = 70
 
 ##############################
 ##### Relevant functions #####

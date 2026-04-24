@@ -135,7 +135,7 @@ fixed_args['nburn'] = 70000
 
 #%% Model scatter and seed to use for the plot
 model_scatter =  16.68100537200059 
-seed = 80
+seed = 70
 
 # Filtering parameters
 THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
@@ -744,6 +744,7 @@ for lbl, cx in zip(ld_node_labels, ld_xs):
 # Connection lines: center-to-center, specific pairs only
 # sys_ys: [i=4, ρ★=3, P=2, √ecos=1, √esin=0]   ld_xs: [u1=0, u2=1, u3=2]
 P_y    = sys_ys[2]
+i_y    = sys_ys[4]
 cosw_y = sys_ys[1]
 
 for lx in ld_xs:          # D → u1, u2, u3
@@ -752,6 +753,8 @@ for lx in ld_xs:          # P → u1, u2, u3
     ax_diag.plot([sys_cx, lx], [P_y, ld_cy], color=line_col, lw=3.5, zorder=1)
 for lx in ld_xs[1:]:      # √ecos(ω) → u2, u3
     ax_diag.plot([sys_cx, lx], [cosw_y, ld_cy], color=line_col, lw=3.5, zorder=1)
+for lx in ld_xs:          # i → u1, u2, u3
+    ax_diag.plot([sys_cx, lx], [i_y, ld_cy], color=line_col, lw=3.5, zorder=1)
 
 # ---- Manual crop: set these in inches (figure is FIG_W x FIG_H inches) ----
 crop_left   = 2.5    # increase to trim left whitespace
