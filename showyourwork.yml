@@ -25,7 +25,7 @@ dag:
 
 # Externally-hosted datasets, e.g. on Zenodo
 datasets:
-  10.5281/zenodo.19711949:
+  10.5281/zenodo.19719595:
     contents:
       Fig1_chains.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chains.npy
       Fig1_chi2_chain.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chi2_chain.npy
@@ -35,6 +35,7 @@ datasets:
       Fig2_chi2_chain.npy: src/data/Fig2_Storage/16.0ppm/Seed80/chi2_chain.npy
       Fig2_logprob.npy: src/data/Fig2_Storage/16.0ppm/Seed80/logprob.npy
       Fig5_data.pkl: src/data/Fig5_Storage/mps1/data.pkl
+      Fig5_results.npz: src/data/Fig5_Storage/mps1/results.npz
 
 # Custom file dependencies
 dependencies:
@@ -42,6 +43,8 @@ dependencies:
     - src/data/Fig3_Storage/chi2_r_r.npy
   src/scripts/Appendix1_plot.py:
     - src/data/Fig3_Storage/chi2_r_r.npy
+  src/scripts/Appendix2_plot.py:
+    - src/data/Fig5_Storage/mps1/results.npz
   # src/tex/ms.tex:
   #   - src/tex/stylesheet.tex
 

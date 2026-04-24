@@ -51,12 +51,22 @@ rule Fig3:
 rule Fig5:
     input:
         script="src/scripts/Fig5_plot.py",
-        cache="src/data/Fig5_Storage/mps1/data.pkl",
+        results="src/data/Fig5_Storage/mps1/results.npz",
     output:
         "src/tex/figures/Fig5.pdf"
     cache: True
     script:
         "src/scripts/Fig5_plot.py"
+
+rule Appendix2:
+    input:
+        script="src/scripts/Appendix2_plot.py",
+        results="src/data/Fig5_Storage/mps1/results.npz",
+    output:
+        "src/tex/figures/Appendix2.pdf"
+    cache: True
+    script:
+        "src/scripts/Appendix2_plot.py"
 
 rule Appendix1:
     input:

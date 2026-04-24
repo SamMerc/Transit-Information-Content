@@ -2,15 +2,14 @@
 ########## Purpose ##########
 #############################
 
-# Figures 2, 3, and 4 require a 4-th order non-linear limb-darkening law for the injection / simulation of the LC.
+# Figures 2, 3, 4, and 5 require a 4-th order non-linear limb-darkening law for the injection / simulation of the LC.
 # Given that we are working with a made up fiducial system, we need to identify the limb-darkening values to use for this.
-# In order to do this, we explore all available intensity profiles for a given grid of stellar models, and perform a PCA
-# analysis to identify both the median/mode and an outlier intensity profile which can be used in our analyses.
-# We perform such decomposition on each individual grid of stellar models, and in doing so this allows us to highlight
-# the choice of 1. stellar model and 2. limb-darkening prescription on the transit depth amplification factor and bias.
+# In order to do this, we explore all available intensity profiles for a given grid of stellar properties, fit these profiles
+# with a 4th order NLLD and perform a clustering algorithm to identify clusters, the overall mode, and the cluster modes. This
+# file shows how to the intensity profiles needed for these figures.
 #
 # This version works exclusively with global (disc-integrated) stellar intensity profiles — no transit
-# chord / impact-parameter / planet-size dependence. For that see the Paper2 code.
+# chord / impact-parameter / planet-size dependence. For that see the Paper2 related files.
 
 
 ######################################
@@ -38,6 +37,7 @@ from scipy.cluster.hierarchy import (linkage, fcluster,
                                      optimal_leaf_ordering)
 from sklearn.preprocessing import StandardScaler
 from scipy.spatial.distance import cdist
+import paths
 
 
 ######################################
@@ -45,7 +45,7 @@ from scipy.spatial.distance import cdist
 ######################################
 
 LD_data_path        = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/LD_simulation'
-orig_save_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig2_helper_Storage/'
+orig_save_data_path = str(paths.data / "Fig5_Storage") + "/"
 
 models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
@@ -103,7 +103,7 @@ colors = cmap(np.linspace(0, 1, n_components))
 
 wav_region = [6000, 53000]  # 0.6 – 5.3 micron
 
-intr_prof_mode = 'load'  # 'build' or 'load'
+intr_prof_mode = 'build'  # 'build' or 'load'
 
 # ── Profile subsampling ───────────────────────────────────────────────────────
 # If True, randomly draw n_subsample_profiles from the valid profiles before
@@ -1164,3 +1164,25 @@ for model in models:
         print(f'  {sp_label:<20}  '
               f'{coeffs[0]:>8.4f}  {coeffs[1]:>8.4f}  '
               f'{coeffs[2]:>8.4f}  {coeffs[3]:>8.4f}')
+        
+    results_file = save_data_path + 'results.npz'
+    np.savez(
+        results_file,
+        corner_data           = corner_data,
+        corner_meta           = corner_meta,
+        cluster_labels        = cluster_labels,
+        unique_cl             = unique_cl,
+        T_vals_arr            = T_vals_arr,
+        g_vals_arr            = g_vals_arr,
+        m_vals_arr            = m_vals_arr,
+        wavs_ref              = wavs_ref,
+        typical_idx           = np.array(typical_idx),
+        cluster_mode_indices  = np.array(cluster_mode_indices),
+        typical_mu            = typical_mu,
+        typical_profile       = typical_profile,
+        typical_coeff         = typical_coeff,
+        cluster_mode_mus      = cluster_mode_mus,
+        cluster_mode_profiles = cluster_mode_profiles,
+        cluster_mode_coeffs   = cluster_mode_coeffs,
+    )
+    print(f'  Saved results → {results_file}')
