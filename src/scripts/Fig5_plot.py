@@ -18,7 +18,7 @@
 import numpy as np
 import matplotlib
 import paths
-matplotlib.use('TkAgg')
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 

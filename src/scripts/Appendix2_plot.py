@@ -15,7 +15,7 @@
 import numpy as np
 import matplotlib
 import paths
-matplotlib.use('TkAgg')
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
