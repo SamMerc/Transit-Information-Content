@@ -62,8 +62,8 @@ wav_vals  = wavs_ref[corner_meta[:, 3]] / 1e4   # µm
 N      = len(corner_data)
 ndim   = 4
 labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
-ranges = [(np.percentile(corner_data[:, i], 0.5),
-           np.percentile(corner_data[:, i], 99.5)) for i in range(ndim)]
+ranges = [(np.percentile(corner_data[:, i], 0.1),
+           np.percentile(corner_data[:, i], 99.9)) for i in range(ndim)]
 
 # ── Frame colour definitions (discrete=True → 10 sampled grid points) ────────
 frames_config = [

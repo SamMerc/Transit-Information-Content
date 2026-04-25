@@ -119,7 +119,7 @@ for model in models:
             f'$\\log_{{10}} g={p["logg"]:.2f}$,  '
             f'$[{{\\rm M/H}}]={p["MH"]:.2f}$'
         )
-        ax5[0, plot_idx].set_title(title, fontsize=8.5, pad=5)
+        ax5[0, plot_idx].set_title(title, fontsize=12, pad=5)
         ax5[0, plot_idx].grid(True)
         if plot_idx==0:ax5[0, plot_idx].legend(fontsize=12, loc='lower right')
 
