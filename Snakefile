@@ -15,9 +15,9 @@ rule Fig1:
 rule Fig2:
     input:
         script="src/scripts/Fig2_plot.py",
-        chains="src/data/Fig2_Storage/16.0ppm/Seed80/chains.npy",
-        chi2="src/data/Fig2_Storage/16.0ppm/Seed80/chi2_chain.npy",
-        logprob="src/data/Fig2_Storage/16.0ppm/Seed80/logprob.npy",
+        chains="src/data/Fig2_Storage/16.0ppm/Seed70/chains.npy",
+        chi2="src/data/Fig2_Storage/16.0ppm/Seed70/chi2_chain.npy",
+        logprob="src/data/Fig2_Storage/16.0ppm/Seed70/logprob.npy",
     output:
         "src/tex/figures/Fig2.pdf"
     cache: True
@@ -28,9 +28,9 @@ rule Fig2:
 rule Fig3_run:
     input:
         script="src/scripts/Fig3_run.py",
-        chains="src/data/Fig2_Storage/16.0ppm/Seed80/chains.npy",
-        chi2="src/data/Fig2_Storage/16.0ppm/Seed80/chi2_chain.npy",
-        logprob="src/data/Fig2_Storage/16.0ppm/Seed80/logprob.npy",
+        chains="src/data/Fig2_Storage/16.0ppm/Seed70/chains.npy",
+        chi2="src/data/Fig2_Storage/16.0ppm/Seed70/chi2_chain.npy",
+        logprob="src/data/Fig2_Storage/16.0ppm/Seed70/logprob.npy",
     output:
         "src/data/Fig3_Storage/chi2_r_r.npy"
     cache: True
