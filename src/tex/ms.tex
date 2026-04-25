@@ -132,7 +132,7 @@ While the generated data are designed to resemble observations, the chosen limb-
     % \hspace{-8mm}
     \script{Fig2_plot.py}
     \includegraphics[width=\linewidth]{figures/Fig2.pdf}
-    \caption{\textbf{Parameter perturbations on transit shape.} Separate panels highlight the transit ingress/egress, and bottom. Symmetric ``bumps'' can be clearly seen at ingress and egress, driven by the orbital parameters. In contrast, fluctuations in the bottom are dominated by the LDCs. Perturbations beyond the photometric precision (16~ppm here) are due to underlying correlation, e.g., between $\rho_{\star}$ vs $\sqrt{e}\sin{\omega}$ (top-right). In practice, these correlations link all orbital parameters. The coloured contours indicate the $10, 30, 60$, and $90\%$ equi-probability levels.}
+    \caption{\textcolor{red}{\textbf{Parameter perturbations on transit shape.}} Separate panels highlight the transit ingress/egress, and bottom. Symmetric ``bumps'' can be clearly seen at ingress and egress, driven by the orbital parameters. In contrast, fluctuations in the bottom are dominated by the LDCs. Perturbations beyond the photometric precision (16~ppm here) are due to underlying correlation, e.g., between $\rho_{\star}$ vs $\sqrt{e}\sin{\omega}$ (top-right). In practice, these correlations link all orbital parameters. The coloured contours indicate the $10, 30, 60$, and $90\%$ equi-probability levels.}
     \label{fig:fig2}
 \end{figure}
 
@@ -140,7 +140,7 @@ While the generated data are designed to resemble observations, the chosen limb-
     \script{Fig3_plot.py}
     \centering
     \includegraphics[width=\textwidth]{figures/Fig3.pdf}
-    \caption{\textbf{Revealing underlying network of  correlations.} Results of the sensitivity analysis. \textit{Left:} Correlation matrix. The lower triangle reports correlation values derived from $\chi^2$ maps, with shading scaled to the absolute values. The upper triangle provides a circular representation of the same matrix, where circle size and shading scale with correlation strength, making the families of correlated parameters easier to distinguish. The transit depth is by far most strongly correlated with $u_1$, $u_2$, and $u_3$. \textit{Right:} Network representation of the correlations. Parameters are grouped into families using the same colour scheme as in the matrix. Blue lines highlight the strongest links between parameters of different families.}
+    \caption{\textcolor{red}{\textbf{Revealing underlying network of  correlations.}} Results of the sensitivity analysis. \textit{Left:} Correlation matrix. The lower triangle reports correlation values derived from $\chi^2$ maps, with shading scaled to the absolute values. The upper triangle provides a circular representation of the same matrix, where circle size and shading scale with correlation strength, making the families of correlated parameters easier to distinguish. The transit depth is by far most strongly correlated with $u_1$, $u_2$, and $u_3$. \textit{Right:} Network representation of the correlations. Parameters are grouped into families using the same colour scheme as in the matrix. Blue lines highlight the strongest links between parameters of different families.}
     \label{fig:fig3}
 \end{figure*}
 
@@ -275,21 +275,21 @@ With $\sigma_{\rm ref} \equiv \sigma_{\rm OOT}/\sqrt{N}$, the true theoretical f
 \begin{deluxetable}{ccc}[!h]
 \tablecaption{Injection-retrieval parameters}
 \tablehead{
-\colhead{Parameters} & \colhead{Values} & \colhead{Reference}
+\colhead{Parameters} & \colhead{Values}
 }
     \startdata
-\multicolumn{3}{c}{Injection} \\ 
-$R_P/R_*$ & $0.11589 \pm 0.00016$ & \cite{Mahajan2024}\\
-$i$ (degrees) & $88.7 \pm 0.1$ & \cite{Cloutier2021}\\
-$P$ (days) & $1.580404531^{+0.000000018}_{-0.000000017}$ & \cite{Mahajan2024}\\
-$a/R_*$ & $14.97^{+0.12}_{-0.14}$ & \cite{Mahajan2024}\\
-$e$ & $0.1$ & This study\\
-$\omega$ (degrees) & $50$ & This study\\
-$u_{1}$ (poly./non-linear) & $0.1$/$0.83$ & This study\\
-$u_{2}$ (poly./non-linear) & $0.2$/$-0.4$ & This study\\
-$u_{3}$ (poly./non-linear) & $0.4$/$0.15$ & This study\\
-$u_{4}$ (poly./non-linear) & $0.3$/$-0.025$ & This study\\
-$T_0$ (days) & 0 & This study\\
+\multicolumn{2}{c}{Injection} \\ 
+$R_P/R_*$ & $0.1$ \\
+$i$ (degrees) & $90$ \\
+$P$ (days) & $1$ \\
+$a/R_*$ & $4.21$ \\
+$e$ & $0$ \\
+$\omega$ (degrees) & $0$ \\
+$u_{1}$ (poly./non-linear) & $0.1$ \\
+$u_{2}$ (poly./non-linear) & $0.2$ \\
+$u_{3}$ (poly./non-linear) & $0.4$ \\
+$u_{4}$ (poly./non-linear) & $0.3$ \\
+$T_0$ (days) & 0 \\
 \hline
 \hline
 Parameters & Priors & Walkers \\
@@ -307,7 +307,8 @@ $u_{3}$ & $\mathcal{U}(-100, 100)$ & $\mathcal{U}(0.2, 0.6)$\\
 $u_{4}$ & $\mathcal{U}(-100, 100)$ & $\mathcal{U}(0.2, 0.4)$\\
 $T_0$ (days) & N/A & Fixed \\
     \enddata
-    \tablecomments{Rather than adopting literature values, we set the eccentricity and argument of periastron to arbitrary values to explicitly visualize the effect of non-circular orbits on the amplification factor. Similarly, the LDCs were manually selected to systematically vary the order of injected LDL. Relying on literature values would have constrained us to on quadratic limb-darkening alone, preventing exploration of higher-order laws. The reported injection LDCs fall into two categories. The first corresponds to the coefficients used in \autoref{sec:TDPP}'s injection--retrieval tests. In this case, the coefficients were consistent across all three tested laws (e.g., the $2^{\rm rd}$-order polynomial LDL used $[0.1, 0.2]$ while the third-order polynomial LDL used $[0.1, 0.2, 0.4]$). The second category corresponds to the the LDCs used for the fourth-order non-linear LDL, which was used as injection in \autoref{sec:amp_factor_cause} and \autoref{sec:boosting_science}'s analyses. Priors and walker starting positions for these tests are not reported as they depend on the case considered. The methodology used to selected the priors and walkers starter positions for a given choice of injection and retrieval LDL is detailed in the main text (e.g. \autoref{sec:sensitivity_analysis} and \autoref{sec:impact_prior_choice}).}
+    \tablecomments{While we inject a circular orbit, we nevertheless include the eccentricity and argument of periastron as free parameters in the retrieval to visualize their effect on the resulting posterior distribution. 
+    Similarly, the LDCs were manually selected to systematically vary the order of injected LDL. Relying on literature values would have constrained us to on quadratic limb-darkening alone, preventing exploration of higher-order laws. The reported injection LDCs fall into two categories. The first corresponds to the coefficients used in \autoref{sec:TDPP}'s injection--retrieval tests. In this case, the coefficients were consistent across all three tested laws (e.g., the $2^{\rm rd}$-order polynomial LDL used $[0.1, 0.2]$ while the third-order polynomial LDL used $[0.1, 0.2, 0.4]$). The second category corresponds to the the LDCs used for the fourth-order non-linear LDL, which was used as injection in \autoref{sec:amp_factor_cause} and \autoref{sec:boosting_science}'s analyses. Priors and walker starting positions for these tests are not reported as they depend on the case considered. The methodology used to selected the priors and walkers starter positions for a given choice of injection and retrieval LDL is detailed in the main text (e.g. \autoref{sec:sensitivity_analysis} and \autoref{sec:impact_prior_choice}).}
     \label{tab:tab1}
 \end{deluxetable}
 
@@ -327,13 +328,13 @@ $T_0$ (days) & N/A & Fixed \\
 \clearpage
 \section{Limb darkening coefficients}
 
-\autoref{fig:appendix_fig2} presents the results of our sensitivity test while \autoref{fig:appendix_fig3} presents the results of our sensitivity test.
+\textcolor{red}{\autoref{fig:appendix_fig2} shows the full distribution of NLLD coefficients across $T_{\rm eff}$ and wavelength, while \autoref{fig:appendix_fig3} shows the same LDC space partitioned by hierarchical cluster membership.}
 
 \begin{figure*}[htbp]
     \script{Appendix2_plot.py}
     \centering
     \includegraphics[width=\textwidth]{figures/Appendix2.pdf}
-    \caption{\textbf{$\chi^2$ maps across parameter pairs}. Corner plot of the $\chi^2$ maps used in our sensitivity test. Each diagonal subplot shows a 1-dimensional evaluation of the chi-squared space for the parameter corresponding to that column. Off-diagonal subplots display two-dimensional equi-$\chi^2$ contours derived from the $\chi^2$ maps, where each map was obtained by varying the parameters indicated on the x and y axes. Finally, for certain contours that are not elliptical (e.g., $\rho_{\star}$ versus $P$) we approximate them as first-order polynomials and compute the rotation angle using $\theta = \mathrm{arctan(m)}$, where m is the slope. You can find a visualization of these limb-darkening coefficients on the other stellar parameters used to generate them here\footnote{\url{https://github.com/SamMerc/Transit-Information-Content/blob/main/src/static/corner_animation.gif}}} 
+    \caption{\textcolor{red}{\textbf{Distribution of fourth-order NLLD coefficients from the MPS-ATLAS set1 grid.} Double corner plot of the four NLLD coefficients ($c_1$, $c_2$, $c_3$, $c_4$) computed over $T_{\rm eff} \in [3500, 9000]$\,K, $\log_{10} g \in [3.0, 5.0]$, $[{\rm M/H}] \in [-5.0, 1.5]$, and JWST NIRSpec PRISM wavelengths. The \textit{lower-left} and \textit{upper-right} triangles show LDCs coloured by $T_{\rm eff}$ and wavelength, respectively. \textit{Left column:} 1D marginal histograms, grouped by the $T_{\rm eff}$ at which the LDCs were computed. \textit{Right column:} Same as the left column, but with grouping done according to wavelength. An animated version cycling through all four physical dimensions ($T_{\rm eff}$, $\log g$, [M/H], and wavelength) is available at \url{https://github.com/SamMerc/Transit-Information-Content/blob/main/src/static/corner_animation.gif}}}
     \label{fig:appendix_fig2}
 \end{figure*}
 
@@ -341,7 +342,7 @@ $T_0$ (days) & N/A & Fixed \\
     \script{Appendix3_plot.py}
     \centering
     \includegraphics[width=\textwidth]{figures/Appendix3.pdf}
-    \caption{\textbf{$\chi^2$ maps across parameter pairs}. Corner plot of the $\chi^2$ maps used in our sensitivity test. Each diagonal subplot shows a 1-dimensional evaluation of the chi-squared space for the parameter corresponding to that column. Off-diagonal subplots display two-dimensional equi-$\chi^2$ contours derived from the $\chi^2$ maps, where each map was obtained by varying the parameters indicated on the x and y axes. Finally, for certain contours that are not elliptical (e.g., $\rho_{\star}$ versus $P$) we approximate them as first-order polynomials and compute the rotation angle using $\theta = \mathrm{arctan(m)}$, where m is the slope.}
+    \caption{\textcolor{red}{\textbf{Hierarchical clustering of the LDC space.} Corner plot of the four NLLD coefficients ($c_1$, $c_2$, $c_3$, $c_4$) coloured by cluster membership as determined by the hierarchical clustering algorithm described in XXXX. Each cluster is assigned a distinct colour, with cluster shown as diamonds in the 2D panels. the global mode is depicted as an orange star. The diagonal panels show 1D marginal histograms of each coefficient, coloured by cluster membership. Dashed vertical lines mark the modes for clusters 1, 3, and 4, which were used as injection-retrieval test cases in Fig. XXXX and whose intensity profiles are shown in \autoref{fig:fig5}.}}
     \label{fig:appendix_fig3}
 \end{figure*}
 
