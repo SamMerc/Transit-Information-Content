@@ -26,11 +26,11 @@
 \begin{document}
 
 % Title
-\title{What's in Your Transit? Towards Reliably Getting $5\times$ More Science from Exoplanet Transit Data}
+\title{What's in Your Transit? \\ Towards Reliably Getting $5\times$ More Science from Exoplanet Transit Data}
 
 % Author list
 \author[0000-0002-0962-7585]{Samson J.\ Mercier}
-\affiliation{Department of Earth, Atmospheric and Planetary Sciences, Massachusetts Institute of Technology, 77 Massachusetts Avenue, Cambridge, MA 02139, USA}
+\affiliation{Department of Earth, Atmospheric and Planetary Sciences, Massachusetts Institute of Technology, 77 Massachusetts Avenue, Cambridge, MA 02139, USA}\footnote{Corresponding author: merci228@mit.edu}
 
 \author[0000-0003-2415-2191]{Julien de Wit}
 \affiliation{Department of Earth, Atmospheric and Planetary Sciences, Massachusetts Institute of Technology, 77 Massachusetts Avenue, Cambridge, MA 02139, USA}
@@ -71,47 +71,48 @@ Since its launch, JWST has ushered in a new era of exoplanet science. Thanks to 
 \begin{figure*}[!ht]
     \script{Fig1_plot.py}
     \centering
-    \includegraphics[width=0.9\textwidth]{figures/Fig1.pdf}
-    \caption{\textbf{Expectations vs reality in constraining an exoplanet transit depth.}
-    \textit{Top left:} Mock transit generated with the properties listed in \autoref{tab:tab1}. Black points show the light curve with 600 parts per million (ppm) of injected Gaussian white noise. Blue curves are model realizations drawn from the posterior distribution of $D$ obtained by fitting this dataset. Annotated arrows indicate the quantities relevant to the TDPP.
-    \textit{Right:} Illustration of the TDPP. Each coloured box plot set corresponds to injection--retrieval tests done with a different limb-darkening prescription. For each set the injection and retrieval models have the same functional form. Box plots summarize 10 MCMC retrievals with identical scatter but different noise realizations. The shaded horizontal line within the boxes marks the distribution's median, while the lower and upper box edges correspond to its first and third quartiles. Whiskers, denoting the minimum and maximum values, are calculated as $1.5\times$ the first and third quartile. The regimes and asymptotic behaviours of these injection--retrieval families are discussed in \autoref{sec:TDPP}. The injected out-of-transit scatter ($\sigma_{\rm OOT}$) is measured in 120-min bins.}
+    \includegraphics[width=\textwidth]{figures/Fig1.pdf}
+    \caption{\textcolor{red}{\textbf{Expectations vs reality in constraining an exoplanet transit depth.}}
+    \textit{Top left:} Mock transit generated with the properties listed in \autoref{tab:tab1}. \textcolor{red}{Black points show the light curve with 359 parts per million (ppm) of injected Gaussian white noise.} Blue curves are model realizations drawn from the posterior distribution of $D$ obtained by fitting this dataset. Annotated arrows indicate the quantities relevant to the TDPP.
+    \textit{Right:} Illustration of the TDPP. Each coloured box plot set corresponds to injection--retrieval tests done with a different limb-darkening prescription. For each set the injection and retrieval models have the same functional form. Box plots summarize 10 MCMC retrievals with identical scatter but different noise realizations. The \textcolor{red}{black} horizontal line within the boxes marks the distribution's median, while the lower and upper box edges correspond to its first and third quartiles. Whiskers, denoting the minimum and maximum values, are calculated as $1.5\times$ the first and third quartile. The regimes and asymptotic behaviours of these injection--retrieval families are discussed in \autoref{sec:TDPP}. The injected out-of-transit scatter ($\sigma_{\rm OOT}$) is measured in 120-min bins.}
     \label{fig:fig1}
 \end{figure*}
 
 Although instrumentation has improved drastically over the last decades, the models and frameworks used to interpret data have lagged behind. One example is our incomplete understanding of stars: stellar magnetic active regions (spots and faculae) consistently contaminate photometric and spectroscopic observations \citep[e.g.,][]{Dumusque2011a, Dumusque2011b, Meunier2017, Rackham2017, Rackham2018, Rackham2019, Rackham2023, Saba2025}. Our inability to model or mitigate these effects leads to biased measurements of the radial velocity amplitude and transit depth from which the most basic exoplanet properties---mass and radius, respectively---are measured \citep[e.g.,][]{Rabus2009, Carter2011, Lovis2011}. Similar biases can arise from other model limitations, such as with line shape parameterizations in opacity models \citep[][]{Niraula2022, Niraula2023}. These model limitations propagate throughout our analyses and hamper our ability to draw meaningful conclusions on exoplanet characteristics. 
 
-In this context, here we examine the information content of exoplanet transit data with the goal of identifying what targeted improvements to methods and models can enhance the scientific return of these observations. In \autoref{sec:LD Context} we summarize prior work on limb-darkening in the context of exoplanet transits and clarify the novelties that our study adds to this well-established body of work.
-% In this context, we chose to go back to the fundamentals and ask ``what is \textit{really} in current exoplanet transit data?'' to better understand what can or cannot reliably be constrained with current models and what targeted improvements could be made to our methods and models to enhance the scientific return of exoplanet transit data. 
+In this context, here we examine the information content of exoplanet transit data with the goal of identifying what targeted improvements to methods and models can enhance the scientific return of these observations. \textcolor{red}{In \autoref{sec:LD Context} we summarize prior work on limb-darkening in the context of exoplanet transits and clarify the novelties that our study adds to this well-established body of work.}
 In \autoref{sec:TDPP}, we present the root cause for our investigation, the ``Transit-Depth Precision Problem'' (TDPP). In \autoref{sec:amp_factor_cause}, we present the methodology developed to investigate its main origins and quantify their respective contributions. We discuss in \autoref{sec:boosting_science} targeted strategies to mitigate their respective effects and present the substantial boost in scientific return the community could then expect. We conclude in \autoref{sec:conclusion}.
 
 \section{Limb Darkening: Prior Work and Open Challenges}\label{sec:LD Context}
-
+\textcolor{red}{
 Limb darkening, or centre-to-limb intensity variation, occurs because radiation emerging near the stellar limb originates from higher, cooler atmospheric layers and is therefore weaker than radiation from the disk centre. Since the advent of exoplanet transit observations \citep[][]{Charbonneau2000,Henry2000}, limb darkening has been recognized as a critical component of transit modelling, as it directly shapes the morphology of transit light curves (as illustrated in \autoref{fig:fig2}). 
-
-Limb darkening is typically described with parametric limb-darkening laws (LDLs), which express the stellar intensity as a function of the viewing angle $\mu$ through a set of limb-darkening coefficients (LDCs). A wide variety of LDLs have been proposed, ranging from linear \citep[][]{Milne1921} and quadratic forms \citep[][]{Manduca1977} to higher-order polynomials \citep[][]{Gimenez2006} and non-linear prescriptions \citep[][]{Claret2000, Sing2010}. In parallel, methodological advances have focused on reparameterizing LDLs to reduce parameter correlations \citep[][]{Maxted2018,Maxted2023} and improving the sampling of the $N$-dimensional LDC parameter space \citep[][]{Kipping2013, Kipping2016}. 
-
-This diversity of approaches reflects a fundamental tension between the intrinsic complexity of stellar intensity profiles, the increasing precision of transit observations, and the need for analytically and numerically tractable models. Stellar atmosphere models have long shown that realistic intensity profiles often require some degree of non-linearity for accurate representation \citep[e.g.,][]{Claret1998, Neilson2013a, Neilson2013b}. Nevertheless, low-order LDLs remain widely used due to their simplicity and low dimensionality, which facilitate computational efficiency. 
-
+}
+\textcolor{red}{
+Limb darkening is typically described with parametric limb-darkening laws (LDLs), which express the stellar intensity as a function of the viewing angle $\mu$ through a set of limb-darkening coefficients (LDCs). A wide variety of LDLs have been proposed, ranging from linear \citep[][]{Milne1921} and quadratic forms \citep[][]{Manduca1977} to higher-order polynomials \citep[][]{Gimenez2006} and non-linear prescriptions \citep[][]{Claret2000, Sing2010}. In parallel, methodological advances have focused on reparameterizing LDLs to reduce parameter correlations \citep[][]{Maxted2018,Maxted2023} and improving the sampling of LDC parameter spaces \citep[][]{Kipping2013, Kipping2016}. 
+}
+\textcolor{red}{
+This diversity of approaches reflects a fundamental tension between the intrinsic complexity of stellar intensity profiles, the increasing precision of transit observations, and the need for analytically and numerically tractable models. Stellar atmosphere models have long shown that realistic intensity profiles often require some degree of non-linearity for accurate representation \citep[e.g.,][]{Claret1998, Neilson2013a, Neilson2013b}. Nevertheless, low-order LDLs remain widely used due to their simplicity and low dimensionality, which facilitate inference. 
+}
+\textcolor{red}{
 An extensive body of work has demonstrated that such simplified LDLs lead to bias and increased variance in transit depth measurements \citep[e.g.,][]{Southworth2008, Carter2008, Csizmadia2013, Neilson2013a, Neilson2013b, Espinoza2015, Espinoza2016, Morello2017, Keers2024}. These effects arise from strong correlations between limb-darkening parameters and other transit parameters, which fundamentally limit the information that can be extracted from transit light curves. Such limitations become increasingly relevant for high-quality transit data, such as those acquired with JWST, where photon noise is sufficiently low that modelling degeneracies dominate the error budget. Moreover, degraded transit depth precision and accuracy have been observed across a wide range of orbital geometries, wavelength regimes, and stellar types, underscoring that the choice of LDL has a ubiquitous impact on transit analyses. Many studies therefore recommend the use of higher-order laws, such as the three-parameter prescription of \cite{Sing2010}, to mitigate both bias and inflated variance. However, while higher-order LDLs reduce these effects, they do not eliminate them entirely, and the optimal choice of LDL remains strongly dependent on data quality \citep[see Figure 7 of][]{Espinoza2016}.
-
+}
+\textcolor{red}{
 While previous works have characterized limb-darkening effects in terms of bias, covariance structure, or goodness-of-fit, to our knowledge none has explicitly quantified the information content of transit depth measurements relative to the photon-noise limit. Furthermore, no study has adopted a holistic MCMC-based approach to jointly analyze all fitted transit parameters and quantify their individual contributions to transit depth uncertainty through the structure of the full, multi-dimensional posterior distribution. In this work, we address these gaps and frame limb darkening as an information bottleneck. Through injection--retrieval and MCMC analyses, we explore how transit depth precision---quantified with $A$---and bias depend on the adopted limb-darkening prescription and prior assumptions. We further quantify the sensitivity of the transit depth to all fitted transit parameters, identify which correlations dominate information loss, and assess what complementary data are most effective at mitigating the TDPP.
-
+}
 
 \section{The Transit-depth precision problem}\label{sec:TDPP}
-
-%The red points indicate the amplification factors for four well-studied systems. While all these points lie above 1, the observed values are generally much closer to 1-2 than the injection--retrieval results. As illustrated in \autoref{fig:fig4}, this is likely due to the choice of transit parametrization priors, and in particular those used to describe the limb--darkening. In particular, relying on lower-dimension laws to describe the limb--darkening can artificially decrease $A$, at the detriment of biasing the retrieved transit depth.
 
 Transit observations have played a central role in advancing exoplanet science. 
 The most informative observable for atmospheric science across the board is the transit depth, $D = (R_p/R_{\star})^2$, in which $R_p$ is the planetary radius and $R_\star$ is the stellar radius. Measuring $D$ at different wavelengths reveals the planet’s apparent size as a function of wavelength, which can be translated into information on atmospheric opacity \citep[e.g.,][]{Seager2000, Benneke2012, deWit2013}. The precision with which $D$ is measured directly sets the limit on the inferences that can be made about atmospheric characteristics \citep[e.g.,][]{Deming2009, Greene2016}. It is thus crucial that the uncertainty on the transit depth ($\sigma_D$) be minimized---as well as biases on it, naturally. 
 
-To first order, one could expect that $\sigma_D$ relates to the scatter in the photometric time series (\autoref{fig:fig1}, left panel), which includes both photon noise (roughly Gaussian at high count levels) and correlated noise (marginal to first order), measurable as the out-of-transit scatter for a bin of duration similar to the transit duration ($\sigma_{\rm ref} = \sigma_{\rm OOT}/\sqrt{N}$ with $N$ in-transit points). Specifically, one expects that ${\sigma_D}\simeq\sqrt{3} \ {\sigma_{\rm ref}}$ as the typical out-of-transit baseline for transit observations is twice the duration of the transit event targeted. However, when comparing these two quantities in many existing datasets, a significant discrepancy between expectation and reality emerges (i.e., ${\sigma_D}/\sigma_{\rm ref}>>\sqrt{3}$). 
+To first order, one could expect that $\sigma_D$ relates to the scatter in the photometric time series (\autoref{fig:fig1}, left panel), which includes both photon noise (roughly Gaussian at high count levels) and correlated noise (marginal to first order), measurable as the out-of-transit scatter for a bin of duration similar to the transit duration ($\sigma_{\rm ref} = \sigma_{\rm OOT}/\sqrt{N}$ with $N$ in-transit points). Specifically, one expects that ${\sigma_D} = \sqrt{3} \ {\sigma_{\rm ref}}$ as the typical out-of-transit baseline for transit observations is twice the duration of the transit event targeted \textcolor{red}{(see \autoref{sec:appendix_sqrt} for a full derivation)}. However, when comparing these two quantities in many existing datasets, a significant discrepancy between expectation and reality emerges (i.e., ${\sigma_D}/\sigma_{\rm ref}>>\sqrt{3}$). 
 % To further investigate this discrepancy, we use onwards as the ``amplification factor", $A = {\sigma_D}/\sigma_{\rm ref}$.
 We define the amplification factor $A = {\sigma_D}/\sigma_{\rm ref}$, which we use hereafter to investigate this discrepancy.
 
-We illustrate this discrepancy through a set of injection--retrieval tests, whose results are shown in the right panel of \autoref{fig:fig1}. For these tests, we simulated a single transit with the \texttt{squishyplanet} package \citep[][]{squishyplanet} using GJ~1214's properties and varying levels of white noise, before fitting the mock data with the same package. The transit is constructed with equal pre-, post- and in-transit durations (as in \autoref{fig:fig1}, left panel). To sample the posterior, we used the Affine Invariant Markov Chain Monte Carlo (MCMC) method implemented in the \texttt{emcee} package \citep[][]{emcee} with 50 walkers run for 100,000 steps, discarding the first 70,000 as burn-in. We applied uninformative uniform priors to all fitted parameters except the orbital period, on which we set a strong Gaussian prior, and the transit midpoint, which was fixed. This setup reflects the fact that such analyses generally assume prior observations have tightly constrained transit timings. Walkers were initialized in a wide multi-dimensional Gaussian ball around truth. To exclude poorly converged chains, we performed both automated chain sigma clipping and manual walker rejection. From $D$'s posterior we measured $\sigma_D$, and with the injected white noise level we computed the corresponding $A$. Further details can be found in \autoref{tab:tab1}.
+We illustrate this discrepancy through a set of injection--retrieval tests, whose results are shown in the right panel of \autoref{fig:fig1}. \textcolor{red}{For these tests, we simulated a single transit with the \texttt{jaxoplanet} package \citep[][]{jaxoplanet} for a hypothetical system (see \autoref{tab:tab1} for its properties) and varying levels of white noise, before fitting the mock data with the same package.} The transit is constructed with equal pre-, post- and in-transit durations (as in \autoref{fig:fig1}, left panel). To sample the posterior, we used the Affine Invariant Markov Chain Monte Carlo (MCMC) method implemented in the \texttt{emcee} package \citep[][]{emcee} with 50 walkers run for 100,000 steps, discarding the first 70,000 as burn-in. We applied uninformative uniform priors to all fitted parameters except the orbital period, on which we set a strong Gaussian prior, and the transit midpoint, which was fixed. This setup reflects the fact that such analyses generally assume prior observations have tightly constrained transit timings. Walkers were initialized in a wide multi-dimensional Gaussian ball around truth. To exclude poorly converged chains, we performed both automated chain sigma clipping and manual walker rejection. From $D$'s posterior we measured $\sigma_D$, and with the injected white noise level we computed the corresponding $A$. \textcolor{red}{All details regarding the retrieval setup can be found in \autoref{tab:tab1}}.
 
 
-Each coloured box plot set in the right panel of \autoref{fig:fig1} highlights injection--retrieval tests done with a specific limb-darkening prescription. The behaviour of these sets falls into three regimes. At high scatter, the amplification factor approaches the theoretical limit of $\sqrt{3}$, indicating that the retrievals are noise-limited. At low scatter values, the amplification plateaus. This plateau is driven by degeneracies and correlations among our model's parameters. Indeed, when fitting transits, parameters describing the exoplanet's orbit and the stellar intensity profile must be inferred alongside the transit depth. Many of these parameters affect the transit shape in similar ways, producing compensatory effects where different parameter combinations yield similar light curves \citep[see, e.g., \autoref{fig:fig2} and][Fig.~4]{deWit2012}. Such interdependence broadens the posterior distribution for $D$, increasing $A$. The magnitude of the model-driven change in $A$ depends of the dimensionality of the retrieval. As more model parameters are included, for example when moving from a second- to a fourth-order polynomial LDL, the space of iso-probability solutions expands, thus broadening the posterior distributions. Finally, between these two regimes is a transition wherein retrievals shift from being noise- to model-limited.
+Each coloured box plot set in the right panel of \autoref{fig:fig1} highlights injection--retrieval tests done with a specific limb-darkening prescription. The behaviour of these sets falls into \textcolor{red}{four} regimes. At high scatter, the amplification factor reaches the theoretical limit of $\sqrt{3}$, indicating that the retrievals are noise-limited. At low scatter values, the amplification plateaus. This plateau is driven by degeneracies and correlations among our model's parameters. Indeed, when fitting transits, parameters describing the exoplanet's orbit and the stellar intensity profile must be inferred alongside the transit depth. Many of these parameters affect the transit shape in similar ways, producing compensatory effects where different parameter combinations yield similar light curves \citep[see, e.g., \autoref{fig:fig2} and][Fig.~4]{deWit2012}. Such interdependence broadens the posterior distribution for $D$, increasing $A$. The magnitude of the model-driven change in $A$ depends of the dimensionality of the retrieval. As more model parameters are included, for example when moving from a second- to a fourth-order polynomial LDL, the space of iso-probability solutions expands, thus broadening the posterior distributions. \textcolor{red}{Between these two regimes is a transition wherein retrievals shift from being noise- to model-limited (shown as a shaded band in \autoref{fig:fig1}). Finally, at extremely low scatter, the data uncertainties are so small that the $\chi^2$ blows up and the number of samples needed to get independent samples in an MCMC sky-rockets. In this regime, we are this limited by our sampler's ability to probe the parameter space, rather than the model itself. We highlight this region with a fading increase in the asymptote  line.}
 
 \section{Cause of the amplification factor}\label{sec:amp_factor_cause}
 
@@ -119,7 +120,7 @@ Each coloured box plot set in the right panel of \autoref{fig:fig1} highlights i
 
 
 
-As discussed in \autoref{sec:TDPP}, when leaving the noise-limited regime ($\sigma_{\rm OOT} \lesssim 3000 \ \mathrm{ppm}$), degeneracies between model parameters drive $A$. In this section, we present an analysis of the origins of the TDPP. 
+As discussed in \autoref{sec:TDPP}, when leaving the noise-limited regime \textcolor{red}{($\sigma_{\rm OOT} \lesssim 30{,}000 \ \mathrm{ppm}$)}, degeneracies between model parameters drive $A$. In this section, we present an analysis of the origins of the TDPP. 
 
 \subsection{Selecting an appropriate parameterization}\label{sec:appropriate_param}
 
@@ -138,7 +139,7 @@ While the generated data are designed to resemble observations, the chosen limb-
 \begin{figure*}[ht!]
     \script{Fig3_plot.py}
     \centering
-    \includegraphics[width=0.9\textwidth]{figures/Fig3.pdf}
+    \includegraphics[width=\textwidth]{figures/Fig3.pdf}
     \caption{\textbf{Revealing underlying network of  correlations.} Results of the sensitivity analysis. \textit{Left:} Correlation matrix. The lower triangle reports correlation values derived from $\chi^2$ maps, with shading scaled to the absolute values. The upper triangle provides a circular representation of the same matrix, where circle size and shading scale with correlation strength, making the families of correlated parameters easier to distinguish. The transit depth is by far most strongly correlated with $u_1$, $u_2$, and $u_3$. \textit{Right:} Network representation of the correlations. Parameters are grouped into families using the same colour scheme as in the matrix. Blue lines highlight the strongest links between parameters of different families.}
     \label{fig:fig3}
 \end{figure*}
@@ -177,6 +178,14 @@ Together the perturbation and sensitivity analyses paint a consistent picture: t
 %     Priors informed by current stellar models are highlighted in blue (typical relative uncertainties between 10 and 20\%). As in \autoref{fig:fig1}, the black dashed horizontal line marks $A$'s theoretical limit, and box plots summarize the results from 10 MCMC retrievals with different noise realizations. Green vertical bands indicate the regimes considered acceptable: for the bias, results within $2\sigma$ of truth and for the amplification factor, $A<10$.  As discussed in \autoref{sec:impact_prior_choice}, given these acceptability criteria we highlight the optimal limb-darkening parameterizations with green x-axis labels, and the sub-optimal ones in red.}
 %     \label{fig:fig4}
 % \end{figure*}
+
+\begin{figure*}[htbp]
+    \script{Fig5_plot.py}
+    \centering
+    \includegraphics[width=0.95\textwidth]{figures/Fig5.pdf}
+    \caption{Temp}
+    \label{fig:fig5}
+\end{figure*}
 
 LDCs are the leading drivers in the TDPP. In the following section we discuss mitigation strategies for constraining these coefficients and illustrate the improvements that such strategies could have on reducing $A$.
 
@@ -236,19 +245,35 @@ This material is based upon work supported by the National Aeronautics and Space
 The results reported herein benefited from collaborations and/or information exchange within NASA’s Nexus for Exoplanet System Science (NExSS) research coordination network sponsored by NASA’s Science Mission Directorate.
 %SJM
 SJM  acknowledges support from the Massachusetts Institute of Technology through the Praecis Presidential Fellowship and Desmond Fellowship.
-\software{\texttt{astropy}\footnote{\url{https://www.astropy.org}}\citep[v6.1.6][]{astropy_2013,astropy_2018,astropy_2022}, \texttt{emcee}\footnote{\url{https://emcee.readthedocs.io/en/stable/}}\citep[v3.1.6,][]{emcee}, \texttt{ExoTiC-LD}\footnote{\url{https://exotic-ld.readthedocs.io/en/latest/}}\citep[v3.2.0,][]{ExoTiC-LD}, \texttt{Matplotlib}\footnote{\url{https://matplotlib.org}}\citep[v3.10.0,][]{Matplotlib}, \texttt{numpy}\footnote{\url{https://numpy.org}}\citep[v1.26.4][]{numpy}, \texttt{squishyplanet}\footnote{\url{https://squishyplanet.readthedocs.io/en/latest/}}\citep[v0.3.1,][]{squishyplanet}, }
+\software{
+\texttt{astropy}\footnote{\url{https://www.astropy.org}}\protect\citep[v6.1.6][]{astropy_2013,astropy_2018,astropy_2022},
+\texttt{emcee}\footnote{\url{https://emcee.readthedocs.io/en/stable/}}\protect\citep[v3.1.6,][]{emcee},
+\texttt{ExoTiC-LD}\footnote{\url{https://exotic-ld.readthedocs.io/en/latest/}}\protect\citep[v3.2.0,][]{ExoTiC-LD},
+\texttt{Matplotlib}\footnote{\url{https://matplotlib.org}}\protect\citep[v3.10.0,][]{Matplotlib},
+\texttt{numpy}\footnote{\url{https://numpy.org}}\protect\citep[v1.26.4][]{numpy},
+\texttt{squishyplanet}\footnote{\url{https://squishyplanet.readthedocs.io/en/latest/}}\protect\citep[v0.3.1,][]{squishyplanet},
+\texttt{jaxoplanet}\footnote{\url{https://jax.exoplanet.codes/en/latest/}}\protect\citep[v0.1.0,][]{jaxoplanet}}
 
 \bibliography{bib}
 \bibliographystyle{aasjournal}
 
 \appendix
 \clearpage
+\section{Derivation of the theoretical amplification factor limit}\label{sec:appendix_sqrt}
+Consider a transit light curve composed of three equal duration segments: a pre-transit baseline, an in-transit segment, and a post-transit baseline, each containing $N$ points. Let $\sigma_{\rm OOT}$ denote the typical per-point photometric uncertainty, assumed identical across all segments and uncorrelated.
+The transit depth $D$ is measured as the difference between the out-of-transit mean flux and the in-transit mean flux. These two quantities are estimated independently from disjoint sets of points, so their uncertainties combine in quadrature. The uncertainty on the in-transit mean is $\sigma_{\rm OOT}/\sqrt{N}$, and the uncertainty on the out-of-transit mean, estimated from $2N$ baseline points, is $\sigma_{\rm OOT}/\sqrt{2N}$. The uncertainty on their difference is therefore:
+\begin{equation}
+    \sigma_D = \sigma_{\rm OOT}\sqrt{\frac{1}{N} + \frac{1}{2N}} = \sigma_{\rm OOT}\sqrt{\frac{3}{2N}}
+\end{equation}
+With $\sigma_{\rm ref} \equiv \sigma_{\rm OOT}/\sqrt{N}$, the true theoretical floor is $A_{\rm theory} = \sigma_D/\sigma_{\rm ref} = \sqrt{3/2} \approx 1.22$. The factor $\sqrt{3}$ quoted in the main text is therefore a conservative upper bound, recovered when the baseline is estimated from a single $N$-point segment. It serves as a convenient reference value that is geometry-independent and straightforward to compute from any dataset. One could further reduce $\sigma_D$ by combining the two correlated difference estimators (pre-minus-in transit and post-minus-in transit), yielding uncertainties strictly below $\sigma_{\rm OOT}\sqrt{2/N}$ and reinforcing that $\sqrt{3}$ is conservative. In all cases, the observed $A \sim 10$ represents a dramatic departure from any of these theoretical expectations.
+
+\clearpage
 \section{System and injection--retrieval parameters}\label{sec:appendix_table}
 
 \autoref{tab:tab1} provides the parameters of the injection--retrieval exercise discussed in \autoref{sec:TDPP}.
 
 \begin{deluxetable}{ccc}[!h]
-\tablecaption{Injection--retrieval parameters}
+\tablecaption{Injection-retrieval parameters}
 \tablehead{
 \colhead{Parameters} & \colhead{Values} & \colhead{Reference}
 }
@@ -300,20 +325,26 @@ $T_0$ (days) & N/A & Fixed \\
 \end{figure*}
 
 \clearpage
-\section{Model-derived LDCs}\label{sec:appendix_model_LDCs}
+\section{Limb darkening coefficients}
 
-\autoref{fig:appendix_fig2} presents the relative differences between fourth-order non-linear LDL coefficients as derived by the five stellar model grids available in \texttt{ExoTiC-LD}.
+\autoref{fig:appendix_fig2} presents the results of our sensitivity test while \autoref{fig:appendix_fig3} presents the results of our sensitivity test.
 
+\begin{figure*}[htbp]
+    \script{Appendix2_plot.py}
+    \centering
+    \includegraphics[width=\textwidth]{figures/Appendix2.pdf}
+    \caption{\textbf{$\chi^2$ maps across parameter pairs}. Corner plot of the $\chi^2$ maps used in our sensitivity test. Each diagonal subplot shows a 1-dimensional evaluation of the chi-squared space for the parameter corresponding to that column. Off-diagonal subplots display two-dimensional equi-$\chi^2$ contours derived from the $\chi^2$ maps, where each map was obtained by varying the parameters indicated on the x and y axes. Finally, for certain contours that are not elliptical (e.g., $\rho_{\star}$ versus $P$) we approximate them as first-order polynomials and compute the rotation angle using $\theta = \mathrm{arctan(m)}$, where m is the slope. You can find a visualization of these limb-darkening coefficients on the other stellar parameters used to generate them here\footnote{\url{https://github.com/SamMerc/Transit-Information-Content/blob/main/src/static/corner_animation.gif}}} 
+    \label{fig:appendix_fig2}
+\end{figure*}
 
-% \begin{figure*}[htbp]
-%     \script{Appendix2_plot.py}
-%     \centering
-%     \includegraphics[width=\textwidth]{figures/Appendix2.pdf}
-%     \caption{\textbf{LDC differences across model grids.} Each panel shows a normalized histogram of relative differences in the fourth-order non-linear LDL coefficients derived from the MPS-ATLAS set1 \citep[][]{mpsset1}, Stagger \citep[][]{Magic2013}, Kurucz \citep[][]{Kurucz1979}, and PHOENIX \citep[][]{Husser2013} models against the MPS-ATLAS set2 \citep[][]{mpsset2}. Each coloured curve corresponds to a LDC, with the median value reported in the legend. The green vertical band marks the 1\% level, indicating the threshold required to achieve a five-fold reduction in the amplification factor (see \autoref{fig:fig4} for details). While the MPS-ATLAS set1 and set2 models agree most closely, this reflects their internal precision rather than their accuracy. Indeed, they are consistent with one another but may still diverge from truth.}
-%     \label{fig:appendix_fig2}
-% \end{figure*}
+\begin{figure*}[htbp]
+    \script{Appendix3_plot.py}
+    \centering
+    \includegraphics[width=\textwidth]{figures/Appendix3.pdf}
+    \caption{\textbf{$\chi^2$ maps across parameter pairs}. Corner plot of the $\chi^2$ maps used in our sensitivity test. Each diagonal subplot shows a 1-dimensional evaluation of the chi-squared space for the parameter corresponding to that column. Off-diagonal subplots display two-dimensional equi-$\chi^2$ contours derived from the $\chi^2$ maps, where each map was obtained by varying the parameters indicated on the x and y axes. Finally, for certain contours that are not elliptical (e.g., $\rho_{\star}$ versus $P$) we approximate them as first-order polynomials and compute the rotation angle using $\theta = \mathrm{arctan(m)}$, where m is the slope.}
+    \label{fig:appendix_fig3}
+\end{figure*}
 
 \clearpage
 
 \end{document}
-
