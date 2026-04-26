@@ -6,6 +6,7 @@
 # The goal of this file is to run injection-retrievals for a grid of 1. limb-darkening laws, 2. limb-darkening priors, and 3. noise seeds.
 # In particular the grid is 7 polynomial limb-darkening laws by 5 limb darkening priors by 10 noise seeds, i.e. 350 injection-retrievals.
 # In these tests, the injected LC is done with a 4th order non-linear LDL, while the retrieval is done with polynomial LDLs going from 2-9 and 4NLLD.
+# Furthermore, to show the dependence on Teff, metallicity, logg, and wavelength we run this analysis on three different sets of 4th order NLLD LDCs.
 
 ######################################
 ########## Import libraries ##########

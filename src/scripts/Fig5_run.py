@@ -455,6 +455,7 @@ for model in models:
                     del sld
 
                     # Filter wavelength range
+                    print('1:', stellar_wavelengths[0], 'A →', stellar_wavelengths[-1], 'A')
                     cond = ((stellar_wavelengths > wav_region[0]) &
                             (stellar_wavelengths < wav_region[1]))
                     print(f'    Removing '
@@ -504,9 +505,12 @@ for model in models:
     wav_bin_labels  = [f'{wavs_ref[s[0]]/1e4:.2f}-{wavs_ref[s[-1]]/1e4:.2f} μm'
                         for s in wav_bin_slices]
 
-    n_valid_per_wav = np.zeros(n_wav_bins, dtype=int)
-    n_considered    = 0
-    n_valid         = 0
+    n_valid_per_wav  = np.zeros(n_wav_bins, dtype=int)
+    n_valid_per_Teff = np.zeros(N_star,    dtype=int)
+    n_valid_per_logg = np.zeros(N_star,    dtype=int)
+    n_valid_per_met  = np.zeros(N_star,    dtype=int)
+    n_considered     = 0
+    n_valid          = 0
 
     # Each entry: profile (n_wav, n_mu_fine), normalized at mu=1 (centre).
     # A profile/wavelength slice is valid when the intensity is monotonically
@@ -523,20 +527,48 @@ for model in models:
                 # Valid = monotonically non-increasing (no positive differences)
                 mask = ~np.any(np.diff(norm_prof, axis=1) > 0.0, axis=1)  # (n_wav,)
 
+                n_valid_this = int(np.sum(mask))
                 n_considered += mask.size
-                n_valid      += int(np.sum(mask))
+                n_valid      += n_valid_this
                 for iw_bin, idx in enumerate(wav_bin_slices):
                     n_valid_per_wav[iw_bin] += int(np.sum(mask[idx]))
+                n_valid_per_Teff[i] += n_valid_this
+                n_valid_per_logg[j] += n_valid_this
+                n_valid_per_met[k]  += n_valid_this
+
+    # Total possible per stellar-parameter value:
+    # each value appears in N_star² (other two params) × n_wav wavelength slices
+    n_wav_total      = len(wavs_ref)
+    n_total_per_star = N_star**2 * n_wav_total
 
     print(f"=== Profile filtering summary ===")
     print(f"Total profiles considered : {n_considered}")
     print(f"Total valid               : {n_valid} ({100 * n_valid / n_considered:.1f} %)")
-    print(f"Per wavelength region:")
+
+    print(f"\nPer wavelength region:")
     n_total_per_wav = np.array([len(s) * N_star**3 for s in wav_bin_slices])
     for iw_bin in range(n_wav_bins):
         print(f"  {wav_bin_labels[iw_bin]} : "
                 f"{n_valid_per_wav[iw_bin]}/{n_total_per_wav[iw_bin]} valid "
                 f"({100 * n_valid_per_wav[iw_bin] / n_total_per_wav[iw_bin]:.1f} %)")
+
+    print(f"\nPer Teff value:")
+    for i in range(N_star):
+        print(f"  Teff = {T_vals_arr[i]:7.0f} K : "
+              f"{n_valid_per_Teff[i]}/{n_total_per_star} valid "
+              f"({100 * n_valid_per_Teff[i] / n_total_per_star:.1f} %)")
+
+    print(f"\nPer logg value:")
+    for j in range(N_star):
+        print(f"  logg = {g_vals_arr[j]:5.2f}    : "
+              f"{n_valid_per_logg[j]}/{n_total_per_star} valid "
+              f"({100 * n_valid_per_logg[j] / n_total_per_star:.1f} %)")
+
+    print(f"\nPer metallicity value:")
+    for k in range(N_star):
+        print(f"  [M/H] = {m_vals_arr[k]:+6.2f}  : "
+              f"{n_valid_per_met[k]}/{n_total_per_star} valid "
+              f"({100 * n_valid_per_met[k] / n_total_per_star:.1f} %)")
 
     # ── Pass 2 — pre-allocate and fill profile matrix ─────────────────────
     # Metadata columns: [i_Teff, j_logg, k_met, i_wav]

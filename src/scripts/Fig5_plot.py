@@ -77,7 +77,7 @@ for model in models:
         return dict(Teff=T_vals_arr[m[0]], logg=g_vals_arr[m[1]],
                     MH=m_vals_arr[m[2]],   wav=wavs_ref[m[3]] / 1e4)
 
-    mode_phys = {'Overall mode': get_phys(typical_idx)}
+    mode_phys = {'Global mode': get_phys(typical_idx)}
     for ci, cl in enumerate(unique_cl):
         mode_phys[f'Cluster {cl} mode'] = get_phys(int(cluster_mode_indices[ci]))
 
@@ -86,7 +86,7 @@ for model in models:
 
     # Bundle specials: (label, mu array, raw profile, coeff vector, colour, linewidth)
     special_styles = [
-        ('Overall mode', typical_mu, typical_profile, typical_coeff, 'orange', 2.5),
+        ('Global mode', typical_mu, typical_profile, typical_coeff, 'orange', 2.5),
     ] + [
         (f'Cluster {cl} mode', cluster_mode_mus[ci], cluster_mode_profiles[ci], cluster_mode_coeffs[ci], cluster_colors[ci], 1.8)
         for ci, cl in enumerate(unique_cl)
@@ -94,7 +94,7 @@ for model in models:
 
     # ── Panel layout: left = NLLD curves, right = residuals vs overall mode ──
     n_cl_plot = 4
-    cl_to_plot = ['Overall mode', 'Cluster 1 mode', 'Cluster 3 mode', 'Cluster 4 mode']
+    cl_to_plot = ['Global mode', 'Cluster 1 mode', 'Cluster 3 mode', 'Cluster 4 mode']
     special_styles_to_plot = [s for s in special_styles if s[0] in cl_to_plot]
 
     fig5, ax5 = plt.subplots(
@@ -111,13 +111,7 @@ for model in models:
         ax5[0, plot_idx].plot(mu_plot, prof,  '-',  color=col,     linewidth=lw, zorder=1)
         p = mode_phys[sp_label]
         title = (
-            f'{sp_label}\n'
-            f'$c_1={coeffs[0]:.4f}$,  $c_2={coeffs[1]:.4f}$,  '
-            f'$c_3={coeffs[2]:.4f}$,  $c_4={coeffs[3]:.4f}$\n'
-            f'$\\lambda={p["wav"]:.2f}\\,\\mu$m,  '
-            f'$T_{{\\rm eff}}={p["Teff"]:.0f}\\,$K,  '
-            f'$\\log_{{10}} g={p["logg"]:.2f}$,  '
-            f'$[{{\\rm M/H}}]={p["MH"]:.2f}$'
+            f'{sp_label}'
         )
         ax5[0, plot_idx].set_title(title, fontsize=12, pad=5)
         ax5[0, plot_idx].grid(True)
@@ -143,3 +137,12 @@ for model in models:
         print(f'  {sp_label:<20}  '
               f'{coeffs[0]:>8.4f}  {coeffs[1]:>8.4f}  '
               f'{coeffs[2]:>8.4f}  {coeffs[3]:>8.4f}')
+
+    # Print a summary table of all the physical parameters for easy copy-paste
+    print(f'\n  {"Profile":<14}  {"Wavelength":>10}  {"Teff":>8}  {"logg":>8}  {"[M/H]":>8}')
+    print(f'  {"-"*64}')
+    for sp_label in mode_phys.keys():
+        p = mode_phys[sp_label]
+        print(f'  {sp_label:<20}  '
+              f'{p["wav"]:.2f}  {p["Teff"]:.0f}  '
+              f'{p["logg"]:.2f}  {p["MH"]:.2f}')
