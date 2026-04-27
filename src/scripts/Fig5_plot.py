@@ -107,7 +107,7 @@ for model in models:
         curve = fourNLLD(mu_plot, coeffs)
 
         # Left panel: raw intensity profile (solid) + NLLD fit (dashed)
-        ax5[0, plot_idx].plot(mu_plot, curve, '--', color='black', linewidth=lw, zorder=2, label='4th-order NLLD fit' if plot_idx == 0 else None)
+        ax5[0, plot_idx].plot(mu_plot, curve, '--', color='black', linewidth=lw, zorder=2)
         ax5[0, plot_idx].plot(mu_plot, prof,  '-',  color=col,     linewidth=lw, zorder=1)
         p = mode_phys[sp_label]
         title = (
@@ -115,7 +115,6 @@ for model in models:
         )
         ax5[0, plot_idx].set_title(title, fontsize=12, pad=5)
         ax5[0, plot_idx].grid(True)
-        if plot_idx==0:ax5[0, plot_idx].legend(fontsize=12, loc='lower right')
 
         # Right panel: residuals
         resid = 100 * (curve - prof) / prof

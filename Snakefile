@@ -98,3 +98,14 @@ rule Appendix4:
     cache: True
     script:
         "src/scripts/Appendix4_plot.py"
+
+rule Fig4:
+    input:
+        script="src/scripts/Fig4_plot.py",
+        c3_cache="src/data/Fig4_Storage/C3/processed_data_cache.pkl",
+        c4_cache="src/data/Fig4_Storage/C4/processed_data_cache.pkl",
+    output:
+        "src/tex/figures/Fig4.pdf"
+    cache: True
+    script:
+        "src/scripts/Fig4_plot.py"

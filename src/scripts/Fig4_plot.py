@@ -76,7 +76,7 @@ num_IT_pts = jnp.sum(
 )
 
 #%% Grid parameters
-RAW_BASE_DIR = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig4_Storage/'
+RAW_BASE_DIR = str(paths.data / 'Fig4_Storage') + '/'
 model_scatter = 46.0
 
 LDLs              = ['PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6', 'PLD_9', '4NLLD']
@@ -89,8 +89,8 @@ seeds             = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 # C1: [1.4394, -1.8472, 1.4695, -0.4682]
 # C3: [-0.0115,  1.7520, -1.9378,  0.7261]
 # C4: [0.8329, -0.6523,  0.9283, -0.3483]
-C_LABELS      = ['C3']#['C1', 'C3', 'C4']
-C_LABEL_NAMES = {'C1': 'C1', 'C3': 'Cluster #3', 'C4': 'C4'}
+C_LABELS      = ['C3', 'C4']#['C1', 'C3', 'C4']
+C_LABEL_NAMES = {'C1': 'Cluster 1', 'C3': 'Cluster 3', 'C4': 'Cluster 4'}
 
 #%% Filtering / processing parameters (same as Fig1_plot.py)
 NBURN      = 70000
@@ -298,14 +298,14 @@ def draw_matched_breaks(fig, left_ax, right_ax, size=0.006, lw=1.0, color='k'):
 
 def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
     """
-    Render amp-factor (top) and bias (bottom) for one C label using a 2×3 broken-axis
-    layout: left panel covers PLD_2–PLD_6, middle panel PLD_9, right panel 4NLLD.
+    Render amp-factor (top) and bias (bottom) for one C label using a 2x3 broken-axis
+    layout: left panel covers PLD_2-PLD_6, middle panel PLD_9, right panel 4NLLD.
     Interior spines are hidden; break marks are drawn by the caller via draw_matched_breaks.
     Returns (ax1, ax1m, ax1r, ax2, ax2m, ax2r).
     """
     inner_gs = gridspec.GridSpecFromSubplotSpec(
         2, 3, subplot_spec=outer_gs_cell,
-        width_ratios=[3.5, 1, 1], wspace=0.05, hspace=0.05
+        width_ratios=[3.5, 1, 1], wspace=0.05, hspace=0.08
     )
     ax1  = fig.add_subplot(inner_gs[0, 0])   # amp,  left
     ax1m = fig.add_subplot(inner_gs[0, 1])   # amp,  middle
@@ -458,7 +458,7 @@ if __name__ == '__main__':
     fig_height = n_panels * 6
     fig = plt.figure(figsize=(13, fig_height))
 
-    outer_gs = gridspec.GridSpec(n_panels, 1, hspace=0.4, figure=fig)
+    outer_gs = gridspec.GridSpec(n_panels, 1, hspace=0.1, figure=fig)
 
     all_axes = []   # list of (ax1, ax1m, ax1r, ax2, ax2m, ax2r) per C label
 
