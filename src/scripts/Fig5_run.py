@@ -23,12 +23,10 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import exotic_ld as el
 import pickle
-from sklearn.decomposition import PCA
 from lmfit import minimize, Parameters
 import gc
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-from matplotlib.gridspec import GridSpec
 from scipy.interpolate import interp1d
 import corner
 from tqdm import tqdm
@@ -455,7 +453,6 @@ for model in models:
                     del sld
 
                     # Filter wavelength range
-                    print('1:', stellar_wavelengths[0], 'A →', stellar_wavelengths[-1], 'A')
                     cond = ((stellar_wavelengths > wav_region[0]) &
                             (stellar_wavelengths < wav_region[1]))
                     print(f'    Removing '
@@ -938,18 +935,10 @@ for model in models:
             f'{corner_data[mask_m, 3].mean():.3f}]'
         )
 
-    # Typical profile: closest to its cluster's centroid (globally nearest centroid)
-    typical_idx = None
-    min_dist    = np.inf
-    for cl in unique_cl:
-        mask     = cluster_labels == cl
-        members  = corner_data[mask]
-        centroid = members.mean(axis=0)
-        dists    = np.linalg.norm(members - centroid, axis=1)
-        closest  = int(np.where(mask)[0][np.argmin(dists)])
-        if dists.min() < min_dist:
-            min_dist    = dists.min()
-            typical_idx = closest
+    # Global mode: point in the subsampled dataset closest to the global centroid
+    global_centroid = corner_data.mean(axis=0)
+    dists_to_global = np.linalg.norm(corner_data - global_centroid, axis=1)
+    typical_idx     = int(np.argmin(dists_to_global))
 
     # Clulster mode profiles: furthest from centroid per cluster
     cluster_mode_indices = []

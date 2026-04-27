@@ -29,7 +29,7 @@ import matplotlib.colors as mcolors
 import time
 from tqdm import tqdm
 import pickle
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 import gc
 import corner
 from matplotlib.patches import Patch

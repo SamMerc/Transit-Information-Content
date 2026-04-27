@@ -55,15 +55,15 @@ init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-# Overall LDCs : c1 = 0.7219 c2 = -0.8824 c3 = 0.7763 c4 = -0.2683
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.7219, u2=-0.8824, u3=0.7763, u4=-0.2683)
+# Overall LDCs : c1 = 0.5586 c2 = -0.0382 c3 = -0.0852 c4 = 0.0336
+init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336)
 
 #Updating initial state dictionary
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
 #Get starting points for the LD coefficients
-init_LD_prop = nonlinear_4param_ld_law(u1=0.7219, u2=-0.8824, u3=0.7763, u4=-0.2683, order=3)
+init_LD_prop = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336, order=3)
 
 #%%%% Calculate transit duration
 # Convert angles to radians

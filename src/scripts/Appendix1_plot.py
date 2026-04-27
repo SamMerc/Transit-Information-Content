@@ -23,9 +23,7 @@ import astropy.units as u
 from astropy.constants import G
 from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import numpy as np
-import pandas as pd
 import os
-import matplotlib.cm as cm
 import paths
 
 # For 64-bit precision since JAX defaults to 32-bit
@@ -52,15 +50,15 @@ init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-# Overall LDCs : c1 = 1.1515 c2 = -1.4951 c3 = 1.2000 c4 = -0.3880
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=1.1515, u2=-1.4951, u3=1.2000, u4=-0.3880)
+# Overall LDCs : c1 = 0.5586 c2 = -0.0382 c3 = -0.0852 c4 = 0.0336
+init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336)
 
 #Updating initial state dictionary
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
 #Get starting points for the LD coefficients
-init_LD_prop = nonlinear_4param_ld_law(u1=1.1515, u2=-1.4951, u3=1.2000, u4=-0.3880, order=3)
+init_LD_prop = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336, order=3)
 
 #%%%% Calculate transit duration
 # Convert angles to radians
@@ -367,9 +365,6 @@ _, _, _, _, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter,
 
 #Finding the index of max log-probability
 max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
-
-# Figure 5
-print('STEP 1: FIGURE 5')
 
 n_params = len(fixed_args['var_param_list'])
 
