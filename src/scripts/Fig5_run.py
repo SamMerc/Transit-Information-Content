@@ -45,7 +45,7 @@ import paths
 LD_data_path        = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/LD_simulation'
 orig_save_data_path = str(paths.data / "Fig5_Storage") + "/"
 
-models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
+models = ['mps2']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
 # The range of Teff values explorable for each model.
 Teffs = {

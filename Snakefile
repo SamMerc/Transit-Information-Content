@@ -87,3 +87,14 @@ rule Appendix3:
     cache: True
     script:
         "src/scripts/Appendix3_plot.py"
+
+rule Appendix4:
+    input:
+        script="src/scripts/Appendix4_plot.py",
+        mps1="src/data/Appendix4_Storage/mps1/results.npz",
+        mps2="src/data/Appendix4_Storage/mps2/results.npz",
+    output:
+        "src/tex/figures/Appendix4.pdf"
+    cache: True
+    script:
+        "src/scripts/Appendix4_plot.py"
