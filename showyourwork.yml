@@ -117,7 +117,7 @@ tectonic_args: []
 
 # Margin icon settings
 margin_icons:
-  horizontal_offset: -10
+  horizontal_offset: -14
 
 # Enable verbose output?
 verbose: true
