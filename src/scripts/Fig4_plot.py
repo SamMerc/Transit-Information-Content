@@ -89,7 +89,7 @@ seeds             = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 # C1: [1.4394, -1.8472, 1.4695, -0.4682]
 # C3: [-0.0115,  1.7520, -1.9378,  0.7261]
 # C4: [0.8329, -0.6523,  0.9283, -0.3483]
-C_LABELS      = ['C3', 'C4']#['C1', 'C3', 'C4']
+C_LABELS      = ['C1', 'C3', 'C4']
 C_LABEL_NAMES = {'C1': 'Cluster 1', 'C3': 'Cluster 3', 'C4': 'Cluster 4'}
 
 #%% Filtering / processing parameters (same as Fig1_plot.py)
@@ -388,7 +388,6 @@ def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
         ax2.set_xticks(positions_left)
         ax2.set_xticklabels([2, 3, 4, 5, 6], color='red')
         ax2.get_xticklabels()[1].set_color('green')   # PLD_3
-        ax2.get_xticklabels()[2].set_color('green')   # PLD_4
         ax2m.set_xticks(positions_middle); ax2m.set_xticklabels([9], color='red')
         ax2r.set_xticks(positions_right);  ax2r.set_xticklabels(['4NLLD'], color='green')
     else:
@@ -482,8 +481,8 @@ if __name__ == '__main__':
         left_box  = ax2_last.get_position()
         right_box = ax1r_last.get_position()
         x_center  = 0.5 * (left_box.x0 + right_box.x1)
-        y_label   = left_box.y0 - 0.04
-        fig.text(x_center, max(y_label, 0.01), 'Number of LDCs',
+        y_label   = left_box.y0 - 0.02
+        fig.text(x_center, y_label, 'Number of LDCs',
                  ha='center', va='top', fontsize=12)
 
     plt.savefig(paths.figures / "Fig4.pdf", bbox_inches="tight")

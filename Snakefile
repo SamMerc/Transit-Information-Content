@@ -102,6 +102,7 @@ rule Appendix4:
 rule Fig4:
     input:
         script="src/scripts/Fig4_plot.py",
+        c1_cache="src/data/Fig4_Storage/C1/processed_data_cache.pkl",
         c3_cache="src/data/Fig4_Storage/C3/processed_data_cache.pkl",
         c4_cache="src/data/Fig4_Storage/C4/processed_data_cache.pkl",
     output:

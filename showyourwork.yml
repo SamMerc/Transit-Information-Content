@@ -25,7 +25,7 @@ dag:
 
 # Externally-hosted datasets, e.g. on Zenodo
 datasets:
-  10.5281/zenodo.19826003:
+  10.5281/zenodo.19856245:
     contents:
       Fig1_chains.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chains.npy
       Fig1_chi2_chain.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chi2_chain.npy
@@ -39,6 +39,7 @@ datasets:
       Fig5_results.npz: src/data/Fig5_Storage/mps1/results.npz
       Appendix4_mps1_results.npz: src/data/Appendix4_Storage/mps1/results.npz
       Appendix4_mps2_results.npz: src/data/Appendix4_Storage/mps2/results.npz
+      Fig4_C1_cache.pkl: src/data/Fig4_Storage/C1/processed_data_cache.pkl
       Fig4_C3_cache.pkl: src/data/Fig4_Storage/C3/processed_data_cache.pkl
       Fig4_C4_cache.pkl: src/data/Fig4_Storage/C4/processed_data_cache.pkl
 
