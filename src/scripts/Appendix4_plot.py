@@ -171,7 +171,7 @@ for ic, ax in enumerate(hist_axes):
 
 param_specs = [
     (phys_Teff, r'$T_{\rm eff}$ (K)'),
-    (phys_logg, r'$\log_{10} g$'),
+    (phys_logg, r'$\log g$'),
     (phys_MH,   r'$[{\rm M/H}]$'),
     (phys_wav,  r'$\lambda\ (\mu{\rm m})$'),
 ]
