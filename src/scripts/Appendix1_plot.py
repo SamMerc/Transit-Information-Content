@@ -117,7 +117,7 @@ for key in mod_prop:
 #%% Defining dictionary to store additional info. needed for the model
 fixed_args={}
 fixed_args['var_param_list']=var_param_list
-fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)',r'u$_1$', r'u$_2$',r'u$_3$',r'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)']
+fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i ($^\circ$)',r'$\rho_{\star}$ (g/cm$^{3}$)',r'u$_1$', r'u$_2$',r'u$_3$',r'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)']
 
 #% Define number of points to sample the parameter space with
 fixed_args['sample_pts'] = 100
@@ -541,11 +541,29 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
             if i == n_params - 1:
                 ax.set_xlabel(fixed_args['labels'][j],fontsize=14)
                 ax.tick_params(axis="x", labelsize=12, rotation=45)
+                if j == 1: 
+                    ax.xaxis.set_major_formatter(
+                        plt.matplotlib.ticker.FuncFormatter(lambda x, _: f'{np.degrees(x):.2f}')
+                    )
+                else:
+                    ax.xaxis.set_major_formatter(
+                        plt.matplotlib.ticker.ScalarFormatter(useOffset=False)
+                    )
+                    ax.ticklabel_format(axis="x", style="plain")
             else:
                 ax.set_xticklabels([])
             if j == 0:
                 ax.set_ylabel(fixed_args['labels'][i],fontsize=14)
                 ax.tick_params(axis="y", labelsize=12, rotation=45)
+                if i == 1: 
+                    ax.yaxis.set_major_formatter(
+                        plt.matplotlib.ticker.FuncFormatter(lambda x, _: f'{np.degrees(x):.2f}')
+                    )
+                else:
+                    ax.yaxis.set_major_formatter(
+                        plt.matplotlib.ticker.ScalarFormatter(useOffset=False)
+                    )
+                    ax.ticklabel_format(axis="y", style="plain")
             else:
                 ax.set_yticklabels([])
 

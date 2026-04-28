@@ -66,6 +66,8 @@ for model in models:
     g_vals_arr           = res['g_vals_arr']
     m_vals_arr           = res['m_vals_arr']
     wavs_ref             = res['wavs_ref']
+    corner_data          = res['corner_data']
+    cluster_labels       = res['cluster_labels']
 
     n_cl           = len(unique_cl)
     cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
@@ -100,11 +102,31 @@ for model in models:
     fig5, ax5 = plt.subplots(
         2, n_cl_plot, figsize=(5 * n_cl_plot, 7),
         gridspec_kw={'wspace': 0.15, 'hspace': 0.05},
-        sharex=True
+        sharex=True, sharey='row'
     )
+
+    rng = np.random.default_rng(42)
+    N_BG = 100
 
     for plot_idx, (sp_label, mu_plot, prof, coeffs, col, lw) in enumerate(special_styles_to_plot):
         curve = fourNLLD(mu_plot, coeffs)
+
+        # Background profiles
+        if sp_label == 'Global mode':
+            bg_idxs = rng.choice(len(corner_data), size=N_BG, replace=False)
+            for bi in bg_idxs:
+                cl_bi = cluster_labels[bi]
+                ci_bi = list(unique_cl).index(cl_bi)
+                ax5[0, plot_idx].plot(mu_plot, fourNLLD(mu_plot, corner_data[bi]),
+                                      color=cluster_colors[ci_bi], alpha=0.5,
+                                      linewidth=0.5, zorder=0)
+        else:
+            cl_num  = int(sp_label.split()[1])
+            cl_idxs = np.where(cluster_labels == cl_num)[0]
+            bg_idxs = rng.choice(cl_idxs, size=min(N_BG, len(cl_idxs)), replace=False)
+            for bi in bg_idxs:
+                ax5[0, plot_idx].plot(mu_plot, fourNLLD(mu_plot, corner_data[bi]),
+                                      color='gray', alpha=0.2, linewidth=0.5, zorder=0)
 
         # Left panel: raw intensity profile (solid) + NLLD fit (dashed)
         ax5[0, plot_idx].plot(mu_plot, curve, '--', color='black', linewidth=lw, zorder=2)

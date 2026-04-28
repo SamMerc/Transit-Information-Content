@@ -27,6 +27,7 @@ import pandas as pd
 import os
 import matplotlib.cm as cm
 import paths
+import matplotlib.patheffects as pe
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -617,7 +618,8 @@ for i in range(n):
             # Lower triangle: heatmap square with annotation
             rect = plt.Rectangle((j - 0.5, i - 0.5), 1, 1, facecolor=color, edgecolor='white')
             ax.add_patch(rect)
-            ax.text(j, i, f"{corr_val:.2f}", ha='center', va='center', color='black', fontsize=18)
+            ax.text(j, i, f"{corr_val:.2f}", ha='center', va='center', color='black', fontsize=20,
+                 path_effects=[pe.withStroke(linewidth=2, foreground='white')])
 
 # Group-highlight boxes: transparent fill, thick outline, one color per group
 def add_group_box(ax_target, row_range, col_range, color, lw=5.5, pad=0.1):
