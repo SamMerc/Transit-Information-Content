@@ -115,6 +115,10 @@ tectonic_args: []
 # as input, and should modify the contents of that directory in-place.
 # preprocess_arxiv_script: my_preprocess_script.sh
 
+# Margin icon settings
+margin_icons:
+  horizontal_offset: 10
+
 # Enable verbose output?
 verbose: true
 
