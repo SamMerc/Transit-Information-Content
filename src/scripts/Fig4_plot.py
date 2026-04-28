@@ -412,7 +412,7 @@ def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
     for ax in [ax2, ax2m, ax2r]: ax.axhspan(0.1, 2.0, **band_kwargs)
     for ax in [ax1, ax1m, ax1r]: ax.axhline(np.sqrt(3), linestyle='dashed', color='black')
     ax1.text(1.6, np.sqrt(3) - 0.65, r'Theoretical limit @ $\sqrt{3}$', fontsize=10, color='black')
-    ax1.text(1.6, 6,   r'Acceptable $A$', fontsize=10, color='seagreen')
+    ax1.text(1.6, 6.4,   r'Acceptable $A$', fontsize=10, color='seagreen')
     ax2.text(1.6, 2.1, r'No bias',        fontsize=10, color='seagreen')
 
     # ── Grid lines ─────────────────────────────────────────────────────────
