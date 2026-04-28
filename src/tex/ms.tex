@@ -264,7 +264,7 @@ SJM  acknowledges support from the Massachusetts Institute of Technology through
 \bibliographystyle{aasjournal}
 
 \appendix
-\vspace{-25mm}
+
 \section{Derivation of the theoretical amplification factor limit}\label{sec:appendix_sqrt}
 Consider a transit light curve composed of three equal duration segments: a pre-transit baseline, an in-transit segment, and a post-transit baseline, each containing $N$ points. Let $\sigma_{\rm OOT}$ denote the typical per-point photometric uncertainty, assumed identical across all segments and uncorrelated.
 The transit depth $D$ is measured as the difference between the out-of-transit mean flux and the in-transit mean flux. These two quantities are estimated independently from disjoint sets of points, so their uncertainties combine in quadrature. The uncertainty on the in-transit mean is $\sigma_{\rm OOT}/\sqrt{N}$, and the uncertainty on the out-of-transit mean, estimated from $2N$ baseline points, is $\sigma_{\rm OOT}/\sqrt{2N}$. The uncertainty on their difference is therefore:
@@ -277,7 +277,7 @@ With $\sigma_{\rm ref} \equiv \sigma_{\rm OOT}/\sqrt{N}$, the true theoretical f
 
 \autoref{tab:tab1} provides the parameters of the injection--retrieval exercise discussed in \autoref{sec:TDPP}.
 
-\begin{deluxetable}{lccccc}[ht!]
+\begin{deluxetable}{lccccc}[htbp]
 \tablecaption{Injection--retrieval summary}
 \tablehead{
 \colhead{Parameter} & \multicolumn{5}{c}{Value}
@@ -334,8 +334,10 @@ $T_0$ (days)           & \multicolumn{2}{c}{Fixed}                              
 \end{deluxetable}
 
 \section{Limb-darkening distribution and clustering}\label{sec:appendix_LD_choices}
-% \autoref{fig:appendix_fig2} shows the full distribution of fourth-order non-linear limb-darkening coefficients across $T_{\rm eff}$ and wavelength, while \autoref{fig:appendix_fig3} shows the same LDC space partitioned by hierarchical cluster membership. \autoref{fig:appendix_fig4} summarizes the comparison of LDCs, produced by the MPS-ATLAS set1 and set2 models, and used in \autoref{sec:constraint_stellar_model} to establish the strength of priors that can be placed on LDCs from state-of-the-art stellar models.
-\begin{figure}[H]
+
+\autoref{fig:appendix_fig2} shows the full distribution of fourth-order non-linear limb-darkening coefficients across $T_{\rm eff}$ and wavelength, while \autoref{fig:appendix_fig3} shows the same LDC space partitioned by hierarchical cluster membership.
+
+\begin{figure}[htbp]
     \script{Appendix2_plot.py}
     \centering
     \includegraphics[width=\textwidth]{figures/Appendix2.pdf}
@@ -343,7 +345,7 @@ $T_0$ (days)           & \multicolumn{2}{c}{Fixed}                              
     \label{fig:appendix_fig2}
 \end{figure}
 
-\begin{figure}[H]
+\begin{figure}[htbp]
     \script{Appendix3_plot.py}
     \centering
     \includegraphics[width=\textwidth]{figures/Appendix3.pdf}
@@ -353,9 +355,9 @@ $T_0$ (days)           & \multicolumn{2}{c}{Fixed}                              
 
 \section{Sensitivity $\chi^2$ maps}\label{sec:appendix_sensitivity_heat_maps}
 
-% \autoref{fig:appendix_fig1} presents the results of our sensitivity test.
+\autoref{fig:appendix_fig1} presents the results of our sensitivity test.
 
-\begin{figure}[H]
+\begin{figure}[htbp]
     \script{Appendix1_plot.py}
     \centering
     \includegraphics[width=\textwidth]{figures/Appendix1.pdf}
@@ -364,8 +366,9 @@ $T_0$ (days)           & \multicolumn{2}{c}{Fixed}                              
 \end{figure}
 
 \section{Comparison of MPS-ATLAS set1 and set2 LDCs}\label{sec:appendix_set1_set2}
+\autoref{fig:appendix_fig4} summarizes the comparison of LDCs, produced by the MPS-ATLAS set1 and set2 models, and used in \autoref{sec:constraint_stellar_model} to establish the strength of priors that can be placed on LDCs from state-of-the-art stellar models.
 
-\begin{figure}[H]
+\begin{figure}[htbp]
     \script{Appendix4_plot.py}
     \centering
     \includegraphics[width=\textwidth]{figures/Appendix4.pdf}
