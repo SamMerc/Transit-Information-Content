@@ -148,6 +148,7 @@ for model in models:
 
     ax5[0, 0].set_ylabel('Normalised intensity', fontsize=12)
     ax5[1, 0].set_ylabel('Residuals (%)', fontsize=12)
+    ax5[1, 0].set_ylim([-0.5, 0.5])
 
     plt.savefig(paths.figures / "Fig5.pdf", bbox_inches="tight")
 

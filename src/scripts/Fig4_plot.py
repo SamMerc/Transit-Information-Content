@@ -90,7 +90,7 @@ seeds             = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 # C3: [-0.0115,  1.7520, -1.9378,  0.7261]
 # C4: [0.8329, -0.6523,  0.9283, -0.3483]
 C_LABELS      = ['C1', 'C3', 'C4']
-C_LABEL_NAMES = {'C1': 'Cluster 1', 'C3': 'Cluster 3', 'C4': 'Cluster 4'}
+C_LABEL_NAMES = {'C1': 'Cluster 1 - K/M type, metal poor, near-infrared', 'C3': 'Cluster 3 - G type, moderately metal poor, optical', 'C4': 'Cluster 4 - K type, metal rich, optical'}
 
 #%% Filtering / processing parameters (same as Fig1_plot.py)
 NBURN      = 70000

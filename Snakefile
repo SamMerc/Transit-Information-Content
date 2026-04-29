@@ -88,6 +88,16 @@ rule Appendix3:
     script:
         "src/scripts/Appendix3_plot.py"
 
+rule Appendix5:
+    input:
+        script="src/scripts/Appendix5_plot.py",
+        results="src/data/Fig5_Storage/mps1/results.npz",
+    output:
+        "src/tex/figures/Appendix5.pdf"
+    cache: True
+    script:
+        "src/scripts/Appendix5_plot.py"
+
 rule Appendix4:
     input:
         script="src/scripts/Appendix4_plot.py",

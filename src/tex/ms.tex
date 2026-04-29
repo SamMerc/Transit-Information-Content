@@ -369,7 +369,7 @@ $T_0$ (days)           & \multicolumn{2}{c}{Fixed}                              
 
 \section{Limb-darkening distribution and clustering}\label{sec:appendix_LD_choices}
 
-\autoref{fig:appendix_fig2} shows the full distribution of fourth-order non-linear LDCs across $T_{\rm eff}$ and wavelength, while \autoref{fig:appendix_fig3} shows the same LDC space partitioned by hierarchical cluster membership.
+\autoref{fig:appendix_fig2} shows the full distribution of fourth-order non-linear LDCs across $T_{\rm eff}$ and wavelength, \autoref{fig:appendix_fig5} shows the same distribution across $\log g$ and $[{\rm M/H}]$, and \autoref{fig:appendix_fig3} shows the same LDC space partitioned by hierarchical cluster membership.
 
 \begin{figure}[htbp]
     \script{Appendix2_plot.py}
@@ -377,6 +377,14 @@ $T_0$ (days)           & \multicolumn{2}{c}{Fixed}                              
     \includegraphics[width=\textwidth]{figures/Appendix2.pdf}
     \caption{\textbf{Distribution of fourth-order non-linear limb-darkening coefficients from the MPS-ATLAS set1 grid.} Double corner plot of the four LDCs ($c_1$, $c_2$, $c_3$, $c_4$) computed over $T_{\rm eff} \in [3500, 9000]$\,K, $\log g \in [3.0, 5.0]$, $[{\rm M/H}] \in [-5.0, 1.5]$, and JWST NIRSpec PRISM wavelengths. The \textit{lower-left} and \textit{upper-right} triangles show LDCs colored by $T_{\rm eff}$ and wavelength, respectively. \textit{Left column:} 1D marginal histograms, grouped by the $T_{\rm eff}$ at which the LDCs were computed. \textit{Right column:} Same as the left column, but with grouping done according to wavelength. An animated version cycling through all four physical dimensions ($T_{\rm eff}$, $\log g$, [M/H], and wavelength) is available on GitHub \href{https://github.com/SamMerc/Transit-Information-Content/blob/main/src/static/corner_animation.gif}{\GitHubIcon}.}
     \label{fig:appendix_fig2}
+\end{figure}
+
+\begin{figure}[htbp]
+    \script{Appendix5_plot.py}
+    \centering
+    \includegraphics[width=\textwidth]{figures/Appendix5.pdf}
+    \caption{\textbf{Distribution of fourth-order non-linear limb-darkening coefficients from the MPS-ATLAS set1 grid, by $\log g$ and metallicity.} Same as \autoref{fig:appendix_fig2}, but with the \textit{lower-left} and \textit{upper-right} triangles colored by $\log g$ and $[{\rm M/H}]$, respectively. \textit{Left column:} 1D marginal histograms grouped by $\log g$. \textit{Right column:} Same, grouped by $[{\rm M/H}]$.}
+    \label{fig:appendix_fig5}
 \end{figure}
 
 \begin{figure}[htbp]

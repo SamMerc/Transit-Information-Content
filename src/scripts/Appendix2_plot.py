@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+from matplotlib.lines import Line2D
 
 
 ######################################
@@ -42,16 +43,25 @@ for model in models:
     # ── Load pre-computed results ─────────────────────────────────────────────
     res = np.load(input_save_path + f'{model}/results.npz', allow_pickle=False)
 
-    corner_data = res['corner_data']          # (N, 4)  NLLD coefficients
-    corner_meta = res['corner_meta']          # (N, 4)  [i_Teff, j_logg, k_met, i_wav]
-    T_vals_arr  = res['T_vals_arr']
-    g_vals_arr  = res['g_vals_arr']
-    m_vals_arr  = res['m_vals_arr']
-    wavs_ref    = res['wavs_ref']
+    corner_data          = res['corner_data']           # (N, 4)  NLLD coefficients
+    corner_meta          = res['corner_meta']           # (N, 4)  [i_Teff, j_logg, k_met, i_wav]
+    T_vals_arr           = res['T_vals_arr']
+    g_vals_arr           = res['g_vals_arr']
+    m_vals_arr           = res['m_vals_arr']
+    wavs_ref             = res['wavs_ref']
+    cluster_labels       = res['cluster_labels']        # (N,)   0-indexed cluster IDs
+    unique_cl            = res['unique_cl']
+    typical_idx          = int(res['typical_idx'])
+    cluster_mode_indices = res['cluster_mode_indices']  # (n_cl,) indices of cluster modes
 
     # ── Physical parameter arrays ─────────────────────────────────────────────
     teff_vals = T_vals_arr[corner_meta[:, 0]]
     wav_vals  = wavs_ref[corner_meta[:, 3]] / 1e4   # µm
+
+    # ── Cluster colours (tab10, same as Appendix 3) ──────────────────────────
+    n_cl           = len(unique_cl)
+    cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
+    cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
 
     # ── Colormaps ─────────────────────────────────────────────────────────────
     # Teff: discrete inferno with exactly one colour per sampled grid point
@@ -93,9 +103,9 @@ for model in models:
     #   col 3 : wavelength 1D histograms
     #   col 4 : wavelength colorbar  (narrow)
     # wspace=0.30 gives the wide gap between histograms and the corner block.
-    fig = plt.figure(figsize=(16, 11))
+    fig = plt.figure(figsize=(16, 9))
     outer_gs = GridSpec(ndim, 5, figure=fig,
-                        wspace=0.05, hspace=0.2,
+                        wspace=0.05, hspace=0.27,
                         width_ratios=[0.10, 1.4, 4.0, 1.4, 0.10])
 
     # Inner GridSpec: 4×4 within the corner block, with tight wspace
@@ -173,6 +183,17 @@ for model in models:
                 a.scatter(corner_data[idx_t, ic], corner_data[idx_t, ir],
                           c=teff_vals[idx_t], cmap=teff_cmap, norm=teff_norm,
                           s=1.5, alpha=0.35, linewidths=0, rasterized=True)
+                # Cluster mode diamonds for clusters 1, 3, 4
+                for ci, cl in enumerate(unique_cl):
+                    if cl in [1, 3, 4]:
+                        cidx = cluster_mode_indices[ci]
+                        a.scatter(corner_data[cidx, ic], corner_data[cidx, ir],
+                                  color=cluster_colors[ci], s=45, marker='D', zorder=9,
+                                  edgecolors='black', linewidths=0.7)
+                # Overall mode: orange star on top
+                a.scatter(corner_data[typical_idx, ic], corner_data[typical_idx, ir],
+                          color='orange', s=160, marker='*', zorder=10,
+                          edgecolors='black', linewidths=0.7)
                 a.set_xlim(ranges[ic])
                 a.set_ylim(ranges[ir])
                 a.grid(True, alpha=0.15)
@@ -189,6 +210,17 @@ for model in models:
                 a.scatter(corner_data[idx_w, ic], corner_data[idx_w, ir],
                           c=wav_vals[idx_w], cmap=wav_cmap, norm=wav_norm,
                           s=1.5, alpha=0.35, linewidths=0, rasterized=True)
+                # Cluster mode diamonds for clusters 1, 3, 4
+                for ci, cl in enumerate(unique_cl):
+                    if cl in [1, 3, 4]:
+                        cidx = cluster_mode_indices[ci]
+                        a.scatter(corner_data[cidx, ic], corner_data[cidx, ir],
+                                  color=cluster_colors[ci], s=45, marker='D', zorder=9,
+                                  edgecolors='black', linewidths=0.7)
+                # Overall mode: orange star on top
+                a.scatter(corner_data[typical_idx, ic], corner_data[typical_idx, ir],
+                          color='orange', s=160, marker='*', zorder=10,
+                          edgecolors='black', linewidths=0.7)
                 a.set_xlim(ranges[ic])
                 a.set_ylim(ranges[ir])
                 a.grid(True, alpha=0.15)
@@ -213,6 +245,30 @@ for model in models:
     cb_w = fig.colorbar(sm_w, cax=cax_w)
     cb_w.set_label(r'Wavelength ($\mu$m)', fontsize=11)
     cb_w.ax.tick_params(labelsize=9)
+
+    # ── Cluster legend centred below the 4×4 corner block ────────────────────
+    legend_handles = (
+        [Line2D([0], [0], marker='D', color='w',
+                markerfacecolor=cluster_colors[ci],
+                markeredgecolor='black', markeredgewidth=0.7,
+                markersize=8, label=f'Cluster {cl}')
+         for ci, cl in enumerate(unique_cl) if cl in [1, 3, 4]]
+        + [Line2D([0], [0], marker='*', color='w', markerfacecolor='orange',
+                  markeredgecolor='black', markeredgewidth=0.7,
+                  markersize=13, label='Overall mode')]
+    )
+    # Derive the horizontal centre and bottom edge of the 4×4 block in figure
+    # coordinates from the corner axes positions (available before draw).
+    pos_left  = ax_c[0, 0].get_position()
+    pos_right = ax_c[0, ndim - 1].get_position()
+    pos_bot   = ax_c[ndim - 1, 0].get_position()
+    center_x  = (pos_left.x0 + pos_right.x1) / 2
+    bottom_y  = pos_bot.y0
+    fig.legend(handles=legend_handles, ncols=3,
+               loc='upper center',
+               bbox_to_anchor=(center_x, bottom_y - 0.01),
+               bbox_transform=fig.transFigure,
+               fontsize=9, framealpha=0.85)
 
     plt.savefig(paths.figures / "Appendix2.pdf", bbox_inches='tight', dpi=150)
     plt.close(fig)
