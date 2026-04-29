@@ -262,7 +262,7 @@ for model in models:
     pos_bot   = ax_c[ndim - 1, 0].get_position()
     center_x  = (pos_left.x0 + pos_right.x1) / 2
     bottom_y  = pos_bot.y0
-    fig.legend(handles=legend_handles, ncols=3,
+    fig.legend(handles=legend_handles, ncols=4,
                loc='upper center',
                bbox_to_anchor=(center_x, bottom_y - 0.01),
                bbox_transform=fig.transFigure,
