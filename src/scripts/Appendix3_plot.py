@@ -130,7 +130,7 @@ for model in models:
          for ci, cl in enumerate(unique_cl)]
         + [Line2D([0], [0], marker='*', color='w', markerfacecolor='orange',
                   markeredgecolor='black', markeredgewidth=0.7,
-                  markersize=13, label='Overall mode'),
+                  markersize=13, label='Global mode'),
            Line2D([0], [0], marker='D', color='w', markerfacecolor='gray',
                   markeredgecolor='black', markeredgewidth=0.7,
                   markersize=9, label='Cluster modes')]

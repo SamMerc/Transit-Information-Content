@@ -255,7 +255,7 @@ for model in models:
          for ci, cl in enumerate(unique_cl) if cl in [1, 3, 4]]
         + [Line2D([0], [0], marker='*', color='w', markerfacecolor='orange',
                   markeredgecolor='black', markeredgewidth=0.7,
-                  markersize=13, label='Overall mode')]
+                  markersize=13, label='Global mode')]
     )
     pos_left  = ax_c[0, 0].get_position()
     pos_right = ax_c[0, ndim - 1].get_position()

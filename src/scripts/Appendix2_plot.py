@@ -255,7 +255,7 @@ for model in models:
          for ci, cl in enumerate(unique_cl) if cl in [1, 3, 4]]
         + [Line2D([0], [0], marker='*', color='w', markerfacecolor='orange',
                   markeredgecolor='black', markeredgewidth=0.7,
-                  markersize=13, label='Overall mode')]
+                  markersize=13, label='Global mode')]
     )
     # Derive the horizontal centre and bottom edge of the 4×4 block in figure
     # coordinates from the corner axes positions (available before draw).
