@@ -147,7 +147,7 @@ fixed_args['dense_matrix'] = True
 fixed_args['regularize_mass_matrix'] = True
 
 #%% Set model scatter
-model_scatter = 46.0
+model_scatter = 16.0
 
 #############################################
 ########## Define parrallelization ##########

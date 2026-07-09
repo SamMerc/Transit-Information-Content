@@ -45,7 +45,7 @@ import paths
 LD_data_path        = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/LD_simulation'
 orig_save_data_path = str(paths.data / "Fig5_Storage") + "/"
 
-models = ['mps2']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
+models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 
 # The range of Teff values explorable for each model.
 Teffs = {
@@ -89,7 +89,7 @@ lambda_resolution = {
 }
 
 # Number of points in the grid of stellar parameters (Teff, logg, metallicity).
-N_star = 10
+N_star = 20
 
 # Number of mu values to interpolate to — set to EJ16 value.
 n_mu_fine = 100
@@ -107,8 +107,22 @@ intr_prof_mode = 'build'  # 'build' or 'load'
 # If True, randomly draw n_subsample_profiles from the valid profiles before
 # running PCA, clustering, fitting, etc.  Set to False to use all valid profiles.
 subsample_profiles   = True
-n_subsample_profiles = 50000
+n_subsample_profiles = 10000
 subsample_seed       = 42  # for reproducibility
+
+# If True, the subsampling draw above is importance-weighted by the joint KDE of
+# (Teff, logg, [M/H]) fitted to confirmed exoplanet hosts (see HostStar_extract.py),
+# so the profiles that feed the clustering reflect the real host-star population
+# rather than the uniformly-spaced simulation grid. Set to False to recover the
+# original uniform-grid sampling.
+weight_by_host_star_kde = True
+host_star_kde_path      = str(paths.data / "HostStar_Storage" / "host_star_kde.pkl")
+
+# Seed for the random initial guesses used when fitting each profile's 4th-order NLLD
+# coefficients (see the fitting loop below). This determines all_coeffs / corner_data and
+# therefore the clustering and chosen modes, so it needs to be fixed for the results to be
+# reproducible if this fitting step is ever run standalone in another file.
+fit_init_seed = 42
 
 # Whether to plot the dendrogram of the hierarchical clustering step.
 plot_dendogram = False
@@ -604,21 +618,43 @@ for model in models:
 
     assert ptr == n_valid, f'Pointer mismatch: {ptr} vs {n_valid}'
 
+    # Keep the full, un-subsampled population around so the impact of the KDE
+    # weighting on the physical-parameter distribution can be visualised later (Figure 3b).
+    meta_array_full = meta_array.copy()
+
     # ── Optional subsampling ──────────────────────────────────────────────
+    sample_weights = None
     if subsample_profiles:
         rng    = np.random.default_rng(subsample_seed)
         n_draw = min(n_subsample_profiles, n_valid)
+
+        if weight_by_host_star_kde:
+            with open(host_star_kde_path, 'rb') as f:
+                host_star_kde = pickle.load(f)
+            Tg, Gg, Mg     = np.meshgrid(T_vals_arr, g_vals_arr, m_vals_arr, indexing='ij')
+            grid_weights   = host_star_kde(np.vstack([Tg.ravel(), Gg.ravel(), Mg.ravel()]))
+            grid_weights   = grid_weights.reshape(N_star, N_star, N_star)
+            sample_weights = grid_weights[meta_array[:, 0], meta_array[:, 1], meta_array[:, 2]]
+            sample_weights = sample_weights / sample_weights.sum()
+            ess = 1.0 / np.sum(sample_weights ** 2)
+            print(f'  KDE weighting: effective sample size {ess:,.0f} '
+                  f'(of {n_valid:,} candidate profiles)')
+
         if n_draw < n_valid:
-            idx = np.sort(rng.choice(n_valid, size=n_draw, replace=False))
-            print(f'\nSUBSAMPLING: {n_valid} → {n_draw} profiles (seed={subsample_seed})')
+            idx = np.sort(rng.choice(n_valid, size=n_draw, replace=False, p=sample_weights))
+            weight_str = 'KDE-weighted' if weight_by_host_star_kde else 'uniform'
+            print(f'\nSUBSAMPLING ({weight_str}): {n_valid} → {n_draw} profiles (seed={subsample_seed})')
         else:
             idx = np.arange(n_valid)
             print(f'\nSUBSAMPLING: {n_valid} profiles (fewer than '
                     f'{n_subsample_profiles}, keeping all)')
+
         int_profile = int_profile[idx]
         mus_array       = mus_array[idx]
         meta_array      = meta_array[idx]
         n_valid         = n_draw
+        if sample_weights is not None:
+            sample_weights = sample_weights[idx]
 
     # ── Figure 1 : Residual plots coloured by parameter ──────────────────────────────
     print('FIGURE 1 - RESIDUAL PLOTTING')
@@ -667,6 +703,7 @@ for model in models:
 
     n_profs  = int_profile.shape[0]
     all_coeffs = np.zeros((n_profs, 4), dtype=np.float64)
+    fit_rng    = np.random.default_rng(fit_init_seed)
     print(f'  Fitting {n_profs} global intensity profiles ...')
 
     for idx in tqdm(range(n_profs)):
@@ -679,7 +716,7 @@ for model in models:
 
         params = Parameters()
         for ip in range(4):
-            params.add(f'c{ip+1}', value=np.random.uniform(0, 1))
+            params.add(f'c{ip+1}', value=fit_rng.uniform(0, 1))
         try:
             result = minimize(residual_fn, params, args=(mus_idx, prof_idx))
             all_coeffs[idx] = [result.params[f'c{ic+1}'].value for ic in range(4)]
@@ -690,6 +727,7 @@ for model in models:
     valid_mask  = ~np.any(np.isnan(all_coeffs), axis=1)
     corner_data = all_coeffs[valid_mask]
     corner_profiles = int_profile[valid_mask]
+    corner_weights   = sample_weights[valid_mask] if sample_weights is not None else None
     print(f'  Corner plot for {corner_data.shape[0]} valid profiles')
 
     labels_4d = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
@@ -926,7 +964,7 @@ for model in models:
     unique_cl      = np.unique(cluster_labels)
 
     for m in unique_cl:
-        mask_m = mode_labels_corner == m
+        mask_m = cluster_labels == m
         print(
             f'  Mode {m}: n={mask_m.sum():5d}  '
             f'c=[{corner_data[mask_m, 0].mean():.3f}, '
@@ -971,7 +1009,7 @@ for model in models:
                     cmask = cluster_labels == cl
                     ax.hist(corner_data[cmask, row], bins=30, alpha=0.5,
                             color=cluster_colors[ci], label=f'C{cl}',
-                            density=True, linewidth=0.8, edgecolor='none')
+                            density=False, linewidth=0.8, edgecolor='none')
                 ax.set_xlabel(f'PC{row+1}', fontsize=8)
                 ax.tick_params(labelsize=7)
                 for spine in ['top', 'left', 'right']:
@@ -1017,18 +1055,44 @@ for model in models:
     T_eff_vals = T_vals_arr[corner_meta[:, 0]]
     logg_vals  = g_vals_arr[corner_meta[:, 1]]
     MH_vals    = m_vals_arr[corner_meta[:, 2]]
-    
+
     # Stack into a 2D array: (N_profiles, 4)
     phys_data = np.column_stack([T_eff_vals, logg_vals, MH_vals, corner_wav_um])
-    
+
+    # Same physical parameters for the FULL, un-subsampled population (i.e. before the
+    # KDE-weighted draw), so the impact of the weighting on the original sample can be
+    # visualised alongside the post-weighting, clustered data.
+    full_wav_um    = wavs_ref[meta_array_full[:, 3]] / 1e4
+    phys_data_full = np.column_stack([
+        T_vals_arr[meta_array_full[:, 0]],
+        g_vals_arr[meta_array_full[:, 1]],
+        m_vals_arr[meta_array_full[:, 2]],
+        full_wav_um,
+    ])
+
     phys_labels = [r'$T_{\rm eff}$ (K)', r'$\log\,g$', r'[M/H]', r'Wavelength ($\mu$m)']
+    # Ranges span the FULL population so any parts of parameter space the weighting
+    # thinned out or removed remain visible rather than being cropped out of view.
     phys_ranges = [
-        (T_eff_vals.min(), T_eff_vals.max()),
-        (logg_vals.min(), logg_vals.max()),
-        (MH_vals.min(), MH_vals.max()),
-        (corner_wav_um.min(), corner_wav_um.max())
+        (phys_data_full[:, d].min(), phys_data_full[:, d].max())
+        for d in range(4)
     ]
     ndim_phys = 4
+
+    # Teff / logg / [M/H] only take N_star discrete grid values, so equal-width bins can
+    # straddle them and alias into a checkerboard of empty/doubly-populated bins. Bin edges
+    # centred on each grid value avoid this; the wavelength axis is continuous and keeps
+    # regular bins.
+    def _grid_bin_edges(vals):
+        step = vals[1] - vals[0]
+        return np.concatenate([vals - step / 2, [vals[-1] + step / 2]])
+
+    phys_bin_edges = [
+        _grid_bin_edges(T_vals_arr),
+        _grid_bin_edges(g_vals_arr),
+        _grid_bin_edges(m_vals_arr),
+        np.linspace(phys_ranges[3][0], phys_ranges[3][1], 21),
+    ]
 
     # 2. Setup the base corner plot
     fig_phys = corner.corner(
@@ -1055,8 +1119,14 @@ for model in models:
             ax = axes_phys[row, col]
             
             if row == col:
-                # Diagonal: 1D Histograms per cluster
+                # Diagonal: pre-weighting population (reference) + 1D histograms per cluster
                 ax.clear()
+
+                # Reference: full, un-subsampled candidate pool (i.e. before KDE weighting).
+                ax.hist(phys_data_full[:, row], bins=phys_bin_edges[row],
+                        color='black', density=True, histtype='step',
+                        linewidth=1.5, linestyle='--')
+
                 # For histograms, order doesn't matter as much, but we'll stick to the original unique_cl order
                 for ci, cl in enumerate(unique_cl):
                     cmask = cluster_labels == cl
@@ -1065,7 +1135,7 @@ for model in models:
                     
                     # density=True normalizes the area under the curve to 1.
                     # This ensures the 435-point cluster is visible alongside the 11k-point cluster.
-                    ax.hist(phys_data[cmask, row], bins=20, range=phys_ranges[row],
+                    ax.hist(phys_data[cmask, row], bins=phys_bin_edges[row],
                             alpha=0.4, color=cluster_colors[ci], density=True,
                             histtype='stepfilled', edgecolor='none')
                 
@@ -1077,7 +1147,15 @@ for model in models:
                     ax.set_xlabel(phys_labels[row], fontsize=13)
                     
             elif row > col:
-                # Off-diagonal: 2D Scatter coloured by cluster
+                # Off-diagonal: pre-weighting population as a grayscale 2D-histogram backdrop,
+                # with the post-weighting sample scattered on top, coloured by cluster.
+                h2d, xedges, yedges = np.histogram2d(
+                    phys_data_full[:, col], phys_data_full[:, row],
+                    bins=[phys_bin_edges[col], phys_bin_edges[row]],
+                )
+                ax.pcolormesh(xedges, yedges, h2d.T, cmap='Greys', alpha=0.6,
+                              shading='auto', rasterized=True)
+
                 # We iterate through the SORTED list so largest goes first (bottom layer)
                 for cl in clusters_sorted_by_size:
                     ci = list(unique_cl).index(cl) # Get original index for correct color
@@ -1099,6 +1177,9 @@ for model in models:
 
     # 5. Add custom legend mapping colors to clusters
     handles_phys = [
+        plt.Line2D([0], [0], color='black', linestyle='--', linewidth=1.5,
+                   label='Before weighting (uniform grid)'),
+    ] + [
         plt.Line2D([0], [0], marker='o', color='w',
                    markerfacecolor=cluster_colors[ci],
                    markersize=8, label=f'Cluster {cl}')
@@ -1108,7 +1189,7 @@ for model in models:
                     framealpha=0.85, title='NLLD Cluster', title_fontsize=13,
                     bbox_to_anchor=(0.95, 0.95))
 
-    fig_phys.suptitle(f'Physical parameters coloured by NLLD cluster — {model}',
+    fig_phys.suptitle(f'Physical parameters — before vs. after host-star KDE weighting — {model}',
                       fontsize=14, y=1.02)
     fig_phys.savefig(save_data_path + f'Corner_PhysParams_byCluster_{model}.png',
                      dpi=150, bbox_inches='tight')
@@ -1187,8 +1268,7 @@ for model in models:
               f'{coeffs[2]:>8.4f}  {coeffs[3]:>8.4f}')
         
     results_file = save_data_path + 'results.npz'
-    np.savez(
-        results_file,
+    save_kwargs = dict(
         corner_data           = corner_data,
         corner_meta           = corner_meta,
         cluster_labels        = cluster_labels,
@@ -1206,4 +1286,7 @@ for model in models:
         cluster_mode_profiles = cluster_mode_profiles,
         cluster_mode_coeffs   = cluster_mode_coeffs,
     )
+    if corner_weights is not None:
+        save_kwargs['corner_weights'] = corner_weights
+    np.savez(results_file, **save_kwargs)
     print(f'  Saved results → {results_file}')
