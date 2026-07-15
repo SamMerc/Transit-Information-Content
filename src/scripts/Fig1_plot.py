@@ -892,7 +892,7 @@ if __name__ == '__main__':
                 r'$= \sqrt{3}$, in theory',
                 fontsize=10, va='bottom', ha='left')
 
-    # Arrow from "= sqrt(3), in theory" pointing toward the dashed line on right panel
+    # Arrow from "= sqrt(3/2), in theory" pointing toward the dashed line on right panel
     # (This is a cross-axes annotation; we use figure coordinates)
     # Simpler: just add a small rightward arrow from the text
     ax_left.annotate("",
@@ -1052,8 +1052,8 @@ if __name__ == '__main__':
     ax_right.pcolormesh(X, Y, np.zeros_like(alpha_2d), color=(0.8,0.8,0.8,1),
                 shading='auto', cmap='Greys', alpha=alpha_2d, zorder=0)
 
-    ax_right.axhline(np.sqrt(3), color='k', linestyle='dashed')
-    ax_right.text(0.009, np.sqrt(3) - 0.3, r'Theoretical limit @ $\sqrt{3}$', fontsize=12, color='black')
+    ax_right.axhline(np.sqrt(3/2), color='k', linestyle='dashed')
+    ax_right.text(0.009, np.sqrt(3/2) - 0.3, r'Theoretical limit @ $\sqrt{3/2}$', fontsize=12, color='black')
     ax_right.text(200, 50, 'Transition region', fontsize=10.5, color='black')
     ax_right.text(12000, 50, 'Noise limited', fontsize=10.5, color='black')
     ax_right.text(5.5, 50, 'Model limited', fontsize=10.5, color='black')

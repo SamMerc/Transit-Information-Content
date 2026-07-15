@@ -69,7 +69,7 @@ ranges = [(np.percentile(corner_data[:, i], 0.1),
 frames_config = [
     (r'$T_{\rm eff}$ (K)',   teff_vals, plt.cm.inferno,  True),
     (r'$\log g$',            logg_vals, plt.cm.cividis,  True),
-    (r'[M/H]',               met_vals,  plt.cm.coolwarm, True),
+    (r'[M/H]',               met_vals,  plt.cm.get_cmap('winter'), True),
     (r'Wavelength ($\mu$m)', wav_vals,  plt.cm.turbo,    False),
 ]
 
@@ -118,7 +118,7 @@ def render_frame(frame_idx):
                     for uv in unique_vals:
                         m = col_vals == uv
                         ax.hist(corner_data[m, row], bins=50, range=ranges[row],
-                                alpha=0.55, color=sm_disc.to_rgba(uv), density=True,
+                                alpha=0.55, color=sm_disc.to_rgba(uv), density=False,
                                 histtype='stepfilled', edgecolor='none')
                 else:
                     # Continuous: decompose into 10 wavelength bins

@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 
 input_save_path = str(paths.data / "Fig5_Storage") + "/"
 models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
-
+clusters_2_show = [0, 2, 3, 4, 7] # clusters to highlight with diamonds in the corner plot
 
 ############################
 ###### Function block ######
@@ -95,8 +95,8 @@ for model in models:
     ]
 
     # ── Panel layout: left = NLLD curves, right = residuals vs overall mode ──
-    n_cl_plot = 4
-    cl_to_plot = ['Global mode', 'Cluster 1 mode', 'Cluster 3 mode', 'Cluster 4 mode']
+    n_cl_plot = len(clusters_2_show) + 1
+    cl_to_plot = ['Global mode'] + [f'Cluster {cl} mode' for cl in clusters_2_show]
     special_styles_to_plot = [s for s in special_styles if s[0] in cl_to_plot]
 
     fig5, ax5 = plt.subplots(

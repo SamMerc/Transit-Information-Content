@@ -89,7 +89,7 @@ lambda_resolution = {
 }
 
 # Number of points in the grid of stellar parameters (Teff, logg, metallicity).
-N_star = 20
+N_star = 10
 
 # Number of mu values to interpolate to — set to EJ16 value.
 n_mu_fine = 100
@@ -101,13 +101,13 @@ colors = cmap(np.linspace(0, 1, n_components))
 
 wav_region = [6000, 53000]  # 0.6 – 5.3 micron
 
-intr_prof_mode = 'build'  # 'build' or 'load'
+intr_prof_mode = 'load'  # 'build' or 'load'
 
 # ── Profile subsampling ───────────────────────────────────────────────────────
 # If True, randomly draw n_subsample_profiles from the valid profiles before
 # running PCA, clustering, fitting, etc.  Set to False to use all valid profiles.
 subsample_profiles   = True
-n_subsample_profiles = 10000
+n_subsample_profiles = 50000
 subsample_seed       = 42  # for reproducibility
 
 # If True, the subsampling draw above is importance-weighted by the joint KDE of
@@ -126,6 +126,9 @@ fit_init_seed = 42
 
 # Whether to plot the dendrogram of the hierarchical clustering step.
 plot_dendogram = False
+
+# Distance threshold for cutting the hierarchical clustering tree
+CLUSTER_CUTOFF = 100.0  
 
 
 ############################
@@ -771,7 +774,7 @@ for model in models:
     meta_col_vals  = [T_vals_arr[corner_meta[:, 0]],
                       g_vals_arr[corner_meta[:, 1]],
                       m_vals_arr[corner_meta[:, 2]]]
-    meta_cmaps     = [plt.cm.inferno, plt.cm.cividis, plt.cm.coolwarm]
+    meta_cmaps     = [plt.cm.inferno, plt.cm.cividis, plt.cm.get_cmap('winter')]
 
     # ── Figures 2b–d : coloured by physical parameters ────────────────────────
     for imeta in range(3):
@@ -815,7 +818,7 @@ for model in models:
                     if mask_uv.sum() == 0:
                         continue
                     ax.hist(corner_data[mask_uv, d], bins=50, range=ranges_4d[d],
-                            alpha=0.55, color=col_cmap(col_norm(uv)), density=True,
+                            alpha=0.55, color=col_cmap(col_norm(uv)), density=False,
                             histtype='stepfilled', edgecolor='none')
             else:
                 n_bins = 8
@@ -829,7 +832,7 @@ for model in models:
                     if mask_bm.sum() == 0:
                         continue
                     ax.hist(corner_data[mask_bm, d], bins=50, range=ranges_4d[d],
-                            alpha=0.55, color=col_cmap(col_norm(ctr)), density=True,
+                            alpha=0.55, color=col_cmap(col_norm(ctr)), density=False,
                             histtype='stepfilled', edgecolor='none')
             ax.set_xlim(ranges_4d[d])
             ax.set_yticks([])
@@ -955,7 +958,7 @@ for model in models:
         label=f'LDC_clustering_{model}',
         save_path=save_data_path,
         feature_labels=[r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$'],
-        cutoff=80,
+        cutoff=CLUSTER_CUTOFF,
         clustering_metric='mahalanobis',
         method='ward',
     )

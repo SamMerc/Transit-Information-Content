@@ -32,7 +32,7 @@ from matplotlib.lines import Line2D
 
 input_save_path = str(paths.data / "Fig5_Storage") + "/"
 models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
-
+clusters_2_show = [0, 2, 3, 4, 7] # clusters to highlight with diamonds in the corner plot
 
 ################################
 ########## Code block ##########
@@ -82,7 +82,7 @@ for model in models:
     met_bounds = np.concatenate([[met_unique[0] - hw_m[0]],
                                   met_unique[:-1] + hw_m,
                                   [met_unique[-1] + hw_m[-1]]])
-    met_cmap   = plt.cm.get_cmap('RdBu_r', n_met)
+    met_cmap   = plt.cm.get_cmap('winter', n_met)
     met_norm   = mcolors.BoundaryNorm(met_bounds, ncolors=met_cmap.N)
     sm_m_disc  = cm.ScalarMappable(cmap=met_cmap, norm=met_norm)
 
@@ -140,7 +140,7 @@ for model in models:
         for uv in logg_unique:
             m = logg_vals == uv
             a.hist(corner_data[m, d], bins=50, range=ranges[d],
-                   alpha=0.55, color=sm_g_disc.to_rgba(uv), density=True,
+                   alpha=0.55, color=sm_g_disc.to_rgba(uv), density=False,
                    histtype='stepfilled', edgecolor='none')
         a.set_xlim(ranges[d])
         a.set_yticks([])
@@ -155,7 +155,7 @@ for model in models:
         for uv in met_unique:
             m = met_vals == uv
             a.hist(corner_data[m, d], bins=50, range=ranges[d],
-                   alpha=0.55, color=sm_m_disc.to_rgba(uv), density=True,
+                   alpha=0.55, color=sm_m_disc.to_rgba(uv), density=False,
                    histtype='stepfilled', edgecolor='none')
         a.set_xlim(ranges[d])
         a.set_yticks([])
@@ -184,7 +184,7 @@ for model in models:
                           s=1.5, alpha=0.35, linewidths=0, rasterized=True)
                 # Cluster mode diamonds for clusters 1, 3, 4
                 for ci, cl in enumerate(unique_cl):
-                    if cl in [1, 3, 4]:
+                    if cl in clusters_2_show:
                         cidx = cluster_mode_indices[ci]
                         a.scatter(corner_data[cidx, ic], corner_data[cidx, ir],
                                   color=cluster_colors[ci], s=45, marker='D', zorder=9,
@@ -211,7 +211,7 @@ for model in models:
                           s=1.5, alpha=0.35, linewidths=0, rasterized=True)
                 # Cluster mode diamonds for clusters 1, 3, 4
                 for ci, cl in enumerate(unique_cl):
-                    if cl in [1, 3, 4]:
+                    if cl in clusters_2_show:
                         cidx = cluster_mode_indices[ci]
                         a.scatter(corner_data[cidx, ic], corner_data[cidx, ir],
                                   color=cluster_colors[ci], s=45, marker='D', zorder=9,
@@ -252,7 +252,7 @@ for model in models:
                 markerfacecolor=cluster_colors[ci],
                 markeredgecolor='black', markeredgewidth=0.7,
                 markersize=8, label=f'Cluster {cl}')
-         for ci, cl in enumerate(unique_cl) if cl in [1, 3, 4]]
+         for ci, cl in enumerate(unique_cl) if cl in clusters_2_show]
         + [Line2D([0], [0], marker='*', color='w', markerfacecolor='orange',
                   markeredgecolor='black', markeredgewidth=0.7,
                   markersize=13, label='Global mode')]
@@ -262,7 +262,7 @@ for model in models:
     pos_bot   = ax_c[ndim - 1, 0].get_position()
     center_x  = (pos_left.x0 + pos_right.x1) / 2
     bottom_y  = pos_bot.y0
-    fig.legend(handles=legend_handles, ncols=4,
+    fig.legend(handles=legend_handles, ncols=3,
                loc='upper center',
                bbox_to_anchor=(center_x, bottom_y - 0.01),
                bbox_transform=fig.transFigure,

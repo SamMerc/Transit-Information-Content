@@ -27,7 +27,7 @@ from matplotlib.lines import Line2D
 
 input_save_path = str(paths.data / "Fig5_Storage") + "/"
 models = ['mps1']
-
+clusters_2_show = [0, 2, 3, 4, 7] # clusters to highlight with diamonds in the corner plot
 
 ################################
 ########## Code block ##########
@@ -67,7 +67,7 @@ for model in models:
                 for ci, cl in enumerate(unique_cl):
                     mask = cluster_labels == cl
                     ax.hist(corner_data[mask, row], bins=40, range=ranges[row],
-                            alpha=0.55, color=cluster_colors[ci], density=True,
+                            alpha=0.55, color=cluster_colors[ci], density=False,
                             histtype='stepfilled', edgecolor='none')
                 ax.set_xlim(ranges[row])
                 ax.set_yticks([])
@@ -76,7 +76,7 @@ for model in models:
 
                 # Dashed vertical lines for cluster modes (clusters 1, 3, 4)
                 for ci, cl in enumerate(unique_cl):
-                    if cl in [1, 3, 4]:
+                    if cl in clusters_2_show:
                         cidx = cluster_mode_indices[ci]
                         ax.axvline(corner_data[cidx, row],
                                    color=cluster_colors[ci],
