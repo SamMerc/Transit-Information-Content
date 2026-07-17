@@ -64,12 +64,16 @@ init_state_dic['e'] = 0.                                      #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-#C1 : 1.4394   -1.8472    1.4695   -0.4682
-init_NLLD_coeffs = [1.4394, -1.8472, 1.4695, -0.4682]
-#C3 : -0.0115    1.7520   -1.9378    0.7261
-# init_NLLD_coeffs = [-0.0115, 1.7520, -1.9378, 0.7261]
-#C4 : 0.8329   -0.6523    0.9283   -0.3483
-# init_NLLD_coeffs = [0.8329, -0.6523, 0.9283, -0.3483]
+#C0 : 0.5597   -0.1310    0.4556   -0.2398
+init_NLLD_coeffs = [0.5597, -0.1310, 0.4556, -0.2398]
+#C2 : 0.7617   -0.8502    1.4229   -0.4899
+init_NLLD_coeffs = [0.7617, -0.8502, 1.4229, -0.4899]
+#C3 : 0.6666   -0.8767    0.8343   -0.2968
+# init_NLLD_coeffs = [0.6666, -0.8767, 0.8343, -0.2968]
+#C4 : 0.5172   -0.1913    0.0819   -0.0316
+# init_NLLD_coeffs = [0.5172, -0.1913, 0.0819, -0.0316]
+#C7 : 0.6383   -0.0511   -0.2722    0.1455
+# init_NLLD_coeffs = [0.6383, -0.0511, -0.2722, 0.1455]
 
 init_PLD_coeffs = nonlinear_4param_ld_law(u1=init_NLLD_coeffs[0], u2=init_NLLD_coeffs[1], u3=init_NLLD_coeffs[2], u4=init_NLLD_coeffs[3])
 
@@ -147,7 +151,7 @@ fixed_args['dense_matrix'] = True
 fixed_args['regularize_mass_matrix'] = True
 
 #%% Set model scatter
-model_scatter = 16.0
+model_scatter = 16.68100537200059
 
 #############################################
 ########## Define parrallelization ##########

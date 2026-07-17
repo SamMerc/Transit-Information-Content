@@ -53,15 +53,15 @@ init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-# Overall LDCs : c1 = 0.5586 c2 = -0.0382 c3 = -0.0852 c4 = 0.0336
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336)
+# Global LDCs : c1 = 0.6245 c2 = -0.1898 c3 = 0.1473 c4 = -0.0634           
+init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634)
 
 #Updating initial state dictionary
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
 #Get starting points for the LD coefficients
-init_LD_prop = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336, order=3)
+init_LD_prop = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634, order=3)
 
 #%%%% Calculate transit duration
 # Convert angles to radians
@@ -134,9 +134,9 @@ lvls = np.logspace(np.log10(1), np.log10(1000), base=10, num=10)
 #%% Number of burn-in steps used in MCMC
 fixed_args['nburn'] = 70000
 
-#%% Model scatter and seed to use for the plot
-model_scatter =  16.68100537200059 
-seed = 70
+#%% Model scatter and seeds to use for the plot
+model_scatter =  16.68100537200059
+seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 
 # Filtering parameters
 THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
@@ -329,12 +329,7 @@ def ellipse_parameters_from_conic(p):
 ################ Running code ###############
 #############################################
 
-fixed_args['save_loc'] = output_dir
-
 print(f"MODEL SCATTER = {model_scatter:.2f}")
-print(f"SEED = {seed}")
-seed_dir = input_dir+f'{jnp.floor(model_scatter)}ppm/Seed{seed}/'
-
 
 ####################################
 ##### Chi-squared map plotting #####
@@ -360,220 +355,249 @@ def load_chi2_data(param1, param2, save_loc):
     else:
         raise FileNotFoundError(f"Could not find chi2 file for {param1} vs {param2}")
 
-#Loading the MCMC results
-print(f'Retrieving MCMC')
-raw_chain = jnp.load(seed_dir+"chains.npy")
-logprob = jnp.load(seed_dir+"logprob.npy")
-_, _, _, _, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
-
-#Finding the index of max log-probability
-max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
-
 n_params = len(fixed_args['var_param_list'])
 
-#Initializing correlation matrix
-corr_matrix = np.zeros((n_params, n_params))
+#Collecting the per-seed correlation matrices so we can compute their mean and std across seeds
+corr_matrices = []
 
-#Initializing figure
-fig, axes = plt.subplots(n_params, n_params, figsize=(2.5 * n_params, 2.5 * n_params))
+#Loop over each of the 10 MCMC runs (different noise seeds)
+for seed in seeds:
+    print(f"SEED = {seed}")
+    seed_dir = input_dir+f'{jnp.floor(model_scatter)}ppm/Seed{seed}/'
+    fixed_args['save_loc'] = output_dir+f'Seed{seed}/'
 
-for i, param1 in enumerate(fixed_args['var_param_list']):
-    for j, param2 in enumerate(fixed_args['var_param_list']):
-        ax = axes[i, j]
-        ax.tick_params(labelsize=14)
-        print(param1, ' vs ', param2)
+    #Loading the MCMC results
+    print(f'Retrieving MCMC')
+    raw_chain = jnp.load(seed_dir+"chains.npy")
+    logprob = jnp.load(seed_dir+"logprob.npy")
+    _, _, _, _, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
 
-        # remove top/right spines for nicer look
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+    #Finding the index of max log-probability
+    max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
 
-        if j > i:
-            ax.axis('off')  # upper triangle: turn off
-            continue
+    #Initializing correlation matrix
+    corr_matrix = np.zeros((n_params, n_params))
 
-        # Diagonal: 1D chi2 line plot
-        if i == j:
+    #Initializing scratch, only used to compute contour geometry
+    fig, axes = plt.subplots(n_params, n_params, figsize=(2.5 * n_params, 2.5 * n_params))
 
-            # Load chi2 data from file
-            chi2_vals = load_chi2_data(param1, param1, fixed_args['save_loc'])
+    for i, param1 in enumerate(fixed_args['var_param_list']):
+        for j, param2 in enumerate(fixed_args['var_param_list']):
+            ax = axes[i, j]
+            ax.tick_params(labelsize=14)
+            print(param1, ' vs ', param2)
 
-            param_vals = jnp.linspace(
-                raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                fixed_args['sample_pts']
-            )
+            # remove top/right spines for nicer look
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
 
-            ax.plot(param_vals, chi2_vals, color='black')
-            ax.axvline(raw_chain[max_walker, max_step, i], color='red', linestyle='--', lw=1)
-            ax.set_yticklabels([])
-            ax.set_xticklabels([])
+            if j > i:
+                ax.axis('off')  # upper triangle: turn off
+                continue
 
-        # Lower triangle: 2D chi2 contours (filled)
-        else:
-            # Use param2 on x-axis, param1 on y-axis (lower triangle convention)
-            param2_vals = jnp.linspace(
-                raw_chain[max_walker, max_step, j] - jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
-                raw_chain[max_walker, max_step, j] + jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
-                fixed_args['sample_pts']
-            )
-            param1_vals = jnp.linspace(
-                raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                fixed_args['sample_pts']
-            )
+            # Diagonal: 1D chi2 line plot
+            if i == j:
 
-            #Get normalized arrays
-            norm_param2_vals = jnp.linspace(
-                - 1,
-                + 1,
-                fixed_args['sample_pts']
-            )
-            norm_param1_vals = jnp.linspace(
-                - 1,
-                + 1,
-                fixed_args['sample_pts']
-            )
+                # Load chi2 data from file
+                chi2_vals = load_chi2_data(param1, param1, fixed_args['save_loc'])
 
-            key1 = f'{param1}_{param2}'
-            key2 = f'{param2}_{param1}'
+                param_vals = jnp.linspace(
+                    raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
+                    raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
+                    fixed_args['sample_pts']
+                )
 
-            # Load chi2 data from file
-            chi2_grid = load_chi2_data(param1, param2, fixed_args['save_loc'])
-            
-            A, B = np.meshgrid(param2_vals, param1_vals)  # (x=param2, y=param1)
-            norm_A, norm_B = np.meshgrid(norm_param2_vals, norm_param1_vals)  # (x=param2, y=param1)
-
-            # Define three nicely spaced contour levels (multiples of the delta threshold)
-            contour_levels = []
-            for lvl in lvls:
-                lv = lvl * fixed_args['delta_chi2_thresh']
-                contour_levels.append(lv)
-
-            # Filled contours
-            fill_levels = [0.0] + list(lvls)
-            fill_colors = plt.get_cmap('Greens')(jnp.linspace(0., 1, len(lvls)))  # light -> dark green
-            ax.contourf(A, B, chi2_grid, levels=fill_levels, colors=fill_colors, alpha=0.5, antialiased=True)
-
-            # Outline the three contours with black lines
-            cs = ax.contour(A, B, chi2_grid, levels=contour_levels, colors=['black']*len(contour_levels), linewidths=0.8)
-
-            # Also compute normalized contours for later geometry fitting (do not rely on plotted result)
-            norm_cs = ax.contour(norm_A, norm_B, chi2_grid, levels=contour_levels, colors=['none']*len(contour_levels), linewidths=0)
-
-            ax.axvline(raw_chain[max_walker, max_step, j], color='black', linestyle='--', lw=1)
-            ax.axhline(raw_chain[max_walker, max_step, i], color='black', linestyle='--', lw=1)
-
-            # Find largest valid contour fully within bounds using the computed contour objects
-            valid_contours = []
-
-            # Get axis bounds
-            x_bounds = (param2_vals[0], param2_vals[-1])
-            y_bounds = (param1_vals[0], param1_vals[-1])
-
-            for norm_contour_level, contour_level in zip(norm_cs.allsegs, cs.allsegs):
-                for norm_segment, segment in zip(norm_contour_level, contour_level):
-                    if len(segment) < 15:
-                        continue
-                    x, y = segment[:, 0], segment[:, 1]
-
-                    # Check if entire segment lies within bounds
-                    if (jnp.all((x >= x_bounds[0]) & (x <= x_bounds[1])) and
-                        jnp.all((y >= y_bounds[0]) & (y <= y_bounds[1]))):
-                        valid_contours.append((segment, norm_segment))
-
-            # Select the longest valid contour
-            if valid_contours:
-                selected, norm_selected = max(valid_contours, key=lambda seg_pair: len(seg_pair[0]))
-            else:
-                # If no valid contour found, fall back to the longest available contour in cs
-                all_segments = []
-                for level_segs in cs.allsegs:
-                    for seg in level_segs:
-                        all_segments.append((seg, None))
-                if len(all_segments) == 0:
-                    raise KeyError('Need bigger contours')
-                selected, norm_selected = max(all_segments, key=lambda seg_pair: len(seg_pair[0]))
-
-            #Retrieving contours
-            contour_x, contour_y = selected[:, 0], selected[:, 1]
-            if norm_selected is None:
-                # build a dummy normalized contour by scaling to unit stds if we don't have normalized seg
-                norm_contour_x = (contour_x - raw_chain[max_walker, max_step, j]) / jnp.std(raw_chain[max_walker, fixed_args['nburn']:, j][good_steps_mask])
-                norm_contour_y = (contour_y - raw_chain[max_walker, max_step, i]) / jnp.std(raw_chain[max_walker, fixed_args['nburn']:, i][good_steps_mask])
-            else:
-                norm_contour_x, norm_contour_y = norm_selected[:, 0], norm_selected[:, 1]
-
-            #Fit the normalized contour to retrieve slope and correlation value
-            ##Fit ellipse
-            bestfit_norm_ellipse = fit_ellipse_conic(norm_contour_x, norm_contour_y)
-            ##Retrieve properties
-            ellipse_norm_params = ellipse_parameters_from_conic(bestfit_norm_ellipse)
-            ##Plot semi-major axis
-            norm_orig_a = ellipse_norm_params['semi_major']
-            norm_orig_b = ellipse_norm_params['semi_minor']
-            norm_xmid, norm_ymid = ellipse_norm_params['center']
-            norm_theta = ellipse_norm_params['angle_rad']
-            ##Swap axes if necessary
-            if norm_orig_a < norm_orig_b:
-                norm_a = norm_orig_b
-                norm_theta += jnp.pi/2
-            else:norm_a = norm_orig_a
-            ##Plot the slope
-            norm_x0, norm_x1 = norm_xmid - 1 * (norm_a*jnp.cos(norm_theta)), norm_xmid + 1 * (norm_a*jnp.cos(norm_theta))
-            norm_y0, norm_y1 = norm_ymid - 1 * (norm_a*jnp.sin(norm_theta)), norm_ymid + 1 * (norm_a*jnp.sin(norm_theta))
-            ##Getting correlation value
-            norm_slope = (norm_y1-norm_y0)/(norm_x1-norm_x0)   
-            corr_value = jnp.abs( jnp.sin(2 * jnp.arctan(norm_slope)) )     
-
-            if jnp.isnan(corr_value):
-                # fallback: fit line to all points in largest contour
-                largest_idx = 0
-                largest_size = 0
-                for seg_idx, seg in enumerate(cs.allsegs):
-                    if len(seg[0][:,0]) > largest_size:
-                        largest_size = len(seg[0][:,0])
-                        largest_idx = seg_idx
-
-                x, y = cs.allsegs[largest_idx][0][:, 0], cs.allsegs[largest_idx][0][:, 1]
-                slope, intercept = jnp.polyfit(x, y, 1)
-                corr_value = jnp.abs(jnp.sin(2 * jnp.arctan(slope)))
-
-            #Populate correlation matrix
-            corr_matrix[i, j] = corr_value
-
-            if i == n_params - 1:
-                ax.set_xlabel(fixed_args['labels'][j],fontsize=14)
-                ax.tick_params(axis="x", labelsize=12, rotation=45)
-            else:
-                ax.set_xticklabels([])
-            if j == 0:
-                ax.set_ylabel(fixed_args['labels'][i],fontsize=14)
-                ax.tick_params(axis="y", labelsize=12, rotation=45)
-            else:
+                ax.plot(param_vals, chi2_vals, color='black')
+                ax.axvline(raw_chain[max_walker, max_step, i], color='red', linestyle='--', lw=1)
                 ax.set_yticklabels([])
+                ax.set_xticklabels([])
 
-            #Force the limits of the plot
-            ax.set_xlim([param2_vals[0], param2_vals[-1]])
-            ax.set_ylim([param1_vals[0], param1_vals[-1]])
+            # Lower triangle: 2D chi2 contours (filled)
+            else:
+                # Use param2 on x-axis, param1 on y-axis (lower triangle convention)
+                param2_vals = jnp.linspace(
+                    raw_chain[max_walker, max_step, j] - jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
+                    raw_chain[max_walker, max_step, j] + jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
+                    fixed_args['sample_pts']
+                )
+                param1_vals = jnp.linspace(
+                    raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
+                    raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
+                    fixed_args['sample_pts']
+                )
 
-plt.close(fig)
+                #Get normalized arrays
+                norm_param2_vals = jnp.linspace(
+                    - 1,
+                    + 1,
+                    fixed_args['sample_pts']
+                )
+                norm_param1_vals = jnp.linspace(
+                    - 1,
+                    + 1,
+                    fixed_args['sample_pts']
+                )
+
+                key1 = f'{param1}_{param2}'
+                key2 = f'{param2}_{param1}'
+
+                # Load chi2 data from file
+                chi2_grid = load_chi2_data(param1, param2, fixed_args['save_loc'])
+
+                A, B = np.meshgrid(param2_vals, param1_vals)  # (x=param2, y=param1)
+                norm_A, norm_B = np.meshgrid(norm_param2_vals, norm_param1_vals)  # (x=param2, y=param1)
+
+                # Define three nicely spaced contour levels (multiples of the delta threshold)
+                contour_levels = []
+                for lvl in lvls:
+                    lv = lvl * fixed_args['delta_chi2_thresh']
+                    contour_levels.append(lv)
+
+                # Filled contours
+                fill_levels = [0.0] + list(lvls)
+                fill_colors = plt.get_cmap('Greens')(jnp.linspace(0., 1, len(lvls)))  # light -> dark green
+                ax.contourf(A, B, chi2_grid, levels=fill_levels, colors=fill_colors, alpha=0.5, antialiased=True)
+
+                # Outline the three contours with black lines
+                cs = ax.contour(A, B, chi2_grid, levels=contour_levels, colors=['black']*len(contour_levels), linewidths=0.8)
+
+                # Also compute normalized contours for later geometry fitting (do not rely on plotted result)
+                norm_cs = ax.contour(norm_A, norm_B, chi2_grid, levels=contour_levels, colors=['none']*len(contour_levels), linewidths=0)
+
+                ax.axvline(raw_chain[max_walker, max_step, j], color='black', linestyle='--', lw=1)
+                ax.axhline(raw_chain[max_walker, max_step, i], color='black', linestyle='--', lw=1)
+
+                # Find largest valid contour fully within bounds using the computed contour objects
+                valid_contours = []
+
+                # Get axis bounds
+                x_bounds = (param2_vals[0], param2_vals[-1])
+                y_bounds = (param1_vals[0], param1_vals[-1])
+
+                for norm_contour_level, contour_level in zip(norm_cs.allsegs, cs.allsegs):
+                    for norm_segment, segment in zip(norm_contour_level, contour_level):
+                        if len(segment) < 15:
+                            continue
+                        x, y = segment[:, 0], segment[:, 1]
+
+                        # Check if entire segment lies within bounds
+                        if (jnp.all((x >= x_bounds[0]) & (x <= x_bounds[1])) and
+                            jnp.all((y >= y_bounds[0]) & (y <= y_bounds[1]))):
+                            valid_contours.append((segment, norm_segment))
+
+                # Select the longest valid contour
+                if valid_contours:
+                    selected, norm_selected = max(valid_contours, key=lambda seg_pair: len(seg_pair[0]))
+                else:
+                    # If no valid contour found, fall back to the longest available contour in cs
+                    all_segments = []
+                    for level_segs in cs.allsegs:
+                        for seg in level_segs:
+                            all_segments.append((seg, None))
+                    if len(all_segments) == 0:
+                        raise KeyError('Need bigger contours')
+                    selected, norm_selected = max(all_segments, key=lambda seg_pair: len(seg_pair[0]))
+
+                #Retrieving contours
+                contour_x, contour_y = selected[:, 0], selected[:, 1]
+                if norm_selected is None:
+                    # build a dummy normalized contour by scaling to unit stds if we don't have normalized seg
+                    norm_contour_x = (contour_x - raw_chain[max_walker, max_step, j]) / jnp.std(raw_chain[max_walker, fixed_args['nburn']:, j][good_steps_mask])
+                    norm_contour_y = (contour_y - raw_chain[max_walker, max_step, i]) / jnp.std(raw_chain[max_walker, fixed_args['nburn']:, i][good_steps_mask])
+                else:
+                    norm_contour_x, norm_contour_y = norm_selected[:, 0], norm_selected[:, 1]
+
+                #Fit the normalized contour to retrieve slope and correlation value
+                ##Fit ellipse
+                bestfit_norm_ellipse = fit_ellipse_conic(norm_contour_x, norm_contour_y)
+                ##Retrieve properties
+                ellipse_norm_params = ellipse_parameters_from_conic(bestfit_norm_ellipse)
+                ##Plot semi-major axis
+                norm_orig_a = ellipse_norm_params['semi_major']
+                norm_orig_b = ellipse_norm_params['semi_minor']
+                norm_xmid, norm_ymid = ellipse_norm_params['center']
+                norm_theta = ellipse_norm_params['angle_rad']
+                ##Swap axes if necessary
+                if norm_orig_a < norm_orig_b:
+                    norm_a = norm_orig_b
+                    norm_theta += jnp.pi/2
+                else:norm_a = norm_orig_a
+                ##Plot the slope
+                norm_x0, norm_x1 = norm_xmid - 1 * (norm_a*jnp.cos(norm_theta)), norm_xmid + 1 * (norm_a*jnp.cos(norm_theta))
+                norm_y0, norm_y1 = norm_ymid - 1 * (norm_a*jnp.sin(norm_theta)), norm_ymid + 1 * (norm_a*jnp.sin(norm_theta))
+                ##Getting correlation value
+                norm_slope = (norm_y1-norm_y0)/(norm_x1-norm_x0)
+                corr_value = jnp.abs( jnp.sin(2 * jnp.arctan(norm_slope)) )
+
+                if jnp.isnan(corr_value):
+                    # fallback: fit line to all points in largest contour
+                    largest_idx = 0
+                    largest_size = 0
+                    for seg_idx, seg in enumerate(cs.allsegs):
+                        if len(seg[0][:,0]) > largest_size:
+                            largest_size = len(seg[0][:,0])
+                            largest_idx = seg_idx
+
+                    x, y = cs.allsegs[largest_idx][0][:, 0], cs.allsegs[largest_idx][0][:, 1]
+                    slope, intercept = jnp.polyfit(x, y, 1)
+                    corr_value = jnp.abs(jnp.sin(2 * jnp.arctan(slope)))
+
+                #Populate correlation matrix
+                corr_matrix[i, j] = corr_value
+
+                if i == n_params - 1:
+                    ax.set_xlabel(fixed_args['labels'][j],fontsize=14)
+                    ax.tick_params(axis="x", labelsize=12, rotation=45)
+                else:
+                    ax.set_xticklabels([])
+                if j == 0:
+                    ax.set_ylabel(fixed_args['labels'][i],fontsize=14)
+                    ax.tick_params(axis="y", labelsize=12, rotation=45)
+                else:
+                    ax.set_yticklabels([])
+
+                #Force the limits of the plot
+                ax.set_xlim([param2_vals[0], param2_vals[-1]])
+                ax.set_ylim([param1_vals[0], param1_vals[-1]])
+
+    plt.close(fig)
+
+    corr_matrices.append(corr_matrix)
+
+#Mean and standard deviation of the correlation matrix across the 10 seeds
+corr_matrix = np.mean(corr_matrices, axis=0)
+corr_matrix_std = np.std(corr_matrices, axis=0)
 
 # Figure 3
 print('STEP 2: FIGURE 3')
 
-# Place correlation matrix on top and bottom triangle
+# Place correlation matrix (mean across seeds) on top and bottom triangle
 full_corr_matrix = (corr_matrix + corr_matrix.T)
 corr_df = pd.DataFrame(full_corr_matrix, index=fixed_args['labels'], columns=fixed_args['labels'])
-#Re-order the matrix
+
+# Place correlation std (across seeds) on top and bottom triangle the same way
+full_corr_matrix_std = (corr_matrix_std + corr_matrix_std.T)
+corr_df_std = pd.DataFrame(full_corr_matrix_std, index=fixed_args['labels'], columns=fixed_args['labels'])
+
+#Re-order the matrices
 desired_order_labels = [r'R$_p$/R$_{\star}$', 'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)', 'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'u$_1$', r'u$_2$', r'u$_3$']
 corr_df_reordered = corr_df.loc[desired_order_labels, desired_order_labels]
+corr_df_std_reordered = corr_df_std.loc[desired_order_labels, desired_order_labels]
 
 #% Make corrplot
 print('BUILD CORRELATION HEATMAP')
 plot_labels = [r'D', 'i',r'$\rho_{\star}$', r'P', r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'u$_1$', r'u$_2$', r'u$_3$']
 matrix = corr_df_reordered.values
+matrix_std = corr_df_std_reordered.values
 labels = plot_labels
 n = len(labels)
+
+def format_metric(val, decimals=2):
+    """Format decimal places"""
+    formatted = f"{val:.{decimals}f}"
+    while float(formatted) == 0 and val != 0:
+        formatted = f"{val:.{decimals+1}f}"
+    return formatted
 
 from matplotlib.patches import FancyBboxPatch
 import matplotlib.colors as mcolors
@@ -610,15 +634,24 @@ for i in range(n):
         color = cmap_diverging(corr_val)
 
         if i < j:
-            # Upper triangle: circle plot
+            # Upper triangle: circle plot, radius from the mean correlation across seeds
             circle = plt.Circle((j, i), radius=strength * max_radius, color=color)
             ax.add_patch(circle)
 
+            # Dashed circles at mean - std and mean + std to show the spread across seeds
+            std_val = matrix_std[i, j]
+            for r in (strength - std_val, strength + std_val):
+                if r > 0:
+                    err_circle = plt.Circle((j, i), radius=r * max_radius, fill=False,
+                                             edgecolor='black', linestyle='--', linewidth=1.0, alpha=0.7)
+                    ax.add_patch(err_circle)
+
         elif i > j:
-            # Lower triangle: heatmap square with annotation
+            # Lower triangle: heatmap square with annotation (mean and std across seeds)
+            std_val = matrix_std[i, j]
             rect = plt.Rectangle((j - 0.5, i - 0.5), 1, 1, facecolor=color, edgecolor='white')
             ax.add_patch(rect)
-            ax.text(j, i, f"{corr_val:.2f}", ha='center', va='center', color='black', fontsize=20,
+            ax.text(j, i, f"{format_metric(corr_val)}\n±{format_metric(std_val)}", ha='center', va='center', color='black', fontsize=16,
                  path_effects=[pe.withStroke(linewidth=2, foreground='white')])
 
 # Group-highlight boxes: transparent fill, thick outline, one color per group

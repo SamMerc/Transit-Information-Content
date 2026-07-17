@@ -67,15 +67,15 @@ init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-# Overall LDCs : c1 = 0.5586 c2 = -0.0382 c3 = -0.0852 c4 = 0.0336
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336)
+# Global LDCs : c1 = 0.6245 c2 = -0.1898 c3 = 0.1473 c4 = -0.0634           
+init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634)
 
 #Updating initial state dictionary
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
 #Get starting points for the LD coefficients
-init_LD_prop = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336, order=3)
+init_LD_prop = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634, order=3)
 
 #%%%% Calculate transit duration
 # Convert angles to radians
@@ -184,9 +184,9 @@ else:
     for i in range(fixed_args['ndim']):
         fixed_args['pos'][var_param_list[i]] = jnp.array(mod_prop[var_param_list[i]]['guess'])
 
-#%% Model scatter and seed to use for the plot
-model_scatter =  16.68100537200059 
-seed = 70
+#%% Model scatter and seeds to use for the plot
+model_scatter =  16.68100537200059
+seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 
 ##############################
 ##### Relevant functions #####
@@ -387,67 +387,147 @@ check_dir(raw_save_dir)
 scatter_dir = check_dir(raw_save_dir+f'{jnp.floor(model_scatter)}ppm/')
 print(f"MODEL SCATTER = {model_scatter:.2f}")
 
-#Check seed directory exists
-fixed_args['save_loc'] = check_dir(scatter_dir+f'Seed{seed}/')
-print(f"SEED = {seed}")
+for seed in seeds:
+    #Check seed directory exists
+    fixed_args['save_loc'] = check_dir(scatter_dir+f'Seed{seed}/')
+    print(f"SEED = {seed}")
 
-#############################
-####### Generate data #######
-#############################
-print('GENERATING DATA')
+    #############################
+    ####### Generate data #######
+    #############################
+    print('GENERATING DATA')
 
-#Pure data
-true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
+    #Pure data
+    true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
 
-#Build noisy data
-std = model_scatter * 1e-6
-noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
-noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
+    #Build noisy data
+    std = model_scatter * 1e-6
+    noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
+    noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
 
-# evaluate this likelihood
-print(f"initial chi2: {jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 )}, initial chi2: {-0.5* ( jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 ) + jnp.sum(jnp.log(2*jnp.pi*noisy_std**2)) ) }")
+    # evaluate this likelihood
+    print(f"initial chi2: {jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 )}, initial chi2: {-0.5* ( jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 ) + jnp.sum(jnp.log(2*jnp.pi*noisy_std**2)) ) }")
 
-#Plotting
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=[10, 6], sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-ax1.errorbar(init_state_dic['times'], noisy_LC, yerr=noisy_std, fmt='.', zorder=1)
-ax1.plot(init_state_dic['times'], true_lc, color='red', zorder=2)
-ax2.errorbar(init_state_dic['times'], 1e6*(noisy_LC - true_lc), yerr=noisy_std, fmt='r.', zorder=1)
-for ax in [ax1, ax2]:
-    ax.axvline(-0.5 * T_dur, color='black', linestyle='dashed')
-    ax.axvline(0.5 * T_dur, color='black', linestyle='dashed')
-    ax.axvline(-1.5 * T_dur, color='black', linestyle='dotted')
-    ax.axvline(1.5 * T_dur, color='black', linestyle='dotted')
-ax1.set_title('Model LC with %.f ppm scatter'%model_scatter)
-ax2.set_xlabel('Time (BJD)')
-ax1.set_ylabel('Flux')
-ax2.set_ylabel('Difference (ppm)')
-fig.tight_layout()
-plt.savefig(fixed_args['save_loc']+'init_guess.pdf')
-plt.close()
+    #Plotting
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=[10, 6], sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+    ax1.errorbar(init_state_dic['times'], noisy_LC, yerr=noisy_std, fmt='.', zorder=1)
+    ax1.plot(init_state_dic['times'], true_lc, color='red', zorder=2)
+    ax2.errorbar(init_state_dic['times'], 1e6*(noisy_LC - true_lc), yerr=noisy_std, fmt='r.', zorder=1)
+    for ax in [ax1, ax2]:
+        ax.axvline(-0.5 * T_dur, color='black', linestyle='dashed')
+        ax.axvline(0.5 * T_dur, color='black', linestyle='dashed')
+        ax.axvline(-1.5 * T_dur, color='black', linestyle='dotted')
+        ax.axvline(1.5 * T_dur, color='black', linestyle='dotted')
+    ax1.set_title('Model LC with %.f ppm scatter'%model_scatter)
+    ax2.set_xlabel('Time (BJD)')
+    ax1.set_ylabel('Flux')
+    ax2.set_ylabel('Difference (ppm)')
+    fig.tight_layout()
+    plt.savefig(fixed_args['save_loc']+'init_guess.pdf')
+    plt.close()
 
-#########################
-##### Emcee fitting #####
-#########################
+    #########################
+    ##### Emcee fitting #####
+    #########################
 
-# Running the MCMC
-if fixed_args['run_mode']=='use':
-    print(f"Running MCMC") 
+    # Running the MCMC
+    if fixed_args['run_mode']=='use':
+        print(f"Running MCMC") 
 
-    if fixed_args['kernel']=='emcee':
-        st0 = time.time()
-        emceejax_key1, emceejax_key2 = jax.random.split(jaxnoise_key, 2)
+        if fixed_args['kernel']=='emcee':
+            st0 = time.time()
+            emceejax_key1, emceejax_key2 = jax.random.split(jaxnoise_key, 2)
 
-        sampler = emcee_jax.EnsembleSampler(emcee_log_probability, log_prob_args=(init_state_dic['times'],noisy_LC,noisy_std))
-        state = sampler.init(emceejax_key1, fixed_args['pos'])
-        if fixed_args['nthreads']>1:
-            trace = sampler.sample_parallel(emceejax_key2, state, num_steps=fixed_args['nsteps'], progress=True)
+            sampler = emcee_jax.EnsembleSampler(emcee_log_probability, log_prob_args=(init_state_dic['times'],noisy_LC,noisy_std))
+            state = sampler.init(emceejax_key1, fixed_args['pos'])
+            if fixed_args['nthreads']>1:
+                trace = sampler.sample_parallel(emceejax_key2, state, num_steps=fixed_args['nsteps'], progress=True)
+            else:
+                trace = sampler.sample(emceejax_key2, state, num_steps=fixed_args['nsteps'], progress=True)
+            raw_chain = np.asarray(trace.samples.coordinates).reshape(fixed_args['nwalkers'],fixed_args['nsteps'],fixed_args['ndim'])  # shape (walkers, nsteps, nparams)
+            logprob = np.asarray(trace.samples.log_probability.T) # shape (nwalkers, nsteps)
+            chi2_chain = np.asarray(trace.samples.deterministics['step_chi2'].T) # shape (nwalkers, nsteps)
+
+            #Convert to ArviZ data structure
+            inf_data = az.from_dict(
+            posterior={
+                p: raw_chain[:, fixed_args['nburn']:, i]
+                for i, p in enumerate(fixed_args['var_param_list'])
+            },
+            log_likelihood={"log_like": logprob},
+            )
+
         else:
-            trace = sampler.sample(emceejax_key2, state, num_steps=fixed_args['nsteps'], progress=True)
-        raw_chain = np.asarray(trace.samples.coordinates).reshape(fixed_args['nwalkers'],fixed_args['nsteps'],fixed_args['ndim'])  # shape (walkers, nsteps, nparams)
-        logprob = np.asarray(trace.samples.log_probability.T) # shape (nwalkers, nsteps)
-        chi2_chain = np.asarray(trace.samples.deterministics['step_chi2'].T) # shape (nwalkers, nsteps)
+            st0 = time.time()
+            #Define the kernel
+            if fixed_args['kernel'] == 'NUTS':
+                kernel = NUTS(fit_func_numpyro, 
+                                dense_mass=fixed_args['dense_matrix'],
+                                regularize_mass_matrix=fixed_args['regularize_mass_matrix'],
+                                adapt_step_size=fixed_args['adapt_step_size'],
+                                init_strategy=init_to_value(values=fixed_args['pos']))
+            elif fixed_args['kernel'] == 'HMC':
+                kernel = HMC(fit_func_numpyro, 
+                                dense_mass=fixed_args['dense_matrix'],
+                                regularize_mass_matrix=fixed_args['regularize_mass_matrix'],
+                                adapt_step_size=fixed_args['adapt_step_size'],
+                                init_strategy=init_to_value(values=fixed_args['pos']))
+            else:print('Invalid kernel specified')
+            
+            # Define the MCMC sampler
+            mcmc = MCMC(kernel, num_warmup=fixed_args['nburn'], num_samples=fixed_args['nsteps']-fixed_args['nburn'], num_chains=fixed_args['nwalkers'], progress_bar=True)
+            
+            #Run the MCMC
+            mcmc.run(random.PRNGKey(0), init_state_dic['times'], noisy_LC, noisy_std)
 
-        #Convert to ArviZ data structure
+            #Convert to ArviZ data structure
+            inf_data = az.from_numpyro(mcmc)
+            #Remove unneeded variables
+            inf_data.posterior = inf_data.posterior.drop_vars(
+                ["step_chi2","logprob"]
+            )
+
+            #Walkers chain
+            #     - pyro_chains is of shape (nwalkers, nsteps, n_free)
+            #     - parameters have the same order as in 'initial_distribution' and 'var_param_list'
+            pyro_chains = mcmc.get_samples(group_by_chain=True)
+            
+            # Collect parameter arrays in consistent order
+            raw_chains = []
+            for p in fixed_args['var_param_list']:
+                raw_chains.append(pyro_chains[p][..., None])  # add trailing dim for stacking
+            # Stack into shape (nwalkers, nprodsteps, nparams)
+            raw_chain = jnp.concatenate(raw_chains, axis=-1)
+
+            #%Retrieve step-by-step chi2
+            chi2_chain = pyro_chains['step_chi2']
+
+            #%Retrieve log-probability
+            logprob =  pyro_chains['logprob']
+
+            fixed_args['nsteps'] = fixed_args['nsteps'] - fixed_args['nburn']
+            fixed_args['nburn'] = 0  
+
+
+        #%% Storing the chains
+        output_file = fixed_args['save_loc']+"chains.npy"
+        jnp.save(output_file, raw_chain)
+
+        #%% Storing the log probability
+        output_file = fixed_args['save_loc']+"logprob.npy"
+        jnp.save(output_file, logprob)
+
+        #%% Storing the chi2 values
+        output_file = fixed_args['save_loc']+"chi2_chain.npy"
+        jnp.save(output_file, chi2_chain) 
+
+    elif fixed_args['run_mode']=='reuse':
+        print(f'Retrieving MCMC')
+        raw_chain = jnp.load(fixed_args['save_loc']+"chains.npy")
+        logprob = jnp.load(fixed_args['save_loc']+"logprob.npy")
+        chi2_chain = jnp.load(fixed_args['save_loc']+"chi2_chain.npy", allow_pickle=True)
+
+        # Convert to ArviZ data structure
         inf_data = az.from_dict(
         posterior={
             p: raw_chain[:, fixed_args['nburn']:, i]
@@ -457,218 +537,139 @@ if fixed_args['run_mode']=='use':
         )
 
     else:
-        st0 = time.time()
-        #Define the kernel
-        if fixed_args['kernel'] == 'NUTS':
-            kernel = NUTS(fit_func_numpyro, 
-                            dense_mass=fixed_args['dense_matrix'],
-                            regularize_mass_matrix=fixed_args['regularize_mass_matrix'],
-                            adapt_step_size=fixed_args['adapt_step_size'],
-                            init_strategy=init_to_value(values=fixed_args['pos']))
-        elif fixed_args['kernel'] == 'HMC':
-            kernel = HMC(fit_func_numpyro, 
-                            dense_mass=fixed_args['dense_matrix'],
-                            regularize_mass_matrix=fixed_args['regularize_mass_matrix'],
-                            adapt_step_size=fixed_args['adapt_step_size'],
-                            init_strategy=init_to_value(values=fixed_args['pos']))
-        else:print('Invalid kernel specified')
-        
-        # Define the MCMC sampler
-        mcmc = MCMC(kernel, num_warmup=fixed_args['nburn'], num_samples=fixed_args['nsteps']-fixed_args['nburn'], num_chains=fixed_args['nwalkers'], progress_bar=True)
-        
-        #Run the MCMC
-        mcmc.run(random.PRNGKey(0), init_state_dic['times'], noisy_LC, noisy_std)
+        raise KeyError('Invalid run mode')
 
-        #Convert to ArviZ data structure
-        inf_data = az.from_numpyro(mcmc)
-        #Remove unneeded variables
-        inf_data.posterior = inf_data.posterior.drop_vars(
-            ["step_chi2","logprob"]
-        )
+    ##################
+    #### Plotting ####
+    ##################
+    if fixed_args['run_mode']=='use':
+        elapsed = time.time() - st0
+        print(f'MCMC took {elapsed:.2f} seconds / {elapsed/60.:.2f} minutes / {elapsed/3600.:.2f} hours.')
 
-        #Walkers chain
-        #     - pyro_chains is of shape (nwalkers, nsteps, n_free)
-        #     - parameters have the same order as in 'initial_distribution' and 'var_param_list'
-        pyro_chains = mcmc.get_samples(group_by_chain=True)
-        
-        # Collect parameter arrays in consistent order
-        raw_chains = []
-        for p in fixed_args['var_param_list']:
-            raw_chains.append(pyro_chains[p][..., None])  # add trailing dim for stacking
-        # Stack into shape (nwalkers, nprodsteps, nparams)
-        raw_chain = jnp.concatenate(raw_chains, axis=-1)
+    print('PLOTTING')
 
-        #%Retrieve step-by-step chi2
-        chi2_chain = pyro_chains['step_chi2']
+    # 0. Plotting the chi2 chains
+    print('STEP 0: CHI2 CHAINS')
+    plt.figure(figsize=[12, 6])
+    for iwalk in range(fixed_args['nwalkers']):
+        plt.loglog(jnp.arange(fixed_args['nburn']), chi2_chain[iwalk, :fixed_args['nburn']], color='red', alpha=0.5, lw=0.7, zorder=1)
+        plt.loglog(jnp.arange(fixed_args['nburn'], fixed_args['nsteps']), chi2_chain[iwalk, fixed_args['nburn']:], color='blue', alpha=0.5, lw=0.7, zorder=1)
+    plt.xlabel('Steps')
+    plt.ylabel('Chi-squared')
+    plt.savefig(fixed_args['save_loc']+'chi2.pdf')
+    plt.close()
 
-        #%Retrieve log-probability
-        logprob =  pyro_chains['logprob']
+    # 1. Plotting the log probability
+    print('STEP 1: LOG PROB')
+    plt.figure(figsize=[12, 6])
+    for w in range(fixed_args['nwalkers']):
+        plt.loglog(jnp.arange(fixed_args['nburn']), -logprob[w, :fixed_args['nburn']], color='red', alpha=0.5, lw=0.7, zorder=1)
+        plt.loglog(jnp.arange(fixed_args['nburn'], fixed_args['nsteps']), -logprob[w, fixed_args['nburn']:], color='blue', alpha=0.5, lw=0.7, zorder=1)
+    plt.ylabel('Log-probability')
+    plt.xlabel("Step")
+    plt.savefig(fixed_args['save_loc']+'logprob.pdf')
+    plt.close()
 
-        fixed_args['nsteps'] = fixed_args['nsteps'] - fixed_args['nburn']
-        fixed_args['nburn'] = 0  
-
-
-    #%% Storing the chains
-    output_file = fixed_args['save_loc']+"chains.npy"
-    jnp.save(output_file, raw_chain)
-
-    #%% Storing the log probability
-    output_file = fixed_args['save_loc']+"logprob.npy"
-    jnp.save(output_file, logprob)
-
-    #%% Storing the chi2 values
-    output_file = fixed_args['save_loc']+"chi2_chain.npy"
-    jnp.save(output_file, chi2_chain) 
-
-elif fixed_args['run_mode']=='reuse':
-    print(f'Retrieving MCMC')
-    raw_chain = jnp.load(fixed_args['save_loc']+"chains.npy")
-    logprob = jnp.load(fixed_args['save_loc']+"logprob.npy")
-    chi2_chain = jnp.load(fixed_args['save_loc']+"chi2_chain.npy", allow_pickle=True)
-
-    # Convert to ArviZ data structure
-    inf_data = az.from_dict(
-    posterior={
-        p: raw_chain[:, fixed_args['nburn']:, i]
-        for i, p in enumerate(fixed_args['var_param_list'])
-    },
-    log_likelihood={"log_like": logprob},
+    # 2. Plot the trace of each parameter's chains
+    print('STEP 2: TRACE')
+    _ = az.plot_trace(
+        inf_data,
+        var_names=fixed_args['var_param_list'],
+        backend_kwargs={"constrained_layout": True},
     )
+    plt.savefig(fixed_args['save_loc']+'trace.pdf')
+    plt.close()
 
-else:
-    raise KeyError('Invalid run mode')
+    # 3. Plot the cornerplot of the chains
+    print('STEP 3: CORNER')
+    #% Build truth dictionary
+    truth_dic={}
+    for param,parlabel in zip(fixed_args['var_param_list'],fixed_args['labels']): 
+        if ('LD' in param):
+            truth_dic[parlabel] = init_state_dic[param]
+        elif param=='sqrtecosw':
+            truth_dic[parlabel] = jnp.sqrt(init_state_dic['e'])*jnp.cos(init_state_dic['omega'])
+        elif param=='sqrtesinw':
+            truth_dic[parlabel] = jnp.sqrt(init_state_dic['e'])*jnp.sin(init_state_dic['omega'])
+        elif param=='cosi':
+            truth_dic[parlabel] = jnp.cos(init_state_dic['i'])
+        else:
+            truth_dic[parlabel] = init_state_dic[param]
+    truth_list = [truth_dic.get(label, None) for label in fixed_args['labels']]
 
-##################
-#### Plotting ####
-##################
-if fixed_args['run_mode']=='use':
-    elapsed = time.time() - st0
-    print(f'MCMC took {elapsed:.2f} seconds / {elapsed/60.:.2f} minutes / {elapsed/3600.:.2f} hours.')
+    #% Plot
+    fig1 = corner.corner(
+        inf_data,
+        labels=fixed_args['labels'],
+        show_titles=True,
+        title_kwargs={"fontsize": 10},
+        label_kwargs={"fontsize": 10},
+        title_fmt=".4f",
+        truths = truth_list,
+    )
+    #Find bestfit parameters
+    max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
+    best_fit_params = raw_chain[max_walker, max_step, :]
 
-print('PLOTTING')
+    # Flatten the chain
+    medians = jnp.median(raw_chain.reshape(-1, raw_chain.shape[-1]), axis=0)
 
-# 0. Plotting the chi2 chains
-print('STEP 0: CHI2 CHAINS')
-plt.figure(figsize=[12, 6])
-for iwalk in range(fixed_args['nwalkers']):
-    plt.loglog(jnp.arange(fixed_args['nburn']), chi2_chain[iwalk, :fixed_args['nburn']], color='red', alpha=0.5, lw=0.7, zorder=1)
-    plt.loglog(jnp.arange(fixed_args['nburn'], fixed_args['nsteps']), chi2_chain[iwalk, fixed_args['nburn']:], color='blue', alpha=0.5, lw=0.7, zorder=1)
-plt.xlabel('Steps')
-plt.ylabel('Chi-squared')
-plt.savefig(fixed_args['save_loc']+'chi2.pdf')
-plt.close()
+    # Dynamically determine how many parameters were plotted
+    flat_chain = raw_chain.reshape(-1, raw_chain.shape[-1])
+    nparams = flat_chain.shape[1]
+    axes = np.array(fig1.axes).reshape((nparams, nparams))
 
-# 1. Plotting the log probability
-print('STEP 1: LOG PROB')
-plt.figure(figsize=[12, 6])
-for w in range(fixed_args['nwalkers']):
-    plt.loglog(jnp.arange(fixed_args['nburn']), -logprob[w, :fixed_args['nburn']], color='red', alpha=0.5, lw=0.7, zorder=1)
-    plt.loglog(jnp.arange(fixed_args['nburn'], fixed_args['nsteps']), -logprob[w, fixed_args['nburn']:], color='blue', alpha=0.5, lw=0.7, zorder=1)
-plt.ylabel('Log-probability')
-plt.xlabel("Step")
-plt.savefig(fixed_args['save_loc']+'logprob.pdf')
-plt.close()
+    # Add median lines
+    for i in range(nparams):
+        axes[i, i].axvline(medians[i], color='red', linestyle='--')
+        axes[i, i].axvline(best_fit_params[i], color='yellow', linestyle='--')
+        for j in range(i):
+            axes[i, j].axvline(medians[j], color='red', linestyle='--')
+            axes[i, j].axhline(medians[i], color='red', linestyle='--')
+            axes[i, j].scatter(medians[j], medians[i], color='red', s=20, zorder=10)
 
-# 2. Plot the trace of each parameter's chains
-print('STEP 2: TRACE')
-_ = az.plot_trace(
-    inf_data,
-    var_names=fixed_args['var_param_list'],
-    backend_kwargs={"constrained_layout": True},
-)
-plt.savefig(fixed_args['save_loc']+'trace.pdf')
-plt.close()
+            axes[i, j].axvline(best_fit_params[j], color='yellow', linestyle='--')
+            axes[i, j].axhline(best_fit_params[i], color='yellow', linestyle='--')
+            axes[i, j].scatter(best_fit_params[j], best_fit_params[i], color='yellow', s=20, zorder=10)
 
-# 3. Plot the cornerplot of the chains
-print('STEP 3: CORNER')
-#% Build truth dictionary
-truth_dic={}
-for param,parlabel in zip(fixed_args['var_param_list'],fixed_args['labels']): 
-    if ('LD' in param):
-        truth_dic[parlabel] = init_state_dic[param]
-    elif param=='sqrtecosw':
-        truth_dic[parlabel] = jnp.sqrt(init_state_dic['e'])*jnp.cos(init_state_dic['omega'])
-    elif param=='sqrtesinw':
-        truth_dic[parlabel] = jnp.sqrt(init_state_dic['e'])*jnp.sin(init_state_dic['omega'])
-    elif param=='cosi':
-        truth_dic[parlabel] = jnp.cos(init_state_dic['i'])
-    else:
-        truth_dic[parlabel] = init_state_dic[param]
-truth_list = [truth_dic.get(label, None) for label in fixed_args['labels']]
+    plt.savefig(fixed_args['save_loc']+'corner.pdf')
+    plt.close()
 
-#% Plot
-fig1 = corner.corner(
-    inf_data,
-    labels=fixed_args['labels'],
-    show_titles=True,
-    title_kwargs={"fontsize": 10},
-    label_kwargs={"fontsize": 10},
-    title_fmt=".4f",
-    truths = truth_list,
-)
-#Find bestfit parameters
-max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
-best_fit_params = raw_chain[max_walker, max_step, :]
+    # 4. Plot the best-fit and median models against the data
+    print('STEP 4: BESTFIT LC')
+    # Compute median parameter values
+    median_params = {}
+    for i, param in enumerate(fixed_args['var_param_list']):
+        median_params[param] = jnp.median(raw_chain[:, fixed_args['nburn']:, i])
+    for idx, param in enumerate(fixed_args['fix_param_list']):
+        median_params[param] = fixed_args['fix_param_val'][idx]
 
-# Flatten the chain
-medians = jnp.median(raw_chain.reshape(-1, raw_chain.shape[-1]), axis=0)
+    # Compute median model
+    median_lc = create_jaxoplanet_model(init_state_dic['times'], median_params)
+    median_RMS = jnp.sqrt(jnp.average((noisy_LC - median_lc)**2))
 
-# Dynamically determine how many parameters were plotted
-flat_chain = raw_chain.reshape(-1, raw_chain.shape[-1])
-nparams = flat_chain.shape[1]
-axes = np.array(fig1.axes).reshape((nparams, nparams))
+    # Get highest log probability parameters
+    best_params = {}
+    for i, param in enumerate(fixed_args['var_param_list']):
+        best_params[param] = raw_chain[max_walker, max_step, i]
+    for idx, param in enumerate(fixed_args['fix_param_list']):
+        best_params[param] = fixed_args['fix_param_val'][idx]
 
-# Add median lines
-for i in range(nparams):
-    axes[i, i].axvline(medians[i], color='red', linestyle='--')
-    axes[i, i].axvline(best_fit_params[i], color='yellow', linestyle='--')
-    for j in range(i):
-        axes[i, j].axvline(medians[j], color='red', linestyle='--')
-        axes[i, j].axhline(medians[i], color='red', linestyle='--')
-        axes[i, j].scatter(medians[j], medians[i], color='red', s=20, zorder=10)
+    # Compute bestfit model
+    bestfit_lc = create_jaxoplanet_model(init_state_dic['times'], best_params)
+    bestfit_RMS = jnp.sqrt(jnp.average((noisy_LC - bestfit_lc)**2))
 
-        axes[i, j].axvline(best_fit_params[j], color='yellow', linestyle='--')
-        axes[i, j].axhline(best_fit_params[i], color='yellow', linestyle='--')
-        axes[i, j].scatter(best_fit_params[j], best_fit_params[i], color='yellow', s=20, zorder=10)
-
-plt.savefig(fixed_args['save_loc']+'corner.pdf')
-plt.close()
-
-# 4. Plot the best-fit and median models against the data
-print('STEP 4: BESTFIT LC')
-# Compute median parameter values
-median_params = {}
-for i, param in enumerate(fixed_args['var_param_list']):
-    median_params[param] = jnp.median(raw_chain[:, fixed_args['nburn']:, i])
-for idx, param in enumerate(fixed_args['fix_param_list']):
-    median_params[param] = fixed_args['fix_param_val'][idx]
-
-# Compute median model
-median_lc = create_jaxoplanet_model(init_state_dic['times'], median_params)
-median_RMS = jnp.sqrt(jnp.average((noisy_LC - median_lc)**2))
-
-# Get highest log probability parameters
-best_params = {}
-for i, param in enumerate(fixed_args['var_param_list']):
-    best_params[param] = raw_chain[max_walker, max_step, i]
-for idx, param in enumerate(fixed_args['fix_param_list']):
-    best_params[param] = fixed_args['fix_param_val'][idx]
-
-# Compute bestfit model
-bestfit_lc = create_jaxoplanet_model(init_state_dic['times'], best_params)
-bestfit_RMS = jnp.sqrt(jnp.average((noisy_LC - bestfit_lc)**2))
-
-fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios':[3,1]}, figsize=(12, 6))
-ax1.errorbar(init_state_dic['times'], noisy_LC, yerr=noisy_std, fmt='.', label='Data', color='0.7')
-ax1.plot(init_state_dic['times'], median_lc, color='orange', label='Median model')
-ax1.plot(init_state_dic['times'], bestfit_lc, color='blue', label='Best-fit model')
-ax2.errorbar(init_state_dic['times'], 1e6*(median_lc - noisy_LC), yerr=noisy_std, fmt='.', color='orange', label=f'RMS = {1e6*median_RMS:.0f} ppm')
-ax2.errorbar(init_state_dic['times'], 1e6*(bestfit_lc - noisy_LC), yerr=noisy_std, fmt='.', color='blue', label=f'RMS = {1e6*bestfit_RMS:.0f} ppm')
-ax2.set_xlabel("Time [days]")
-ax1.set_ylabel("Relative flux")
-ax2.set_ylabel("Residuals (ppm)")
-ax1.legend()
-ax2.legend()
-plt.tight_layout()
-plt.savefig(fixed_args['save_loc']+'bestfit.pdf')
-plt.close()
+    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios':[3,1]}, figsize=(12, 6))
+    ax1.errorbar(init_state_dic['times'], noisy_LC, yerr=noisy_std, fmt='.', label='Data', color='0.7')
+    ax1.plot(init_state_dic['times'], median_lc, color='orange', label='Median model')
+    ax1.plot(init_state_dic['times'], bestfit_lc, color='blue', label='Best-fit model')
+    ax2.errorbar(init_state_dic['times'], 1e6*(median_lc - noisy_LC), yerr=noisy_std, fmt='.', color='orange', label=f'RMS = {1e6*median_RMS:.0f} ppm')
+    ax2.errorbar(init_state_dic['times'], 1e6*(bestfit_lc - noisy_LC), yerr=noisy_std, fmt='.', color='blue', label=f'RMS = {1e6*bestfit_RMS:.0f} ppm')
+    ax2.set_xlabel("Time [days]")
+    ax1.set_ylabel("Relative flux")
+    ax2.set_ylabel("Residuals (ppm)")
+    ax1.legend()
+    ax2.legend()
+    plt.tight_layout()
+    plt.savefig(fixed_args['save_loc']+'bestfit.pdf')
+    plt.close()
