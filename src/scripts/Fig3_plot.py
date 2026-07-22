@@ -14,6 +14,7 @@
 ######################################
 ########## Import libraries ##########
 ######################################
+from jax import jit
 import jax
 print(f"JAX devices: {jax.devices()}")
 print(f"Default backend: {jax.default_backend()}")
@@ -64,7 +65,6 @@ for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
 init_LD_prop = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634, order=3)
 
 #%%%% Calculate transit duration
-# Convert angles to radians
 # Impact parameter (eccentricity-corrected)
 b = (
     (init_state_dic['a'] * jnp.cos(init_state_dic['i'])) / R_star
@@ -92,10 +92,17 @@ exposure_time = 5                                                       #seconds
 num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number of points
 init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
+#Number of in-transit points, used for the amplification factor calculation
+num_IT_pts = jnp.sum(
+    (init_state_dic['times'] > init_state_dic['t0'] - T_dur / 2) &
+    (init_state_dic['times'] < init_state_dic['t0'] + T_dur / 2)
+)
+
 
 #%% Input and outputs directories
 input_dir = str(paths.data / "Fig2_Storage") + "/"
 output_dir = str(paths.data / "Fig3_Storage") + "/"
+prerun_dir = str(paths.data / "Fig3_prerun_Storage") + "/"
 
 #%% Model parameters
 mod_prop = {
@@ -121,6 +128,9 @@ for key in mod_prop:
 fixed_args={}
 fixed_args['var_param_list']=var_param_list
 fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)',r'u$_1$', r'u$_2$',r'u$_3$',r'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)']
+
+#% Parameters for which a "fixed" MCMC (Fig3_prerun.py output) exists - everything varying except 'r'
+params_to_fix = [p for p in var_param_list if p != 'r']
 
 #% Define number of points to sample the parameter space with
 fixed_args['sample_pts'] = 100
@@ -325,6 +335,14 @@ def ellipse_parameters_from_conic(p):
     }
 
 
+@jit
+def compute_amplification_factor_jax(r_chain_flat, bestfit_r, model_scatter, num_IT_pts):
+    std_r              = jnp.std(r_chain_flat)
+    bestfit_r_error    = 2 * std_r * bestfit_r
+    scatter_in_bin     = (model_scatter * 1e-6) / jnp.sqrt(num_IT_pts)
+    return bestfit_r_error / scatter_in_bin
+
+
 #############################################
 ################ Running code ###############
 #############################################
@@ -360,6 +378,11 @@ n_params = len(fixed_args['var_param_list'])
 #Collecting the per-seed correlation matrices so we can compute their mean and std across seeds
 corr_matrices = []
 
+#Collecting the per-seed amplification factors (Base + one entry per fixed parameter)
+amp_factor_data = {'Base': []}
+for param in params_to_fix:
+    amp_factor_data[param] = []
+
 #Loop over each of the 10 MCMC runs (different noise seeds)
 for seed in seeds:
     print(f"SEED = {seed}")
@@ -370,7 +393,23 @@ for seed in seeds:
     print(f'Retrieving MCMC')
     raw_chain = jnp.load(seed_dir+"chains.npy")
     logprob = jnp.load(seed_dir+"logprob.npy")
-    _, _, _, _, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
+    _, _, base_r_chain_post_burnin, base_bestfit_r, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
+
+    #Amplification factor for the base run (all parameters free)
+    print('AMPLIFICATION FACTOR: Base')
+    amp_factor_data['Base'].append(float(compute_amplification_factor_jax(
+        jnp.array(base_r_chain_post_burnin.flatten()), base_bestfit_r, model_scatter, num_IT_pts
+    )))
+
+    #Amplification factor for each "fixed parameter" MCMC (produced by Fig3_prerun.py)
+    for param in params_to_fix:
+        print(f'AMPLIFICATION FACTOR: fix_{param}')
+        _, _, fix_r_chain_post_burnin, fix_bestfit_r, _, _, _, _, _ = load_result(
+            (f"{prerun_dir}fix_{param}", model_scatter, seed, True)
+        )
+        amp_factor_data[param].append(float(compute_amplification_factor_jax(
+            jnp.array(fix_r_chain_post_burnin.flatten()), fix_bestfit_r, model_scatter, num_IT_pts
+        )))
 
     #Finding the index of max log-probability
     max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
@@ -603,10 +642,15 @@ from matplotlib.patches import FancyBboxPatch
 import matplotlib.colors as mcolors
 import matplotlib.gridspec as gridspec
 
-FIG_W, FIG_H = 32, 14
+# TOP_H/BOTTOM_H are in inches: TOP_H hosts the (unchanged) correlation matrix + node
+# diagram, BOTTOM_H is the new amplification-factor panel added below it.
+FIG_W, TOP_H, BOTTOM_H = 32, 14, 6
+FIG_H = TOP_H + BOTTOM_H
 fig = plt.figure(figsize=(FIG_W, FIG_H))
 gs = gridspec.GridSpec(1, 1, figure=fig,
-                       left=0.04, right=0.54, bottom=0.07, top=0.97)
+                       left=0.04, right=0.54,
+                       bottom=(BOTTOM_H + 0.07 * TOP_H) / FIG_H,
+                       top=(BOTTOM_H + 0.97 * TOP_H) / FIG_H)
 ax = fig.add_subplot(gs[0])
 # ax_diag is created AFTER the matrix is drawn (see below) so it
 # renders on top. Full-figure coverage + transparent background mean it
@@ -679,17 +723,18 @@ cbar.set_label('Correlation', fontsize=18)
 cbar.ax.tick_params(labelsize=18)
 
 # -----------------------------------------------------------------------
-# Node diagram – full-figure overlay added AFTER ax so it renders on top.
-# xlim=[0, FIG_W] / ylim=[0, FIG_H] match the figure's inch dimensions,
-# so 1 data unit = 1 physical inch and plt.Circle appears perfectly round
-# without needing set_aspect('equal').  Transparent background ensures ax
-# content shows through wherever the diagram does not draw anything.
+# Node diagram – overlay covering only the top (TOP_H-inch) block, added
+# AFTER ax so it renders on top. xlim=[0, FIG_W] / ylim=[0, TOP_H] match
+# that block's inch dimensions, so 1 data unit = 1 physical inch and
+# plt.Circle appears perfectly round without needing set_aspect('equal').
+# Transparent background ensures ax content shows through wherever the
+# diagram does not draw anything.
 # -----------------------------------------------------------------------
-ax_diag = fig.add_axes([0, 0, 1, 1])   # covers the full figure
+ax_diag = fig.add_axes([0, BOTTOM_H / FIG_H, 1, TOP_H / FIG_H])   # covers only the top block
 ax_diag.patch.set_visible(False)
 ax_diag.axis('off')
 ax_diag.set_xlim(0, FIG_W)
-ax_diag.set_ylim(0, FIG_H)
+ax_diag.set_ylim(0, TOP_H)
 
 col_sys  = '#e26952'
 col_ld   = '#f7a789'
@@ -788,11 +833,50 @@ for lx in ld_xs[1:]:      # √ecos(ω) → u2, u3
 for lx in ld_xs:          # i → u1, u2, u3
     ax_diag.plot([sys_cx, lx], [i_y, ld_cy], color=line_col, lw=3.5, zorder=1)
 
+###############################################
+##### Amplification factor (bottom) panel #####
+###############################################
+print('BUILD AMPLIFICATION FACTOR PANEL')
+
+# Computed above, per seed, from the base MCMC (Fig2_Storage) and the fix_{param}
+# MCMCs (Fig3_prerun_Storage): {'Base': array over seeds, param: array over seeds, ...}
+amp_factor_data = {key: np.array(vals) for key, vals in amp_factor_data.items()}
+
+label_by_param = dict(zip(fixed_args['var_param_list'], fixed_args['labels']))
+amp_categories  = ['Base'] + [p for p in fixed_args['var_param_list'] if p != 'r']
+amp_tick_labels = ['Base'] + [label_by_param[p] for p in amp_categories[1:]]
+
+amp_ax = fig.add_axes([0.06, 0.25 * BOTTOM_H / FIG_H, 0.90, 0.58 * BOTTOM_H / FIG_H])
+
+for ic, cat in enumerate(amp_categories):
+    amp_ax.boxplot(
+        amp_factor_data[cat], positions=[ic], patch_artist=True,
+        boxprops=dict(facecolor='skyblue', color='black'),
+        medianprops=dict(color='gold', linewidth=1.5),
+        whiskerprops=dict(color='black', linewidth=1.2),
+        capprops=dict(color='black', linewidth=1.2),
+        flierprops=dict(marker='o', color='black', markersize=4),
+        widths=[0.5],
+        showfliers=False,
+    )
+
+amp_ax.set_yscale('log')
+amp_ax.set_xlim(-0.6, len(amp_categories) - 0.4)
+amp_ax.set_xticks(range(len(amp_categories)))
+amp_ax.set_xticklabels(amp_tick_labels, fontsize=16)
+amp_ax.tick_params(axis='y', labelsize=14)
+amp_ax.set_ylabel(r'Amplification Factor ($A$)', fontsize=18)
+amp_ax.set_xlabel('Fixed Parameter', fontsize=18)
+amp_ax.axhspan(1., 6., facecolor='green', alpha=0.2, edgecolor='none', zorder=-1)
+amp_ax.axhline(np.sqrt(3/2), linestyle='dashed', color='black')
+amp_ax.text(-0.5, np.sqrt(3/2) - 0.35, r'Theoretical limit @ $\sqrt{3/2}$', fontsize=12, color='black')
+amp_ax.text(-0.5, 6.3, r'Acceptable $A$', fontsize=12, color='seagreen')
+
 # ---- Manual crop: set these in inches (figure is FIG_W x FIG_H inches) ----
-crop_left   = 2.5    # increase to trim left whitespace
-crop_right  = 29.5   # decrease to trim right whitespace
+crop_left   = 1.5    # increase to trim left whitespace
+crop_right  = 30.5   # decrease to trim right whitespace
 crop_bottom = 0.0    # increase to trim bottom whitespace
-crop_top    = 14.0   # decrease to trim top whitespace
+crop_top    = FIG_H  # decrease to trim top whitespace
 
 from matplotlib.transforms import Bbox
 plt.savefig(paths.figures / "Fig3.pdf",

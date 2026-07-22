@@ -60,7 +60,6 @@ init_state_dic['t0'] = 0.0                                    #days
 
 
 #%%%% Calculate transit duration
-# Convert angles to radians
 # Impact parameter (eccentricity-corrected)
 b = (
     (init_state_dic['a'] * jnp.cos(init_state_dic['i'])) / R_star
