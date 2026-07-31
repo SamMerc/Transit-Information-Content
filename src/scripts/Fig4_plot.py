@@ -76,7 +76,7 @@ num_IT_pts = jnp.sum(
 )
 
 #%% Grid parameters
-RAW_BASE_DIR = str(paths.data / 'Fig4_Storage') + '/'
+RAW_BASE_DIR = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig4_Storage/' #str(paths.data / 'Fig4_Storage') + '/'
 model_scatter = 16.68100537200059
 
 LDLs              = ['PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6', 'PLD_9', '4NLLD']
@@ -86,11 +86,17 @@ prior_strengths_labels = ['Uniform', r'$20\%$ Gaussian', r'$10\%$ Gaussian',
 seeds             = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 
 # C labels correspond to the three stellar LDC sets in Fig4_run.py
-# C1: [1.4394, -1.8472, 1.4695, -0.4682]
-# C3: [-0.0115,  1.7520, -1.9378,  0.7261]
-# C4: [0.8329, -0.6523,  0.9283, -0.3483]
-C_LABELS      = ['C1', 'C3', 'C4']
-C_LABEL_NAMES = {'C1': 'Cluster 1 - K/M type, metal poor, near-infrared', 'C3': 'Cluster 3 - G type, moderately metal poor, optical', 'C4': 'Cluster 4 - K type, metal rich, optical'}
+#C0 : 0.5597   -0.1310    0.4556   -0.2398
+#C2 : 0.7617   -0.8502    1.4229   -0.4899
+#C3 : 0.6666   -0.8767    0.8343   -0.2968
+#C4 : 0.5172   -0.1913    0.0819   -0.0316
+#C7 : 0.6383   -0.0511   -0.2722    0.1455
+C_LABELS      = ['C0', 'C2', 'C3']
+C_LABEL_NAMES = {'C0': 'Cluster 0 - M/K type, metal poor, near-infrared', 
+                 'C2': 'Cluster 2 - M/K type, metal rich, optical', 
+                 'C3': 'Cluster 3 - M/K type, solar metallicity, mid-infrared',
+                 'C4': 'Cluster 4 - K/G type, solar metallicity, mid-infrared',
+                 'C7': 'Cluster 7 - G type, solar metallicity, near-infrared'}
 
 #%% Filtering / processing parameters (same as Fig1_plot.py)
 NBURN      = 70000
@@ -410,7 +416,7 @@ def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
     for ax in [ax1, ax1m, ax1r]: ax.axhspan(1., 6., **band_kwargs)
     for ax in [ax2, ax2m, ax2r]: ax.axhspan(0.1, 2.0, **band_kwargs)
     for ax in [ax1, ax1m, ax1r]: ax.axhline(np.sqrt(3/2), linestyle='dashed', color='black')
-    ax1.text(1.6, np.sqrt(3/2) - 0.65, r'Theoretical limit @ $\sqrt{3/2}$', fontsize=10, color='black')
+    ax1.text(2.4, np.sqrt(3/2) + 0.2, r'Theoretical limit @ $\sqrt{3/2}$', fontsize=10, color='black')
     ax1.text(1.6, 6.4,   r'Acceptable $A$', fontsize=10, color='seagreen')
     ax2.text(1.6, 2.1, r'No bias',        fontsize=10, color='seagreen')
 
