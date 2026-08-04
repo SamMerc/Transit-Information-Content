@@ -91,7 +91,7 @@ seeds             = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 #C3 : 0.6666   -0.8767    0.8343   -0.2968
 #C4 : 0.5172   -0.1913    0.0819   -0.0316
 #C7 : 0.6383   -0.0511   -0.2722    0.1455
-C_LABELS      = ['C0', 'C2', 'C3']
+C_LABELS      = ['C0', 'C2', 'C3', 'C4', 'C7']
 C_LABEL_NAMES = {'C0': 'Cluster 0 - M/K type, metal poor, near-infrared', 
                  'C2': 'Cluster 2 - M/K type, metal rich, optical', 
                  'C3': 'Cluster 3 - M/K type, solar metallicity, mid-infrared',
