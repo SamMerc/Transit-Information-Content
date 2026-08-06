@@ -26,6 +26,7 @@ from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import numpy as np
 import pandas as pd
 import os
+import pickle
 import matplotlib.cm as cm
 import paths
 import matplotlib.patheffects as pe
@@ -343,6 +344,125 @@ def compute_amplification_factor_jax(r_chain_flat, bestfit_r, model_scatter, num
     return bestfit_r_error / scatter_in_bin
 
 
+@jit
+def compute_sigma_bias_jax(bestfit_r, r_chain_flat, true_r):
+    std_r           = jnp.std(r_chain_flat)
+    bestfit_r_error = 2 * std_r * bestfit_r
+    return jnp.abs((bestfit_r**2 - true_r**2) / bestfit_r_error)
+
+
+def process_prerun_data():
+    """
+    Load (or retrieve from cache) amplification factors and biases for every
+    "fixed parameter" MCMC (Fig3_prerun.py output) in prerun_dir, across all seeds.
+
+    Returns a dict with keys 'amp_factors' and 'biases', each a dict keyed by
+    parameter name holding a 1-D array (over seeds).
+    """
+    cache_file = prerun_dir + 'processed_data_cache.pkl'
+
+    if os.path.exists(cache_file):
+        print(f"Loading cached prerun data from {cache_file}...")
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+        return cached_data
+
+    print("No prerun cache found. Processing prerun MCMC runs...")
+    cached_data = {'amp_factors': {}, 'biases': {}}
+
+    for param in params_to_fix:
+        amp_factors = []
+        biases = []
+        for seed in seeds:
+            print(f'PRERUN: fix_{param}, seed{seed}')
+            _, _, r_chain_post_burnin, bestfit_r, _, _, _, _, _ = load_result(
+                (f"{prerun_dir}fix_{param}", model_scatter, seed, True)
+            )
+            r_jax = jnp.array(r_chain_post_burnin.flatten())
+            amp_factors.append(float(compute_amplification_factor_jax(
+                r_jax, bestfit_r, model_scatter, num_IT_pts
+            )))
+            biases.append(float(compute_sigma_bias_jax(
+                bestfit_r, r_jax, init_state_dic['r']
+            )))
+        cached_data['amp_factors'][param] = np.array(amp_factors)
+        cached_data['biases'][param]      = np.array(biases)
+
+    print(f"Saving prerun cache to {cache_file}...")
+    with open(cache_file, 'wb') as f:
+        pickle.dump(cached_data, f)
+
+    return cached_data
+
+
+def process_base_data():
+    """
+    Load (or retrieve from cache) the sigma-clipped base MCMC results (Fig2_Storage
+    output, all parameters free) for every seed: raw_chain, logprob,
+    r_chain_post_burnin, bestfit_r, good_steps_mask, amplification factor and bias.
+
+    Shares its cache file (input_dir/Fig2_base_processed_cache.pkl) with
+    Fig2_plot.py/Fig3_run.py, since all three compute the exact same values from the
+    same Fig2_Storage inputs - whichever script runs first builds the cache.
+    amp_factors/biases are cheap to derive from the cached r_chain_post_burnin/
+    bestfit_r, so they're recomputed on the fly each run rather than persisted in a
+    separate (redundant, multi-GB) cache file.
+
+    Returns a dict keyed by seed (raw_chain/logprob/r_chain_post_burnin/bestfit_r/
+    good_steps_mask), plus 'amp_factors'/'biases' arrays (over seeds).
+    """
+    cache_file = input_dir + 'Fig2_base_processed_cache.pkl'
+
+    if os.path.exists(cache_file):
+        print(f"Loading cached base data from {cache_file}...")
+        with open(cache_file, 'rb') as f:
+            shared_cached_data = pickle.load(f)
+    else:
+        print("No base cache found. Processing base MCMC runs...")
+        shared_cached_data = {}
+        for seed in seeds:
+            print(f'BASE: seed{seed}')
+            _, _, r_chain_post_burnin, bestfit_r, _, raw_chain, logprob, _, good_steps_mask = load_result(
+                (input_dir, model_scatter, seed, True)
+            )
+            shared_cached_data[seed] = {
+                'raw_chain': raw_chain,
+                'logprob': logprob,
+                'r_chain_post_burnin': r_chain_post_burnin,
+                'bestfit_r': bestfit_r,
+                'good_steps_mask': good_steps_mask,
+            }
+
+        print(f"Saving base cache to {cache_file}...")
+        with open(cache_file, 'wb') as f:
+            pickle.dump(shared_cached_data, f)
+
+    #Derive amplification factor + bias per seed (cheap - not persisted separately)
+    cached_data = {'raw_chain': {}, 'logprob': {}, 'r_chain_post_burnin': {}, 'bestfit_r': {},
+                    'good_steps_mask': {}, 'amp_factors': [], 'biases': []}
+
+    for seed in seeds:
+        r_chain_post_burnin = shared_cached_data[seed]['r_chain_post_burnin']
+        bestfit_r            = shared_cached_data[seed]['bestfit_r']
+        r_jax = jnp.array(r_chain_post_burnin.flatten())
+        cached_data['raw_chain'][seed]           = shared_cached_data[seed]['raw_chain']
+        cached_data['logprob'][seed]             = shared_cached_data[seed]['logprob']
+        cached_data['r_chain_post_burnin'][seed] = r_chain_post_burnin
+        cached_data['bestfit_r'][seed]           = bestfit_r
+        cached_data['good_steps_mask'][seed]     = shared_cached_data[seed]['good_steps_mask']
+        cached_data['amp_factors'].append(float(compute_amplification_factor_jax(
+            r_jax, bestfit_r, model_scatter, num_IT_pts
+        )))
+        cached_data['biases'].append(float(compute_sigma_bias_jax(
+            bestfit_r, r_jax, init_state_dic['r']
+        )))
+
+    cached_data['amp_factors'] = np.array(cached_data['amp_factors'])
+    cached_data['biases']      = np.array(cached_data['biases'])
+
+    return cached_data
+
+
 #############################################
 ################ Running code ###############
 #############################################
@@ -383,36 +503,35 @@ amp_factor_data = {'Base': []}
 for param in params_to_fix:
     amp_factor_data[param] = []
 
+#Amplification factor + bias for every "fixed parameter" prerun MCMC, across all seeds
+#(cached to prerun_dir/processed_data_cache.pkl so this is only computed once)
+prerun_cached_data = process_prerun_data()
+
+#Sigma-clipped base MCMC results (Fig2_Storage), across all seeds
+#(shares input_dir/Fig2_base_processed_cache.pkl with Fig2_plot.py/Fig3_run.py)
+base_cached_data = process_base_data()
+
 #Loop over each of the 10 MCMC runs (different noise seeds)
-for seed in seeds:
+for seed_idx, seed in enumerate(seeds):
     print(f"SEED = {seed}")
     seed_dir = input_dir+f'{jnp.floor(model_scatter)}ppm/Seed{seed}/'
     fixed_args['save_loc'] = output_dir+f'Seed{seed}/'
 
-    #Loading the MCMC results
+    #Loading the MCMC results (from cache)
     print(f'Retrieving MCMC')
-    raw_chain = jnp.load(seed_dir+"chains.npy")
-    logprob = jnp.load(seed_dir+"logprob.npy")
-    _, _, base_r_chain_post_burnin, base_bestfit_r, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
+    raw_chain = base_cached_data['raw_chain'][seed]
+    logprob = base_cached_data['logprob'][seed]
+    good_steps_mask = base_cached_data['good_steps_mask'][seed]
 
-    #Amplification factor for the base run (all parameters free)
-    print('AMPLIFICATION FACTOR: Base')
-    amp_factor_data['Base'].append(float(compute_amplification_factor_jax(
-        jnp.array(base_r_chain_post_burnin.flatten()), base_bestfit_r, model_scatter, num_IT_pts
-    )))
+    #Amplification factor for the base run (all parameters free, from cached base data)
+    amp_factor_data['Base'].append(float(base_cached_data['amp_factors'][seed_idx]))
 
-    #Amplification factor for each "fixed parameter" MCMC (produced by Fig3_prerun.py)
+    #Amplification factor for each "fixed parameter" MCMC (from cached prerun data)
     for param in params_to_fix:
-        print(f'AMPLIFICATION FACTOR: fix_{param}')
-        _, _, fix_r_chain_post_burnin, fix_bestfit_r, _, _, _, _, _ = load_result(
-            (f"{prerun_dir}fix_{param}", model_scatter, seed, True)
-        )
-        amp_factor_data[param].append(float(compute_amplification_factor_jax(
-            jnp.array(fix_r_chain_post_burnin.flatten()), fix_bestfit_r, model_scatter, num_IT_pts
-        )))
+        amp_factor_data[param].append(float(prerun_cached_data['amp_factors'][param][seed_idx]))
 
     #Finding the index of max log-probability
-    max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
+    max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
 
     #Initializing correlation matrix
     corr_matrix = np.zeros((n_params, n_params))
@@ -826,6 +945,8 @@ cosw_y = sys_ys[1]
 
 for lx in ld_xs:          # D → u1, u2, u3
     ax_diag.plot([d_cx, lx], [d_cy, ld_cy], color=line_col, lw=3.5, zorder=1)
+                          # D → i
+ax_diag.plot([d_cx, sys_cx], [d_cy, i_y], color=line_col, lw=3.5, zorder=1)
 for lx in ld_xs:          # P → u1, u2, u3
     ax_diag.plot([sys_cx, lx], [P_y, ld_cy], color=line_col, lw=3.5, zorder=1)
 for lx in ld_xs[1:]:      # √ecos(ω) → u2, u3
@@ -846,11 +967,11 @@ label_by_param = dict(zip(fixed_args['var_param_list'], fixed_args['labels']))
 amp_categories  = ['Base'] + [p for p in fixed_args['var_param_list'] if p != 'r']
 amp_tick_labels = ['Base'] + [label_by_param[p] for p in amp_categories[1:]]
 
-amp_ax = fig.add_axes([0.06, 0.25 * BOTTOM_H / FIG_H, 0.90, 0.58 * BOTTOM_H / FIG_H])
+amp_ax = fig.add_axes([0.11, 0.37 * BOTTOM_H / FIG_H, 0.81, 0.58 * BOTTOM_H / FIG_H])
 
 for ic, cat in enumerate(amp_categories):
     amp_ax.boxplot(
-        amp_factor_data[cat], positions=[ic], patch_artist=True,
+        np.abs(100 * (amp_factor_data['Base'] - amp_factor_data[cat]) / amp_factor_data['Base']), positions=[ic], patch_artist=True,
         boxprops=dict(facecolor='skyblue', color='black'),
         medianprops=dict(color='gold', linewidth=1.5),
         whiskerprops=dict(color='black', linewidth=1.2),
@@ -860,22 +981,20 @@ for ic, cat in enumerate(amp_categories):
         showfliers=False,
     )
 
-amp_ax.set_yscale('log')
+# amp_ax.set_yscale('log')
 amp_ax.set_xlim(-0.6, len(amp_categories) - 0.4)
 amp_ax.set_xticks(range(len(amp_categories)))
 amp_ax.set_xticklabels(amp_tick_labels, fontsize=16)
 amp_ax.tick_params(axis='y', labelsize=14)
-amp_ax.set_ylabel(r'Amplification Factor ($A$)', fontsize=18)
+amp_ax.set_ylabel('Amplification Factor\nRelative Difference (%)', fontsize=18)
 amp_ax.set_xlabel('Fixed Parameter', fontsize=18)
-amp_ax.axhspan(1., 6., facecolor='green', alpha=0.2, edgecolor='none', zorder=-1)
-amp_ax.axhline(np.sqrt(3/2), linestyle='dashed', color='black')
-amp_ax.text(-0.5, np.sqrt(3/2) - 0.35, r'Theoretical limit @ $\sqrt{3/2}$', fontsize=12, color='black')
-amp_ax.text(-0.5, 6.3, r'Acceptable $A$', fontsize=12, color='seagreen')
+# amp_ax.axhline(np.sqrt(3/2), linestyle='dashed', color='black')
+# amp_ax.text(-0.5, np.sqrt(3/2) + 0.35, r'Theoretical limit @ $\sqrt{3/2}$', fontsize=14, color='black')
 
 # ---- Manual crop: set these in inches (figure is FIG_W x FIG_H inches) ----
-crop_left   = 1.5    # increase to trim left whitespace
+crop_left   = 2.2    # increase to trim left whitespace
 crop_right  = 30.5   # decrease to trim right whitespace
-crop_bottom = 0.0    # increase to trim bottom whitespace
+crop_bottom = 1.5    # increase to trim bottom whitespace
 crop_top    = FIG_H  # decrease to trim top whitespace
 
 from matplotlib.transforms import Bbox

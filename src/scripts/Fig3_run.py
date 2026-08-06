@@ -29,6 +29,7 @@ from jaxoplanet.light_curves import limb_dark_light_curve
 from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import numpy as np
 import os
+import pickle
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -273,6 +274,49 @@ def check_dir(dir_name):
     if not os.path.isdir(dir_name):os.makedirs(dir_name)
     return dir_name
 
+def process_base_data():
+    """
+    Load (or retrieve from cache) the MCMC results (Fig2_Storage output) for every
+    seed: the full raw_chain and logprob arrays, plus the sigma-clipped
+    r_chain_post_burnin, bestfit_r, and good_steps_mask.
+
+    Shares its cache file (input_dir/Fig2_base_processed_cache.pkl) with
+    Fig2_plot.py, since both compute the exact same values from the same
+    Fig2_Storage inputs - whichever script runs first builds the cache.
+
+    Returns a dict keyed by seed, each holding
+    {'raw_chain', 'logprob', 'r_chain_post_burnin', 'bestfit_r', 'good_steps_mask'}.
+    """
+    cache_file = input_dir + 'Fig2_base_processed_cache.pkl'
+
+    if os.path.exists(cache_file):
+        print(f"Loading cached base data from {cache_file}...")
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+        return cached_data
+
+    print("No base cache found. Processing base MCMC runs...")
+    cached_data = {}
+
+    for seed in seeds:
+        print(f'BASE: seed{seed}')
+        _, _, r_chain_post_burnin, bestfit_r, _, raw_chain, logprob, _, good_steps_mask = load_result(
+            (input_dir, model_scatter, seed, True)
+        )
+        cached_data[seed] = {
+            'raw_chain': raw_chain,
+            'logprob': logprob,
+            'r_chain_post_burnin': r_chain_post_burnin,
+            'bestfit_r': bestfit_r,
+            'good_steps_mask': good_steps_mask,
+        }
+
+    print(f"Saving base cache to {cache_file}...")
+    with open(cache_file, 'wb') as f:
+        pickle.dump(cached_data, f)
+
+    return cached_data
+
 def create_jaxoplanet_model(x, p):
     
     #Retrieving ecc and w
@@ -326,6 +370,10 @@ check_dir(output_dir)
 scatter_dir = check_dir(input_dir+f'{jnp.floor(model_scatter)}ppm/')
 print(f"MODEL SCATTER = {model_scatter:.2f}")
 
+#Sigma-clipped MCMC results (Fig2_Storage), across all seeds
+#(cached to input_dir/Fig2_base_processed_cache.pkl so this is only computed once)
+base_cached_data = process_base_data()
+
 for seed in seeds:
     #Check seed directory exists
     seed_dir = check_dir(scatter_dir+f'Seed{seed}/')
@@ -368,14 +416,14 @@ for seed in seeds:
     plt.savefig(fixed_args['save_loc']+'init_guess.pdf')
     plt.close()
 
-    #Loading the MCMC results
+    #Loading the MCMC results (from cache)
     print(f'Retrieving MCMC')
-    raw_chain = jnp.load(seed_dir+"chains.npy")
-    logprob = jnp.load(seed_dir+"logprob.npy")
-    _, _, _, _, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
+    raw_chain = base_cached_data[seed]['raw_chain']
+    logprob = base_cached_data[seed]['logprob']
+    good_steps_mask = base_cached_data[seed]['good_steps_mask']
 
     #Finding the index of max log-probability
-    max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
+    max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
 
     # Get highest log probability parameters
     best_params = {}

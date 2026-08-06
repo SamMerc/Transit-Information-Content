@@ -23,6 +23,8 @@ from astropy.constants import G
 from jaxoplanet.light_curves import limb_dark_light_curve
 from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import numpy as np
+import os
+import pickle
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -299,6 +301,49 @@ def create_jaxoplanet_model(x, p):
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
     return jaxo_lc.reshape((-1))
 
+def process_base_data():
+    """
+    Load (or retrieve from cache) the MCMC results (Fig2_Storage output) for every
+    seed: the full raw_chain and logprob arrays, plus the sigma-clipped
+    r_chain_post_burnin, bestfit_r, and good_steps_mask.
+
+    Everything the rest of the script needs from Fig2_Storage lives in this cache,
+    so once it has been built the raw chains.npy/logprob.npy files are no longer
+    required to re-run the script.
+
+    Returns a dict keyed by seed, each holding
+    {'raw_chain', 'logprob', 'r_chain_post_burnin', 'bestfit_r', 'good_steps_mask'}.
+    """
+    cache_file = raw_save_dir + 'Fig2_base_processed_cache.pkl'
+
+    if os.path.exists(cache_file):
+        print(f"Loading cached base data from {cache_file}...")
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+        return cached_data
+
+    print("No base cache found. Processing base MCMC runs...")
+    cached_data = {}
+
+    for seed in seeds:
+        print(f'BASE: seed{seed}')
+        _, _, r_chain_post_burnin, bestfit_r, _, raw_chain, logprob, _, good_steps_mask = load_result(
+            (raw_save_dir, model_scatter, seed, True)
+        )
+        cached_data[seed] = {
+            'raw_chain': raw_chain,
+            'logprob': logprob,
+            'r_chain_post_burnin': r_chain_post_burnin,
+            'bestfit_r': bestfit_r,
+            'good_steps_mask': good_steps_mask,
+        }
+
+    print(f"Saving base cache to {cache_file}...")
+    with open(cache_file, 'wb') as f:
+        pickle.dump(cached_data, f)
+
+    return cached_data
+
 #############################################
 ################ Running code ###############
 #############################################
@@ -314,13 +359,17 @@ perturb_labels = [r'u$_1$', r'u$_2$', r'u$_3$', 'i', r'$\rho_{\star}$', r'$P$', 
 #Collecting the per-seed perturbation curves so we can plot their mean and std across seeds
 perturbation_curves = {param: [] for param in perturb_params}
 
+#Sigma-clipped MCMC results (Fig2_Storage), across all seeds
+#(cached to raw_save_dir/Fig2_base_processed_cache.pkl so this is only computed once)
+base_cached_data = process_base_data()
+
 #Loop over each of the 10 MCMC runs (different noise seeds)
 for seed in seeds:
     print(f'LOADING SEED {seed}')
 
-    #Load MCMC results
-    raw_chain_s = jnp.load(raw_save_dir+f"{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy")
-    logprob_s = jnp.load(raw_save_dir+f"{jnp.floor(model_scatter)}ppm/Seed{seed}/logprob.npy")
+    #Load MCMC results (from cache)
+    raw_chain_s = base_cached_data[seed]['raw_chain']
+    logprob_s = base_cached_data[seed]['logprob']
 
     # Get highest log probability parameters
     max_walker_s, max_step_s = jnp.unravel_index(jnp.argmax(logprob_s), logprob_s.shape)
@@ -330,7 +379,7 @@ for seed in seeds:
     for idx, param in enumerate(fixed_args['fix_param_list']):
         best_params_s[param] = fixed_args['fix_param_val'][idx]
 
-    _, _, _, _, _, _, _, _, good_steps_mask_s = load_result((raw_save_dir, model_scatter, seed, True))
+    good_steps_mask_s = base_cached_data[seed]['good_steps_mask']
 
     # Compute bestfit model
     bestfit_lc_s = create_jaxoplanet_model(init_state_dic['times'], best_params_s)

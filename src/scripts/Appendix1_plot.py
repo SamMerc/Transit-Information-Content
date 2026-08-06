@@ -363,7 +363,7 @@ logprob = jnp.load(seed_dir+"logprob.npy")
 _, _, _, _, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
 
 #Finding the index of max log-probability
-max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
+max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
 
 n_params = len(fixed_args['var_param_list'])
 

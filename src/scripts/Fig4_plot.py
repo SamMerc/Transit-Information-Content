@@ -76,7 +76,7 @@ num_IT_pts = jnp.sum(
 )
 
 #%% Grid parameters
-RAW_BASE_DIR = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig4_Storage/' #str(paths.data / 'Fig4_Storage') + '/'
+RAW_BASE_DIR = str(paths.data / 'Fig4_Storage') + '/'
 model_scatter = 16.68100537200059
 
 LDLs              = ['PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6', 'PLD_9', '4NLLD']
