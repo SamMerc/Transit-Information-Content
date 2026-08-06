@@ -36,7 +36,7 @@ rule Fig3_run:
 
 rule Fig3:
     input:
-        script="src/scripts/Fig3_plot.py",
+        script="src/scripts/Fig3_plot.py", 
         chi2="src/data/Fig3_Storage/chi2_r_r.npy",
         fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
         fig3_cache="src/data/Fig3_prerun_Storage/processed_data_cache.pkl",
