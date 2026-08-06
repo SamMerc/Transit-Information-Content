@@ -101,7 +101,7 @@ colors = cmap(np.linspace(0, 1, n_components))
 
 wav_region = [6000, 53000]  # 0.6 – 5.3 micron
 
-intr_prof_mode = 'load'  # 'build' or 'load'
+intr_prof_mode = 'build'  # 'build' or 'load'
 
 # ── Profile subsampling ───────────────────────────────────────────────────────
 # If True, randomly draw n_subsample_profiles from the valid profiles before

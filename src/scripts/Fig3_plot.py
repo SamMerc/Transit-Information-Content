@@ -738,13 +738,13 @@ full_corr_matrix_std = (corr_matrix_std + corr_matrix_std.T)
 corr_df_std = pd.DataFrame(full_corr_matrix_std, index=fixed_args['labels'], columns=fixed_args['labels'])
 
 #Re-order the matrices
-desired_order_labels = [r'R$_p$/R$_{\star}$', 'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)', 'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'u$_1$', r'u$_2$', r'u$_3$']
+desired_order_labels = [r'R$_p$/R$_{\star}$', 'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'$\rho_{\star}$ (g/cm$^{3}$)', 'i (rad)', r'u$_1$', r'u$_2$', r'u$_3$']
 corr_df_reordered = corr_df.loc[desired_order_labels, desired_order_labels]
 corr_df_std_reordered = corr_df_std.loc[desired_order_labels, desired_order_labels]
 
 #% Make corrplot
 print('BUILD CORRELATION HEATMAP')
-plot_labels = [r'D', 'i',r'$\rho_{\star}$', r'P', r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'u$_1$', r'u$_2$', r'u$_3$']
+plot_labels = [r'D', r'P', r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'$\rho_{\star}$', 'i', r'u$_1$', r'u$_2$', r'u$_3$']
 matrix = corr_df_reordered.values
 matrix_std = corr_df_std_reordered.values
 labels = plot_labels
@@ -831,8 +831,8 @@ def add_group_box(ax_target, row_range, col_range, color, lw=5.5, pad=0.1):
     ax_target.add_patch(box)
 
 add_group_box(ax, (1, 5), (1, 5), '#e26952')   # system params 5x5 block
-add_group_box(ax, (6, 8), (6, 8), '#f7a789')         # LD 3x3 block
-add_group_box(ax, (0, 0), (6, 8), '#ecd1c2')   # D vs LD (upper triangle)
+add_group_box(ax, (6, 8), (6, 8), '#f7a789')   # LD 3x3 block
+add_group_box(ax, (0, 0), (5, 8), '#ecd1c2')   # D 4x1 block
 
 # Add colorbar
 sm = cm.ScalarMappable(cmap=cmap_diverging)
@@ -866,7 +866,7 @@ lbl_fs   = 19
 # plt.Circle with these values renders as a true circle without set_aspect.
 r_sys    = 0.75    # inch
 r_d      = 0.75    # inch
-r_ld     = 0.75     # inch
+r_ld     = 0.75    # inch
 pad_box  = 0.02    # inch – gap between circle edge and bounding box
 node_gap = 0.05    # inch – gap between adjacent circle edges in a block
 
@@ -887,9 +887,9 @@ ax_diag.add_patch(FancyBboxPatch(
 ax_diag.text(sys_cx, sys_by + 8.25, 'System parameters',
              ha='center', va='top', fontsize=lbl_fs, color=col_sys, fontweight='bold')
 
-sys_node_labels = [r'$\mathbf{\sqrt{e}}$sin$\mathbf{(\omega)}$', 
-                   r'$\mathbf{\sqrt{e}}$cos$\mathbf{(\omega)}$',
-                    'P',r'$\mathbf{\rho_{\star}}$', 'i']
+sys_node_labels = ['i', r'$\mathbf{\rho_{\star}}$',
+                   r'$\mathbf{\sqrt{e}}$sin$\mathbf{(\omega)}$', 
+                   r'$\mathbf{\sqrt{e}}$cos$\mathbf{(\omega)}$','P']
 
 for lbl, cy in zip(sys_node_labels, sys_ys):
     ax_diag.add_patch(plt.Circle((sys_cx, cy), r_sys, color=col_sys, zorder=3))
@@ -938,10 +938,10 @@ for lbl, cx in zip(ld_node_labels, ld_xs):
                  fontsize=node_fs, fontweight='bold', zorder=4)
 
 # Connection lines: center-to-center, specific pairs only
-# sys_ys: [i=4, ρ★=3, P=2, √ecos=1, √esin=0]   ld_xs: [u1=0, u2=1, u3=2]
-P_y    = sys_ys[2]
-i_y    = sys_ys[4]
-cosw_y = sys_ys[1]
+# sys_ys: [P=4, √ecos=3, √esin=2, ρ★=1, i=0]   ld_xs: [u1=0, u2=1, u3=2]
+P_y    = sys_ys[4]
+i_y    = sys_ys[0]
+cosw_y = sys_ys[3]
 
 for lx in ld_xs:          # D → u1, u2, u3
     ax_diag.plot([d_cx, lx], [d_cy, ld_cy], color=line_col, lw=3.5, zorder=1)
@@ -964,8 +964,8 @@ print('BUILD AMPLIFICATION FACTOR PANEL')
 amp_factor_data = {key: np.array(vals) for key, vals in amp_factor_data.items()}
 
 label_by_param = dict(zip(fixed_args['var_param_list'], fixed_args['labels']))
-amp_categories  = ['Base'] + [p for p in fixed_args['var_param_list'] if p != 'r']
-amp_tick_labels = ['Base'] + [label_by_param[p] for p in amp_categories[1:]]
+amp_categories  = [p for p in fixed_args['var_param_list'] if p != 'r']
+amp_tick_labels = [label_by_param[p] for p in amp_categories]
 
 amp_ax = fig.add_axes([0.11, 0.37 * BOTTOM_H / FIG_H, 0.81, 0.58 * BOTTOM_H / FIG_H])
 
@@ -988,8 +988,6 @@ amp_ax.set_xticklabels(amp_tick_labels, fontsize=16)
 amp_ax.tick_params(axis='y', labelsize=14)
 amp_ax.set_ylabel('Amplification Factor\nRelative Difference (%)', fontsize=18)
 amp_ax.set_xlabel('Fixed Parameter', fontsize=18)
-# amp_ax.axhline(np.sqrt(3/2), linestyle='dashed', color='black')
-# amp_ax.text(-0.5, np.sqrt(3/2) + 0.35, r'Theoretical limit @ $\sqrt{3/2}$', fontsize=14, color='black')
 
 # ---- Manual crop: set these in inches (figure is FIG_W x FIG_H inches) ----
 crop_left   = 2.2    # increase to trim left whitespace

@@ -24,6 +24,7 @@ from astropy.constants import G
 from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import numpy as np
 import os
+import pickle
 import paths
 
 # For 64-bit precision since JAX defaults to 32-bit
@@ -260,7 +261,32 @@ def load_result(args):
         import traceback
         traceback.print_exc()
         return None
-    
+
+def load_base_data(seed):
+    """
+    Load the sigma-clipped base MCMC result (Fig2_Storage output, all parameters
+    free) for a single seed: raw_chain, logprob, good_steps_mask.
+
+    Shares its cache file (input_dir/Fig2_base_processed_cache.pkl) with
+    Fig2_plot.py/Fig3_run.py/Fig3_plot.py, since they all compute the exact same
+    values from the same Fig2_Storage inputs - whichever script runs first builds it.
+    """
+    cache_file = input_dir + 'Fig2_base_processed_cache.pkl'
+
+    if os.path.exists(cache_file):
+        print(f"Loading cached base data from {cache_file}...")
+        with open(cache_file, 'rb') as f:
+            shared_cached_data = pickle.load(f)
+        return (shared_cached_data[seed]['raw_chain'],
+                shared_cached_data[seed]['logprob'],
+                shared_cached_data[seed]['good_steps_mask'])
+
+    print("No base cache found. Processing base MCMC run...")
+    _, _, _, _, _, raw_chain, logprob, _, good_steps_mask = load_result(
+        (input_dir, model_scatter, seed, True)
+    )
+    return raw_chain, logprob, good_steps_mask
+
 #Helper function to fit an ellipse given points
 def fit_ellipse_conic(x, y):
     # Build design matrix
@@ -356,11 +382,9 @@ def load_chi2_data(param1, param2, save_loc):
     else:
         raise FileNotFoundError(f"Could not find chi2 file for {param1} vs {param2}")
 
-#Loading the MCMC results
+#Loading the MCMC results (from cache)
 print(f'Retrieving MCMC')
-raw_chain = jnp.load(seed_dir+"chains.npy")
-logprob = jnp.load(seed_dir+"logprob.npy")
-_, _, _, _, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
+raw_chain, logprob, good_steps_mask = load_base_data(seed)
 
 #Finding the index of max log-probability
 max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)

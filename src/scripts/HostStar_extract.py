@@ -33,10 +33,19 @@ import paths
 
 save_data_path = str(paths.data / "HostStar_Storage") + "/"
 
-# Composite table: one best-parameter-set row per confirmed planet.
-archive_table  = 'pscomppars'
-archive_select = 'hostname,st_teff,st_logg,st_met'
-archive_where  = 'st_teff is not null and st_logg is not null and st_met is not null'
+# Pin the archive query to this date so the extracted sample matches what would have been
+# returned on that day, regardless of when this script is actually run. The composite
+# `pscomppars` table has no per-row update timestamp, so we instead query the underlying
+# per-reference `ps` table (which does carry `rowupdate`) and, for each host, keep the most
+# recently updated row as of this date - see fetch_host_star_properties().
+query_asof_date = '2026-07-08'
+
+archive_table  = 'ps'
+archive_select = 'hostname,st_teff,st_logg,st_met,rowupdate'
+archive_where  = (
+    'st_teff is not null and st_logg is not null and st_met is not null '
+    f"and rowupdate <= '{query_asof_date}'"
+)
 
 n_bins = 30
 

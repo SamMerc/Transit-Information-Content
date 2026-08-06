@@ -25,30 +25,38 @@ dag:
 
 # Externally-hosted datasets, e.g. on Zenodo
 datasets:
-  10.5281/zenodo.19856245:
+  10.5281/zenodo.21829339:
     contents:
       Fig1_chains.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chains.npy
       Fig1_chi2_chain.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chi2_chain.npy
       Fig1_logprob.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/logprob.npy
       Fig1_cache.pkl: src/data/Fig1_Storage/processed_data_cache.pkl
-      Fig2_chains.npy: src/data/Fig2_Storage/16.0ppm/Seed70/chains.npy
-      Fig2_chi2_chain.npy: src/data/Fig2_Storage/16.0ppm/Seed70/chi2_chain.npy
-      Fig2_logprob.npy: src/data/Fig2_Storage/16.0ppm/Seed70/logprob.npy
+      Fig2_cache.pkl: src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
+      Fig3_prerun_cache.pkl: src/data/Fig3_prerun_Storage/processed_data_cache.pkl
       Fig5_mps1_data.pkl: src/data/Fig5_Storage/mps1/data.pkl
       Fig5_mps2_data.pkl: src/data/Fig5_Storage/mps2/data.pkl
       Fig5_results.npz: src/data/Fig5_Storage/mps1/results.npz
       Appendix4_mps1_results.npz: src/data/Appendix4_Storage/mps1/results.npz
       Appendix4_mps2_results.npz: src/data/Appendix4_Storage/mps2/results.npz
-      Fig4_C1_cache.pkl: src/data/Fig4_Storage/C1/processed_data_cache.pkl
+      Fig4_C0_cache.pkl: src/data/Fig4_Storage/C0/processed_data_cache.pkl
+      Fig4_C2_cache.pkl: src/data/Fig4_Storage/C2/processed_data_cache.pkl
       Fig4_C3_cache.pkl: src/data/Fig4_Storage/C3/processed_data_cache.pkl
       Fig4_C4_cache.pkl: src/data/Fig4_Storage/C4/processed_data_cache.pkl
+      Fig4_C7_cache.pkl: src/data/Fig4_Storage/C7/processed_data_cache.pkl
 
 # Custom file dependencies
 dependencies:
+  src/scripts/Fig2_plot.py:
+    - src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
+  src/scripts/Fig3_run.py:
+    - src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
   src/scripts/Fig3_plot.py:
     - src/data/Fig3_Storage/chi2_r_r.npy
+    - src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
+    - src/data/Fig3_prerun_Storage/processed_data_cache.pkl
   src/scripts/Appendix1_plot.py:
     - src/data/Fig3_Storage/chi2_r_r.npy
+    - src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
   src/scripts/Appendix2_plot.py:
     - src/data/Fig5_Storage/mps1/results.npz
   # src/tex/ms.tex:

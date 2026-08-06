@@ -15,9 +15,7 @@ rule Fig1:
 rule Fig2:
     input:
         script="src/scripts/Fig2_plot.py",
-        chains="src/data/Fig2_Storage/16.0ppm/Seed70/chains.npy",
-        chi2="src/data/Fig2_Storage/16.0ppm/Seed70/chi2_chain.npy",
-        logprob="src/data/Fig2_Storage/16.0ppm/Seed70/logprob.npy",
+        fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
     output:
         "src/tex/figures/Fig2.pdf"
     cache: True
@@ -28,9 +26,7 @@ rule Fig2:
 rule Fig3_run:
     input:
         script="src/scripts/Fig3_run.py",
-        chains="src/data/Fig2_Storage/16.0ppm/Seed70/chains.npy",
-        chi2="src/data/Fig2_Storage/16.0ppm/Seed70/chi2_chain.npy",
-        logprob="src/data/Fig2_Storage/16.0ppm/Seed70/logprob.npy",
+        fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
     output:
         "src/data/Fig3_Storage/chi2_r_r.npy"
     cache: True
@@ -41,7 +37,9 @@ rule Fig3_run:
 rule Fig3:
     input:
         script="src/scripts/Fig3_plot.py",
-        chi2="src/data/Fig3_Storage/chi2_r_r.npy"
+        chi2="src/data/Fig3_Storage/chi2_r_r.npy",
+        fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
+        fig3_cache="src/data/Fig3_prerun_Storage/processed_data_cache.pkl",
     output:
         "src/tex/figures/Fig3.pdf"
     cache: True
@@ -61,7 +59,8 @@ rule Fig5:
 rule Appendix1:
     input:
         script="src/scripts/Appendix1_plot.py",
-        chi2="src/data/Fig3_Storage/chi2_r_r.npy"
+        chi2="src/data/Fig3_Storage/chi2_r_r.npy",
+        fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
     output:
         "src/tex/figures/Appendix1.pdf"
     cache: True
@@ -112,9 +111,11 @@ rule Appendix4:
 rule Fig4:
     input:
         script="src/scripts/Fig4_plot.py",
-        c1_cache="src/data/Fig4_Storage/C1/processed_data_cache.pkl",
+        c0_cache="src/data/Fig4_Storage/C0/processed_data_cache.pkl",
+        c2_cache="src/data/Fig4_Storage/C2/processed_data_cache.pkl",
         c3_cache="src/data/Fig4_Storage/C3/processed_data_cache.pkl",
         c4_cache="src/data/Fig4_Storage/C4/processed_data_cache.pkl",
+        c7_cache="src/data/Fig4_Storage/C7/processed_data_cache.pkl",
     output:
         "src/tex/figures/Fig4.pdf"
     cache: True
