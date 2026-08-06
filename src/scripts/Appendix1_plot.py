@@ -61,7 +61,6 @@ for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
 init_LD_prop = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336, order=3)
 
 #%%%% Calculate transit duration
-# Convert angles to radians
 # Impact parameter (eccentricity-corrected)
 b = (
     (init_state_dic['a'] * jnp.cos(init_state_dic['i'])) / R_star
@@ -364,7 +363,7 @@ logprob = jnp.load(seed_dir+"logprob.npy")
 _, _, _, _, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
 
 #Finding the index of max log-probability
-max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
+max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
 
 n_params = len(fixed_args['var_param_list'])
 

@@ -6,7 +6,7 @@
 # The goal of this file is to run injection-retrievals for a grid of 1. limb-darkening laws, 2. limb-darkening priors, and 3. noise seeds.
 # In particular the grid is 7 polynomial limb-darkening laws by 5 limb darkening priors by 10 noise seeds, i.e. 350 injection-retrievals.
 # In these tests, the injected LC is done with a 4th order non-linear LDL, while the retrieval is done with polynomial LDLs going from 2-9 and 4NLLD.
-# Furthermore, to show the dependence on Teff, metallicity, logg, and wavelength we run this analysis on three different sets of 4th order NLLD LDCs.
+# Furthermore, to show the dependence on Teff, metallicity, logg, and wavelength we run this analysis on five different sets of 4th order NLLD LDCs.
 
 ######################################
 ########## Import libraries ##########
@@ -64,12 +64,16 @@ init_state_dic['e'] = 0.                                      #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-#C1 : 1.4394   -1.8472    1.4695   -0.4682
-init_NLLD_coeffs = [1.4394, -1.8472, 1.4695, -0.4682]
-#C3 : -0.0115    1.7520   -1.9378    0.7261
-# init_NLLD_coeffs = [-0.0115, 1.7520, -1.9378, 0.7261]
-#C4 : 0.8329   -0.6523    0.9283   -0.3483
-# init_NLLD_coeffs = [0.8329, -0.6523, 0.9283, -0.3483]
+#C0 : 0.5597   -0.1310    0.4556   -0.2398
+init_NLLD_coeffs = [0.5597, -0.1310, 0.4556, -0.2398]
+#C2 : 0.7617   -0.8502    1.4229   -0.4899
+# init_NLLD_coeffs = [0.7617, -0.8502, 1.4229, -0.4899]
+#C3 : 0.6666   -0.8767    0.8343   -0.2968
+# init_NLLD_coeffs = [0.6666, -0.8767, 0.8343, -0.2968]
+#C4 : 0.5172   -0.1913    0.0819   -0.0316
+# init_NLLD_coeffs = [0.5172, -0.1913, 0.0819, -0.0316]
+#C7 : 0.6383   -0.0511   -0.2722    0.1455
+# init_NLLD_coeffs = [0.6383, -0.0511, -0.2722, 0.1455]
 
 init_PLD_coeffs = nonlinear_4param_ld_law(u1=init_NLLD_coeffs[0], u2=init_NLLD_coeffs[1], u3=init_NLLD_coeffs[2], u4=init_NLLD_coeffs[3])
 
@@ -78,7 +82,6 @@ for iLD, LD_coeff in enumerate(init_PLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
 #%%%% Calculate transit duration
-# Convert angles to radians
 # Impact parameter (eccentricity-corrected)
 b = (
     (init_state_dic['a'] * jnp.cos(init_state_dic['i'])) / R_star
@@ -106,8 +109,8 @@ exposure_time = 5                                                       #seconds
 num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number of points
 init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
-#%% Storing outputs of nested sampling and plots
-raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig4_Storage/C1/'
+#%% Storing outputs
+raw_save_dir = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig4_Storage/C0/'
 
 #%% Model parameters
 mod_prop = {
@@ -147,7 +150,7 @@ fixed_args['dense_matrix'] = True
 fixed_args['regularize_mass_matrix'] = True
 
 #%% Set model scatter
-model_scatter = 16.0
+model_scatter = 16.68100537200059
 
 #############################################
 ########## Define parrallelization ##########

@@ -2,9 +2,11 @@
 ########## Purpose ##########
 #############################
 
-# Figure 1 showcases the amplification factor change across model scatters and limb-darkening law used (aka the dimensionality).
-# The goal of this file is to run injection-retrievals for a grid of 1. model scatters 2. noise seeds and 3. limb-darkening laws
-# In particular the grid is 14 model scatters by 3 polynomial limb-darkening laws by 10 noise seeds, i.e. 420 injection-retrievals.
+# Figure 3's bottom panel showcases the amplification factor change when a given transit
+# parameter is fixed rather than fit for during the retrieval.
+# To measure this, we need one MCMC per varying parameter (other than Rp/R*, whose posterior is the
+# quantity of interest) with that parameter fixed to its fiducial value, repeated across the same 10
+# noise seeds used everywhere else in Figure 2/3. This file generates those MCMC chains.
 
 
 ######################################
@@ -21,11 +23,13 @@ from jaxoplanet.orbits.keplerian import System, Central
 import astropy.units as u
 from astropy.constants import G
 from jaxoplanet.light_curves import limb_dark_light_curve
+from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import corner
 import time
 import arviz as az
 import numpy as np
 import os, itertools, sys
+import copy
 import numpyro
 from numpyro.distributions import Normal, Uniform
 from numpyro.infer import MCMC, NUTS, HMC, init_to_value
@@ -42,6 +46,7 @@ jax.config.update("jax_enable_x64", True)
 # Set random seed
 jaxnoise_key = jax.random.PRNGKey(0)
 
+
 #############################################
 ########## Define hyper-parameters ##########
 #############################################
@@ -49,18 +54,29 @@ jaxnoise_key = jax.random.PRNGKey(0)
 
 #%%%% Define G in units needed now to avoid JAX tracing issues
 G_solar_units = G.to(u.Rsun**3 / (u.Msun * u.day**2)).value
+G_cgday = G.to(u.cm**3 / (u.g * u.day**2)).value
 R_star = (1.0 * u.R_sun).value
 #%%%% Mock system - fiducial
 init_state_dic = {}
 init_state_dic['period'] = 1.                                 #days
-a_meters = ( (G.value * (1.0 * u.M_sun).to(u.kg).value * (init_state_dic['period'] * 24 * 3600)**2)/(4 * jnp.pi**2) )**(1/3)  
+a_meters = ( (G.value * (1.0 * u.M_sun).to(u.kg).value * (init_state_dic['period'] * 24 * 3600)**2)/(4 * jnp.pi**2) )**(1/3)
 init_state_dic['a'] = a_meters / (1.0 * u.R_sun).to(u.m).value  #stellar radius
 init_state_dic['r'] = 0.1                                     #stellar radius
 init_state_dic['i'] = jnp.deg2rad(90)                         #radians
 init_state_dic['omega'] = 0.0                                 #radians
-init_state_dic['e'] = 0.                                      #unitless
+init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
+#Setting base LDCs
+# Global LDCs : c1 = 0.6245 c2 = -0.1898 c3 = 0.1473 c4 = -0.0634
+init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634)
+
+#Updating initial state dictionary
+for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
+    init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
+
+#Get starting points for the LD coefficients
+init_LD_prop = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634, order=3)
 
 #%%%% Calculate transit duration
 # Impact parameter (eccentricity-corrected)
@@ -90,17 +106,21 @@ exposure_time = 5                                                       #seconds
 num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number of points
 init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
+
 #%% Storing outputs
-raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig1_Storage/'
+raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig3_prerun_Storage/'
 
 #%% Model parameters
-mod_prop = {
+mod_prop_base = {
     'r'         : {'vary':True, 'guess':0.11, 'bounds':[0.07, 0.15]},
     'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(92.)]},
     'a'         : {'vary':True, 'guess':init_state_dic['a']-1, 'bounds':[init_state_dic['a']-2, init_state_dic['a']+2]},
+    'LD_u1'     : {'vary':True, 'guess':init_LD_prop[0], 'bounds':[init_LD_prop[0] - 0.5, init_LD_prop[0] + 0.5]},
+    'LD_u2'     : {'vary':True, 'guess':init_LD_prop[1], 'bounds':[init_LD_prop[1] - 0.5, init_LD_prop[1] + 0.5]},
+    'LD_u3'     : {'vary':True, 'guess':init_LD_prop[2], 'bounds':[init_LD_prop[2] - 0.5, init_LD_prop[2] + 0.5]},
     'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]}, #Gaussian prior
-    'sqrtecosw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
-    'sqrtesinw' : {'vary':True, 'guess': 0., 'bounds': [-0.2, 0.2]},
+    'sqrtecosw' : {'vary':True, 'guess':0.1, 'bounds':[-0.2, 0.2]},
+    'sqrtesinw' : {'vary':True, 'guess':0.1, 'bounds':[-0.2, 0.2]},
     't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
 }
 
@@ -109,177 +129,37 @@ priors_dic = {
     'r'             : {'type':'uf', 'bounds':[0., 1.]},
     'i'             : {'type':'uf', 'bounds':[jnp.deg2rad(70), jnp.deg2rad(110)]},
     'a'             : {'type':'uf', 'bounds':[0, 50]},
-    'period'        : {'type':'gauss', 'val':1.0000, 's_val':0.0005},
+    'LD_u1'         : {'type':'uf', 'bounds':[-100, 100]},
+    'LD_u2'         : {'type':'uf', 'bounds':[-100, 100]},
+    'LD_u3'         : {'type':'uf', 'bounds':[-100, 100]},
     'sqrtecosw'     : {'type':'uf', 'bounds':[-1, 1]},
     'sqrtesinw'     : {'type':'uf', 'bounds':[-1, 1]},
+    'period'        : {'type':'gauss', 'val':1.0000, 's_val':0.0005},
+}
+
+#%% Labels for every possible parameter (sliced down to var_param_list per run)
+full_labels_dic = {
+    'r': "RpR$_*$", 'i': 'i', 'a': "aR$_*$",
+    'LD_u1': "u$_1$", 'LD_u2': "u$_2$", 'LD_u3': "u$_3$",
+    'period': "P", 'sqrtecosw': "$\sqrt{e}\cos{\omega}$", 'sqrtesinw': "$\sqrt{e}\sin{\omega}$",
 }
 
 #%% Fitting mode
-fixed_args={}
-fixed_args['run_mode'] = 'use'
-fixed_args['nthreads'] = jax.device_count()
+run_mode = 'use'
+nthreads = jax.device_count()
 
 #%% MCMC specific settings
-fixed_args['nwalkers'] = 50
-fixed_args['nsteps'] = 100000
-fixed_args['nburn'] = 70000
-fixed_args['kernel'] = 'emcee' # 'emcee', 'HMC' or 'NUTS'
+nwalkers = 50
+nsteps   = 100000
+nburn    = 70000
+kernel   = 'emcee' # 'emcee', 'HMC' or 'NUTS'
 #%% Numpyro specific - set to False for faster
-fixed_args['adapt_step_size'] = True
-fixed_args['dense_matrix'] = True
-fixed_args['regularize_mass_matrix'] = True
+adapt_step_size = True
+dense_matrix = True
+regularize_mass_matrix = True
 
-#############################################
-########## Define parrallelization ##########
-#############################################
-# Define the fit parameters
-model_scatters = jnp.logspace(-2, 5, 15).tolist()
-seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
-PLD_orders = [2, 3, 4]
-
-# # Distribute tasks - for HPC usage
-# task_arrays = [model_scatters, seeds, PLD_orders]
-# param_combos = list(itertools.product(*task_arrays))
-# param_combos = [list(c) for c in param_combos]
-
-# my_task_id = int(sys.argv[1])
-# model_scatter, seed, PLD_order = param_combos[my_task_id - 1]
-
-model_scatter = 129.1549665014884
-seed = 50
-PLD_order = 2
-
-
-############################################
-########## Setting limb-darkening ##########
-############################################
-
-if PLD_order == 2:
-    #Setting base LDCs
-    init_PLD_coeffs = [0.1, 0.2]
-
-    #Updating initial state dictionary
-    for iLD, LD_coeff in enumerate(init_PLD_coeffs):
-        init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
-
-    #Updating fit dictionaries
-    mod_prop.update(
-        {
-            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.6]},
-            'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
-        }
-    )
-
-    #Updating priors
-    priors_dic.update(
-        {
-            'LD_u1'         : {'type':'uf', 'bounds':[-100, 100]},
-            'LD_u2'         : {'type':'uf', 'bounds':[-100, 100]},
-        }
-    )
-
-    #Define plotting labels
-    fixed_args['labels'] = ["RpR$$_*$$", 'i', "aR$$_*$$", "P", "$$\sqrt{e}\cos{\omega}$$", "$$\sqrt{e}\sin{\omega}$$", "u$$_1$$", "u$$_2$$"]
-
-elif PLD_order == 3:
-    #Setting base LDCs
-    init_PLD_coeffs = [0.1, 0.2, 0.4]
-
-    #Updating initial state dictionary
-    for iLD, LD_coeff in enumerate(init_PLD_coeffs):
-        init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
-
-    #Updating fit dictionaries
-    mod_prop.update(
-        {
-            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.6]},
-            'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
-            'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
-        }
-    )
-
-    #Updating priors
-    priors_dic.update(
-        {
-            'LD_u1'         : {'type':'uf', 'bounds':[-100, 100]},
-            'LD_u2'         : {'type':'uf', 'bounds':[-100, 100]},
-            'LD_u3'         : {'type':'uf', 'bounds':[-100, 100]},
-        }
-    )
-
-    #Define plotting labels
-    fixed_args['labels'] = ["RpR$$_*$$", 'i', "aR$$_*$$", "P", "$$\sqrt{e}\cos{\omega}$$", "$$\sqrt{e}\sin{\omega}$$", "u$$_1$$", "u$$_2$$", "u$$_3$$"]
-
-elif PLD_order == 4:
-    #Setting base LDCs
-    init_PLD_coeffs = [0.1, 0.2, 0.4, 0.3]
-
-    #Updating initial state dictionary
-    for iLD, LD_coeff in enumerate(init_PLD_coeffs):
-        init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
-
-    #Updating fit dictionaries
-    mod_prop.update(
-        {
-            'LD_u1'     : {'vary':True, 'guess':0., 'bounds':[-0.4, 0.6]},
-            'LD_u2'     : {'vary':True, 'guess':0.1, 'bounds':[-0.3, 0.7]},
-            'LD_u3'     : {'vary':True, 'guess':0.3, 'bounds':[-0.1, 0.9]},
-            'LD_u4'     : {'vary':True, 'guess':0.2, 'bounds':[-0.2, 0.8]},
-        }
-    )
-
-    #Updating priors
-    priors_dic.update(
-        {
-            'LD_u1'         : {'type':'uf', 'bounds':[-100, 100]},
-            'LD_u2'         : {'type':'uf', 'bounds':[-100, 100]},
-            'LD_u3'         : {'type':'uf', 'bounds':[-100, 100]},
-            'LD_u4'         : {'type':'uf', 'bounds':[-100, 100]},
-        }
-    )
-
-    #Define plotting labels
-    fixed_args['labels'] = ["RpR$$_*$$", 'i', "aR$$_*$$", "P", "$$\sqrt{e}\cos{\omega}$$", "$$\sqrt{e}\sin{\omega}$$", "u$$_1$$", "u$$_2$$", "u$$_3$$", "u$$_4$$"]
-
-else:
-    raise KeyError('Wrong order of polynomial limb darkening law.')
-
-
-#######################################
-##### Finalizing hyper-parameters #####
-#######################################
-
-#%% Defining important lists
-ndim=0
-var_param_list = []
-fix_param_list = []
-fix_param_val = []
-for key in mod_prop:
-    if mod_prop[key]['vary']:
-        var_param_list.append(str(key))
-        ndim+=1
-    else:
-        fix_param_list.append(str(key))
-        fix_param_val.append(mod_prop[key]['guess'])
-
-#%% Defining dictionary to store additional info. needed for the model
-fixed_args['priors_dic']=priors_dic
-fixed_args['var_param_list']=var_param_list
-fixed_args['fix_param_list']=fix_param_list
-fixed_args['fix_param_val']=fix_param_val
-fixed_args['ndim']=ndim
-
-#Uniform distribution of walker starting positions
-if fixed_args['kernel'] == 'emcee':
-    init_keys = jax.random.split(jaxnoise_key, ndim)
-    fixed_args['pos'] = np.zeros((fixed_args['nwalkers'], fixed_args['ndim']), dtype=float)
-    for i in range(fixed_args['ndim']):
-        fixed_args['pos'][:, i] = jax.random.uniform(init_keys[i], minval=mod_prop[var_param_list[i]]['bounds'][0], maxval=mod_prop[var_param_list[i]]['bounds'][1], shape=(fixed_args['nwalkers'],))
-else:
-    fixed_args['pos'] = {}
-    for i in range(fixed_args['ndim']):
-        fixed_args['pos'][var_param_list[i]] = jnp.array(mod_prop[var_param_list[i]]['guess'])
-
+#%% Model scatter to use
+model_scatter =  16.68100537200059
 
 ##############################
 ##### Relevant functions #####
@@ -290,7 +170,7 @@ def check_dir(dir_name):
     return dir_name
 
 def create_jaxoplanet_model(x, p):
-    
+
     #Retrieving ecc and w
     if ('sqrtecosw' in p) and ('sqrtesinw' in p):
         ecc = p['sqrtecosw']**2 + p['sqrtesinw']**2
@@ -318,7 +198,7 @@ def create_jaxoplanet_model(x, p):
         period = p['period'],
         inclination = inc,
         eccentricity = ecc,
-        omega_peri = w, 
+        omega_peri = w,
         radius = (p['r'] * R_star),
     )
 
@@ -361,7 +241,7 @@ def fit_func_numpyro(x, y, yerr):
         p_step_all[parname] = p_step[fixed_args['var_param_list'].index(parname)]
     for parname in fixed_args['fix_param_list']:
         p_step_all[parname] = fixed_args['fix_param_val'][fixed_args['fix_param_list'].index(parname)]
-    
+
     #% Generate predicted LC
     y_pred = create_jaxoplanet_model(x, p_step_all)
 
@@ -372,7 +252,7 @@ def fit_func_numpyro(x, y, yerr):
     step_chi2 = jnp.sum( (y_pred - y)**2/yerr**2 )
     numpyro.deterministic("step_chi2", jnp.array(step_chi2))
 
-    #% Keep track of log-probability 
+    #% Keep track of log-probability
     lk = -0.5 * (step_chi2 + jnp.sum(jnp.log(2*jnp.pi*yerr**2)))
     numpyro.deterministic("logprob", lk + lp)
 
@@ -382,14 +262,14 @@ def fit_func_numpyro(x, y, yerr):
 def emcee_log_prior(param_dict):
 
     p=param_dict.copy()
-    
+
     ln_p = 0.
-    
+
     #Restricting sqrtecosw and sqrtesinw to physical values
     if ('sqrtecosw' in p) and ('sqrtesinw' in p):
         ecc = p['sqrtecosw']**2 + p['sqrtesinw']**2
         ln_p += jnp.where(ecc <= 1.0, 0.0, -jnp.inf)
-    
+
     if ((('sqrtecosw' in p) and ('sqrtecosw' not in fixed_args['priors_dic'])) or (('sqrtesinw' in p) and ('sqrtesinw' not in fixed_args['priors_dic']))) and (('e' in fixed_args['priors_dic']) and ('w' in fixed_args['priors_dic'])):
         #Get the values
         ecc = p['sqrtecosw']**2 + p['sqrtesinw']**2
@@ -408,11 +288,11 @@ def emcee_log_prior(param_dict):
                     -jnp.log(param_prior['bounds'][1] - param_prior['bounds'][0]),
                     -jnp.inf,
                 )
-            
+
             #Gaussian prior
             elif param_prior['type']=='gauss':
-                ln_p += - 0.5*(jnp.log(2.*jnp.pi*param_prior['s_val']**2.) + ( (param_val - param_prior['val'])/param_prior['s_val']  )**2.)        
-            
+                ln_p += - 0.5*(jnp.log(2.*jnp.pi*param_prior['s_val']**2.) + ( (param_val - param_prior['val'])/param_prior['s_val']  )**2.)
+
             else:raise KeyError(f"Undefined prior type for '{param}'")
 
         #Remove the concerned parameter from p
@@ -424,11 +304,11 @@ def emcee_log_prior(param_dict):
 
         #Looking only at variable parameters
         if param not in fixed_args['fix_param_list']:
-            
+
             #Check if parameter's priors have been defined
             if param not in fixed_args['priors_dic']:
                 raise KeyError(f"Parameter '{param}' is missing priors.")
-            
+
             prior = fixed_args['priors_dic'][param]
             #Uniform prior
             if prior['type']=='uf':
@@ -438,25 +318,25 @@ def emcee_log_prior(param_dict):
                     -jnp.log(prior['bounds'][1] - prior['bounds'][0]),
                     -jnp.inf,
                 )
-            
+
             #Gaussian prior
             elif prior['type']=='gauss':
-                ln_p += - 0.5*(jnp.log(2.*jnp.pi*prior['s_val']**2.) + ( (p[param] - prior['val'])/prior['s_val']  )**2.)        
-            
+                ln_p += - 0.5*(jnp.log(2.*jnp.pi*prior['s_val']**2.) + ( (p[param] - prior['val'])/prior['s_val']  )**2.)
+
             else:raise KeyError(f"Undefined prior type for '{param}'")
-    
+
     return ln_p
 
 #Posterior function
 def emcee_log_probability(p_step, x, y, yerr):
-    
+
     #Format p_step into what is required for further functions
     p = {}
     for ipar, parname in enumerate(fixed_args['var_param_list']):
         p[parname] = p_step[ipar]
     for ipar, parname in enumerate(fixed_args['fix_param_list']):
         p[parname] = fixed_args['fix_param_val'][ipar]
-    
+
     #Log-prior
     lp = emcee_log_prior(p)
     lp = jnp.where(jnp.isfinite(lp), lp, -jnp.inf)
@@ -468,6 +348,55 @@ def emcee_log_probability(p_step, x, y, yerr):
     lk = jnp.where(jnp.isnan(lk), -jnp.inf, lk)
 
     return lp + lk, {'step_chi2': step_chi2}
+
+
+#Build a fresh fixed_args dict for the run where `param_to_fix` is held at its guess value
+def build_fixed_args(param_to_fix):
+
+    mod_prop = copy.deepcopy(mod_prop_base)
+    mod_prop[param_to_fix]['vary'] = False
+
+    ndim = 0
+    var_param_list = []
+    fix_param_list = []
+    fix_param_val = []
+    for key in mod_prop:
+        if mod_prop[key]['vary']:
+            var_param_list.append(str(key))
+            ndim += 1
+        else:
+            fix_param_list.append(str(key))
+            fix_param_val.append(mod_prop[key]['guess'])
+
+    args = {}
+    args['priors_dic'] = priors_dic
+    args['var_param_list'] = var_param_list
+    args['fix_param_list'] = fix_param_list
+    args['fix_param_val'] = fix_param_val
+    args['ndim'] = ndim
+    args['labels'] = [full_labels_dic[p] for p in var_param_list]
+    args['run_mode'] = run_mode
+    args['nthreads'] = nthreads
+    args['nwalkers'] = nwalkers
+    args['nsteps'] = nsteps
+    args['nburn'] = nburn
+    args['kernel'] = kernel
+    args['adapt_step_size'] = adapt_step_size
+    args['dense_matrix'] = dense_matrix
+    args['regularize_mass_matrix'] = regularize_mass_matrix
+
+    #Uniform distribution of walker starting positions
+    if args['kernel'] == 'emcee':
+        init_keys = jax.random.split(jaxnoise_key, ndim)
+        args['pos'] = np.zeros((args['nwalkers'], args['ndim']), dtype=float)
+        for i in range(args['ndim']):
+            args['pos'][:, i] = jax.random.uniform(init_keys[i], minval=mod_prop[var_param_list[i]]['bounds'][0], maxval=mod_prop[var_param_list[i]]['bounds'][1], shape=(args['nwalkers'],))
+    else:
+        args['pos'] = {}
+        for i in range(args['ndim']):
+            args['pos'][var_param_list[i]] = jnp.array(mod_prop[var_param_list[i]]['guess'])
+
+    return args
 
 def next_pow_two(n):
     """Find the next power of two greater than or equal to n."""
@@ -525,17 +454,35 @@ def autocorr_new(y, c=5.0):
     return taus[window]
 
 #############################################
+########## Define parrallelization ##########
+#############################################
+#%% Parameters to fix one at a time (everything varying except 'r', whose posterior we are measuring)
+params_to_fix = [key for key in mod_prop_base if mod_prop_base[key]['vary'] and key != 'r']
+#%% Seeds to use
+seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
+
+# # Distribute tasks - for HPC usage
+task_arrays = [params_to_fix, seeds]
+param_combos = list(itertools.product(*task_arrays))
+param_combos = [list(c) for c in param_combos]
+
+my_task_id = int(sys.argv[1])
+param_to_fix, seed = param_combos[my_task_id - 1]
+
+#############################################
 ################ Running code ###############
 #############################################
+
 #Check directory exists
 check_dir(raw_save_dir)
+print(f"FIXING PARAMETER: {param_to_fix}")
+fixed_args = build_fixed_args(param_to_fix)
 
-#Check PLD order directory exists
-PLD_dir = check_dir(raw_save_dir+f'PLD_{PLD_order}/')
-print(f"PLD order = {PLD_order}")
+#Check parameter directory exists
+param_dir = check_dir(raw_save_dir+f'fix_{param_to_fix}/')
 
 #Check model scatter directory exists
-scatter_dir = check_dir(PLD_dir+f'{jnp.floor(model_scatter)}ppm/')
+scatter_dir = check_dir(param_dir+f'{jnp.floor(model_scatter)}ppm/')
 print(f"MODEL SCATTER = {model_scatter:.2f}")
 
 #Check seed directory exists
@@ -568,7 +515,7 @@ for ax in [ax1, ax2]:
     ax.axvline(0.5 * T_dur, color='black', linestyle='dashed')
     ax.axvline(-1.5 * T_dur, color='black', linestyle='dotted')
     ax.axvline(1.5 * T_dur, color='black', linestyle='dotted')
-ax1.set_title('Model LC with %.f ppm scatter'%model_scatter)
+ax1.set_title('Model LC with %.f ppm scatter (fix %s)'%(model_scatter, param_to_fix))
 ax2.set_xlabel('Time (BJD)')
 ax1.set_ylabel('Flux')
 ax2.set_ylabel('Difference (ppm)')
@@ -576,15 +523,13 @@ fig.tight_layout()
 plt.savefig(fixed_args['save_loc']+'init_guess.pdf')
 plt.close()
 
-
-
 #########################
 ##### Emcee fitting #####
 #########################
 
 # Running the MCMC
 if fixed_args['run_mode']=='use':
-    print(f"Running MCMC") 
+    print(f"Running MCMC")
 
     if fixed_args['kernel']=='emcee':
         st0 = time.time()
@@ -613,22 +558,22 @@ if fixed_args['run_mode']=='use':
         st0 = time.time()
         #Define the kernel
         if fixed_args['kernel'] == 'NUTS':
-            kernel = NUTS(fit_func_numpyro, 
+            kernel_obj = NUTS(fit_func_numpyro,
                             dense_mass=fixed_args['dense_matrix'],
                             regularize_mass_matrix=fixed_args['regularize_mass_matrix'],
                             adapt_step_size=fixed_args['adapt_step_size'],
                             init_strategy=init_to_value(values=fixed_args['pos']))
         elif fixed_args['kernel'] == 'HMC':
-            kernel = HMC(fit_func_numpyro, 
+            kernel_obj = HMC(fit_func_numpyro,
                             dense_mass=fixed_args['dense_matrix'],
                             regularize_mass_matrix=fixed_args['regularize_mass_matrix'],
                             adapt_step_size=fixed_args['adapt_step_size'],
                             init_strategy=init_to_value(values=fixed_args['pos']))
         else:print('Invalid kernel specified')
-        
+
         # Define the MCMC sampler
-        mcmc = MCMC(kernel, num_warmup=fixed_args['nburn'], num_samples=fixed_args['nsteps']-fixed_args['nburn'], num_chains=fixed_args['nwalkers'], progress_bar=True)
-        
+        mcmc = MCMC(kernel_obj, num_warmup=fixed_args['nburn'], num_samples=fixed_args['nsteps']-fixed_args['nburn'], num_chains=fixed_args['nwalkers'], progress_bar=True)
+
         #Run the MCMC
         mcmc.run(random.PRNGKey(0), init_state_dic['times'], noisy_LC, noisy_std)
 
@@ -643,7 +588,7 @@ if fixed_args['run_mode']=='use':
         #     - pyro_chains is of shape (nwalkers, nsteps, n_free)
         #     - parameters have the same order as in 'initial_distribution' and 'var_param_list'
         pyro_chains = mcmc.get_samples(group_by_chain=True)
-        
+
         # Collect parameter arrays in consistent order
         raw_chains = []
         for p in fixed_args['var_param_list']:
@@ -658,7 +603,7 @@ if fixed_args['run_mode']=='use':
         logprob =  pyro_chains['logprob']
 
         fixed_args['nsteps'] = fixed_args['nsteps'] - fixed_args['nburn']
-        fixed_args['nburn'] = 0  
+        fixed_args['nburn'] = 0
 
 
     #%% Storing the chains
@@ -671,7 +616,7 @@ if fixed_args['run_mode']=='use':
 
     #%% Storing the chi2 values
     output_file = fixed_args['save_loc']+"chi2_chain.npy"
-    jnp.save(output_file, chi2_chain) 
+    jnp.save(output_file, chi2_chain)
 
 elif fixed_args['run_mode']=='reuse':
     print(f'Retrieving MCMC')
@@ -704,7 +649,8 @@ print('PLOTTING')
 print('STEP 0: CHI2 CHAINS')
 plt.figure(figsize=[12, 6])
 for iwalk in range(fixed_args['nwalkers']):
-    plt.loglog(jnp.arange(fixed_args['nsteps']), chi2_chain[iwalk, :])
+    plt.loglog(jnp.arange(fixed_args['nburn']), chi2_chain[iwalk, :fixed_args['nburn']], color='red', alpha=0.5, lw=0.7, zorder=1)
+    plt.loglog(jnp.arange(fixed_args['nburn'], fixed_args['nsteps']), chi2_chain[iwalk, fixed_args['nburn']:], color='blue', alpha=0.5, lw=0.7, zorder=1)
 plt.xlabel('Steps')
 plt.ylabel('Chi-squared')
 plt.savefig(fixed_args['save_loc']+'chi2.pdf')
@@ -735,7 +681,7 @@ plt.close()
 print('STEP 3: CORNER')
 #% Build truth dictionary
 truth_dic={}
-for param,parlabel in zip(fixed_args['var_param_list'],fixed_args['labels']): 
+for param,parlabel in zip(fixed_args['var_param_list'],fixed_args['labels']):
     if ('LD' in param):
         truth_dic[parlabel] = init_state_dic[param]
     elif param=='sqrtecosw':

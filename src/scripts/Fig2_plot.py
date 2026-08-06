@@ -11,7 +11,6 @@
 ######################################
 ########## Import libraries ##########
 ######################################
-from jax import random
 import paths
 import jax
 print(f"JAX devices: {jax.devices()}")
@@ -24,25 +23,12 @@ from astropy.constants import G
 from jaxoplanet.light_curves import limb_dark_light_curve
 from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import numpy as np
+import os
+import pickle
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
 
-# Set random seed
-jaxnoise_key = jax.random.PRNGKey(0)
-
-#####################################
-######## Add temp. plots ############
-#####################################
-# Generate some data
-random_numbers = np.random.randn(100, 10)
-
-# Plot and save
-fig = plt.figure(figsize=(7, 6))
-plt.plot(random_numbers)
-plt.xlabel("x")
-plt.ylabel("y")
-fig.savefig(paths.figures / "Fig2.pdf", bbox_inches="tight", dpi=300)
 
 #############################################
 ########## Define hyper-parameters ##########
@@ -65,18 +51,17 @@ init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-# Overall LDCs : c1 = 0.5586 c2 = -0.0382 c3 = -0.0852 c4 = 0.0336
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336)
+# Global LDCs : c1 = 0.6245 c2 = -0.1898 c3 = 0.1473 c4 = -0.0634           
+init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634)
 
 #Updating initial state dictionary
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
 #Get starting points for the LD coefficients
-init_LD_prop = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336, order=3)
+init_LD_prop = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634, order=3)
 
 #%%%% Calculate transit duration
-# Convert angles to radians
 # Impact parameter (eccentricity-corrected)
 b = (
     (init_state_dic['a'] * jnp.cos(init_state_dic['i'])) / R_star
@@ -105,7 +90,7 @@ num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number 
 init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
 
-#%% Storing outputs of nested sampling and plots
+#%% Storing outputs
 raw_save_dir = str(paths.data / "Fig2_Storage") + "/"
 
 #%% Model parameters
@@ -142,14 +127,18 @@ fixed_args['fix_param_val']=fix_param_val
 #%% Number of burn-in steps
 fixed_args['nburn'] = 70000
 
-#%% Model scatter and seed to use for the plot
-model_scatter =  16.68100537200059 
-seed = 70
+#%% Model scatter and seeds to use for the plot
+model_scatter =  16.68100537200059
+seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
+
+#Seed used for the single-run panel B joint-density contour
+plot_seed = 70
 
 # Filtering parameters
 THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
 ROUNDS = 3
 verbose = True
+
 ##############################
 ##### Relevant functions #####
 ##############################
@@ -312,50 +301,130 @@ def create_jaxoplanet_model(x, p):
     jaxo_lc = 1.0 + limb_dark_light_curve(planet, ld_u_coeffs)(x)
     return jaxo_lc.reshape((-1))
 
+def process_base_data():
+    """
+    Load (or retrieve from cache) the MCMC results (Fig2_Storage output) for every
+    seed: the full raw_chain and logprob arrays, plus the sigma-clipped
+    r_chain_post_burnin, bestfit_r, and good_steps_mask.
+
+    Everything the rest of the script needs from Fig2_Storage lives in this cache,
+    so once it has been built the raw chains.npy/logprob.npy files are no longer
+    required to re-run the script.
+
+    Returns a dict keyed by seed, each holding
+    {'raw_chain', 'logprob', 'r_chain_post_burnin', 'bestfit_r', 'good_steps_mask'}.
+    """
+    cache_file = raw_save_dir + 'Fig2_base_processed_cache.pkl'
+
+    if os.path.exists(cache_file):
+        print(f"Loading cached base data from {cache_file}...")
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+        return cached_data
+
+    print("No base cache found. Processing base MCMC runs...")
+    cached_data = {}
+
+    for seed in seeds:
+        print(f'BASE: seed{seed}')
+        _, _, r_chain_post_burnin, bestfit_r, _, raw_chain, logprob, _, good_steps_mask = load_result(
+            (raw_save_dir, model_scatter, seed, True)
+        )
+        cached_data[seed] = {
+            'raw_chain': raw_chain,
+            'logprob': logprob,
+            'r_chain_post_burnin': r_chain_post_burnin,
+            'bestfit_r': bestfit_r,
+            'good_steps_mask': good_steps_mask,
+        }
+
+    print(f"Saving base cache to {cache_file}...")
+    with open(cache_file, 'wb') as f:
+        pickle.dump(cached_data, f)
+
+    return cached_data
+
 #############################################
 ################ Running code ###############
 #############################################
-
-#############################
-####### Generate data #######
-#############################
-print('GENERATING DATA')
-
-#Pure data
-true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
-
-#Build noisy data
-std = model_scatter * 1e-6
-noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
-noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
 
 ##################
 #### Plotting ####
 ##################
 
-#Load MCMC results
-raw_chain = jnp.load(raw_save_dir+f"{jnp.floor(model_scatter)}ppm/Seed{seed}/chains.npy")
-logprob = jnp.load(raw_save_dir+f"{jnp.floor(model_scatter)}ppm/Seed{seed}/logprob.npy")
+#Parameters perturbed to build panels A and C, and their plot labels
+perturb_params = ['LD_u1', 'LD_u2', 'LD_u3', 'i', 'stellar_rho', 'period', 'sqrtecosw', 'sqrtesinw']
+perturb_labels = [r'u$_1$', r'u$_2$', r'u$_3$', 'i', r'$\rho_{\star}$', r'$P$', r'$\sqrt{e}$cos($\omega$)', r'$\sqrt{e}$sin($\omega$)']
 
-# Get highest log probability parameters
-max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
-best_params = {}
-for i, param in enumerate(fixed_args['var_param_list']):
-    best_params[param] = raw_chain[max_walker, max_step, i]
-for idx, param in enumerate(fixed_args['fix_param_list']):
-    best_params[param] = fixed_args['fix_param_val'][idx]
+#Collecting the per-seed perturbation curves so we can plot their mean and std across seeds
+perturbation_curves = {param: [] for param in perturb_params}
 
-_, _, _, _, _, _, _, _, good_steps_mask = load_result((raw_save_dir, model_scatter, seed, True))
+#Sigma-clipped MCMC results (Fig2_Storage), across all seeds
+#(cached to raw_save_dir/Fig2_base_processed_cache.pkl so this is only computed once)
+base_cached_data = process_base_data()
 
-# Compute bestfit model
-bestfit_lc = create_jaxoplanet_model(init_state_dic['times'], best_params)
-bestfit_RMS = jnp.sqrt(jnp.average((noisy_LC - bestfit_lc)**2))
+#Loop over each of the 10 MCMC runs (different noise seeds)
+for seed in seeds:
+    print(f'LOADING SEED {seed}')
+
+    #Load MCMC results (from cache)
+    raw_chain_s = base_cached_data[seed]['raw_chain']
+    logprob_s = base_cached_data[seed]['logprob']
+
+    # Get highest log probability parameters
+    max_walker_s, max_step_s = jnp.unravel_index(jnp.argmax(logprob_s), logprob_s.shape)
+    best_params_s = {}
+    for i, param in enumerate(fixed_args['var_param_list']):
+        best_params_s[param] = raw_chain_s[max_walker_s, max_step_s, i]
+    for idx, param in enumerate(fixed_args['fix_param_list']):
+        best_params_s[param] = fixed_args['fix_param_val'][idx]
+
+    good_steps_mask_s = base_cached_data[seed]['good_steps_mask']
+
+    # Compute bestfit model
+    bestfit_lc_s = create_jaxoplanet_model(init_state_dic['times'], best_params_s)
+
+    #Calculate bestfit stellar density
+    bestfit_stellar_rho_s = ( ( 3 * jnp.pi ) / ( G_cgday * best_params_s['period']**2 ) ) * best_params_s['a']**3
+
+    #Looping over each parameter to perturb it
+    for param in perturb_params:
+
+        #Get the perturbation value
+        if param=='stellar_rho':
+            period_chain = raw_chain_s[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('period')][good_steps_mask_s]
+            a_chain = raw_chain_s[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('a')][good_steps_mask_s]
+            stellar_rho_chain_s = ( ( 3 * jnp.pi ) / ( G_cgday * period_chain**2 ) ) * a_chain**3
+            perturbation = jnp.std(stellar_rho_chain_s)
+        else:
+            param_chain = raw_chain_s[:, fixed_args['nburn']:, fixed_args['var_param_list'].index(param)][good_steps_mask_s]
+            perturbation = jnp.std(param_chain)
+
+        #Adjust the value of the corresponding parameter
+        perturbed_state_dic = best_params_s.copy()
+        if param=='stellar_rho':
+            perturbed_state_dic['a'] = ( ( perturbed_state_dic['period']**2 * (bestfit_stellar_rho_s + perturbation) * G_cgday) / (3 * jnp.pi))**(1/3)
+        else:perturbed_state_dic[param] += perturbation
+
+        #Compute the perturbed model and store the flux difference for this seed
+        tr_perturbed_LC_s = create_jaxoplanet_model(init_state_dic['times'], perturbed_state_dic)
+        perturbation_curves[param].append((bestfit_lc_s - tr_perturbed_LC_s)*1e6)
+
+    #Keep the representative seed's results around for panel B (joint-density contour)
+    if seed == plot_seed:
+        raw_chain = raw_chain_s
+        good_steps_mask = good_steps_mask_s
+        best_params = best_params_s
+        bestfit_lc = bestfit_lc_s
+        bestfit_stellar_rho = bestfit_stellar_rho_s
+
+
+#Compute the mean and standard deviation of each parameter's perturbation curve across the 10 seeds
+perturbation_mean = {param: jnp.mean(jnp.stack(curves), axis=0) for param, curves in perturbation_curves.items()}
+perturbation_std  = {param: jnp.std(jnp.stack(curves), axis=0) for param, curves in perturbation_curves.items()}
 
 # Figure 2
 print('FIGURE 2')
-
-#Calculate bestfit stellar density
-bestfit_stellar_rho = ( ( 3 * jnp.pi ) / ( G_cgday * best_params['period']**2 ) ) * best_params['a']**3
 
 #Initializing figure 
 # Define the layout
@@ -368,43 +437,30 @@ fig, axes = plt.subplot_mosaic(layout, figsize=(6, 6))
 plot_phase = init_state_dic['times'] / init_state_dic['period']
 marksize = 4
 elem_size = 10
-#Looping over each parameter to perturb it
-for param, paramlabel, perturbation_sigma, color, shape in zip(
-                                            ['LD_u1', 'LD_u2', 'LD_u3', 'i', 'stellar_rho', 'period', 'sqrtecosw', 'sqrtesinw'],
-                                            [r'u$_1$', r'u$_2$', r'u$_3$', 'i', r'$\rho_{\star}$', r'$P$', r'$\sqrt{e}$cos($\omega$)', r'$\sqrt{e}$sin($\omega$)'],
-                                            [1, 1, 1, 1, 1, 1, 1, 1],
+#Looping over each parameter to plot the mean (and across-seed std) of its perturbation curve
+for param, paramlabel, color, shape in zip(
+                                            perturb_params,
+                                            perturb_labels,
                                             plt.get_cmap('coolwarm')(jnp.linspace(0., 1, 8)),
                                             ['.','.','.','.','.','.','.','.']):
 
-    #Get the perturbation value
-    if param=='stellar_rho':
-        period_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('period')][good_steps_mask]
-        a_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('a')][good_steps_mask]
-        stellar_rho_chain = ( ( 3 * jnp.pi ) / ( G_cgday * period_chain**2 ) ) * a_chain**3
-        perturbation = perturbation_sigma * jnp.std(stellar_rho_chain)
-    else:
-        param_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index(param)][good_steps_mask]
-        perturbation = perturbation_sigma * jnp.std(param_chain)
+    mean_curve = perturbation_mean[param]
+    std_curve = perturbation_std[param]
 
-    
-    #Adust the value of the corresponding parameter
-    perturbed_state_dic = best_params.copy()
-    if param=='stellar_rho':
-        perturbed_state_dic['a'] = ( ( perturbed_state_dic['period']**2 * (bestfit_stellar_rho + perturbation) * G_cgday) / (3 * jnp.pi))**(1/3) 
-    else:perturbed_state_dic[param] += perturbation
-
-    #Compute the perturbed model
-    tr_perturbed_LC = create_jaxoplanet_model(init_state_dic['times'], perturbed_state_dic)
-        
-    #Plot the difference between nominal and perturbed model
-    axes['A'].plot(plot_phase, (bestfit_lc - tr_perturbed_LC)*1e6, shape, color=color, markersize=marksize)
+    #Plot the mean difference between nominal and perturbed model, shaded by std across seeds
+    axes['A'].plot(plot_phase, mean_curve, shape, color=color, markersize=marksize)
+    axes['A'].fill_between(plot_phase, mean_curve - std_curve, mean_curve + std_curve, color=color, alpha=0.3, linewidth=0)
     axes['A'].set_xlim([-0.0425, -0.033])
-    axes['C'].plot(plot_phase, (bestfit_lc - tr_perturbed_LC)*1e6, shape, color=color, label=paramlabel, markersize=marksize)
+    axes['C'].plot(plot_phase, mean_curve, shape, color=color, label=paramlabel, markersize=marksize)
+    axes['C'].fill_between(plot_phase, mean_curve - std_curve, mean_curve + std_curve, color=color, alpha=0.3, linewidth=0)
     axes['C'].set_xlim([-0.02, 0.02])
     axes['C'].set_ylim([-10, 20])
 
-#Plotting contours for stellar density vs i in top right panel 
+#Plotting contours for stellar density vs i in top right panel (representative seed only)
 # Build flattened sample vectors (ensure 1D arrays) before feeding KDE
+period_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('period')][good_steps_mask]
+a_chain = raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('a')][good_steps_mask]
+stellar_rho_chain = ( ( 3 * jnp.pi ) / ( G_cgday * period_chain**2 ) ) * a_chain**3
 rho_chain = np.asarray(stellar_rho_chain).ravel()
 sqrtesinw_chain = np.asarray(raw_chain[:, fixed_args['nburn']:, fixed_args['var_param_list'].index('sqrtesinw')])[good_steps_mask]
 

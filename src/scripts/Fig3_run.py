@@ -29,6 +29,7 @@ from jaxoplanet.light_curves import limb_dark_light_curve
 from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
 import numpy as np
 import os
+import pickle
 
 # For 64-bit precision since JAX defaults to 32-bit
 jax.config.update("jax_enable_x64", True)
@@ -55,18 +56,17 @@ init_state_dic['e'] = 0.0                                     #unitless
 init_state_dic['t0'] = 0.0                                    #days
 
 #Setting base LDCs
-# Overall LDCs : c1 = 0.5586 c2 = -0.0382 c3 = -0.0852 c4 = 0.0336
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336)
+# Global LDCs : c1 = 0.6245 c2 = -0.1898 c3 = 0.1473 c4 = -0.0634           
+init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634)
 
 #Updating initial state dictionary
 for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
     init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
 
 #Get starting points for the LD coefficients
-init_LD_prop = nonlinear_4param_ld_law(u1=0.5586, u2=-0.0382, u3=-0.0852, u4=0.0336, order=3)
+init_LD_prop = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634, order=3)
 
 #%%%% Calculate transit duration
-# Convert angles to radians
 # Impact parameter (eccentricity-corrected)
 b = (
     (init_state_dic['a'] * jnp.cos(init_state_dic['i'])) / R_star
@@ -138,9 +138,9 @@ fixed_args['sample_pts'] = 100
 #%% Number of burn-in steps used in MCMC
 fixed_args['nburn'] = 70000
 
-#%% Model scatter and seed to use for the plot
-model_scatter =  16.68100537200059 
-seed = 70
+#%% Model scatter and seeds to use for the plot
+model_scatter =  16.68100537200059
+seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 
 # Filtering parameters
 THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
@@ -274,6 +274,49 @@ def check_dir(dir_name):
     if not os.path.isdir(dir_name):os.makedirs(dir_name)
     return dir_name
 
+def process_base_data():
+    """
+    Load (or retrieve from cache) the MCMC results (Fig2_Storage output) for every
+    seed: the full raw_chain and logprob arrays, plus the sigma-clipped
+    r_chain_post_burnin, bestfit_r, and good_steps_mask.
+
+    Shares its cache file (input_dir/Fig2_base_processed_cache.pkl) with
+    Fig2_plot.py, since both compute the exact same values from the same
+    Fig2_Storage inputs - whichever script runs first builds the cache.
+
+    Returns a dict keyed by seed, each holding
+    {'raw_chain', 'logprob', 'r_chain_post_burnin', 'bestfit_r', 'good_steps_mask'}.
+    """
+    cache_file = input_dir + 'Fig2_base_processed_cache.pkl'
+
+    if os.path.exists(cache_file):
+        print(f"Loading cached base data from {cache_file}...")
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+        return cached_data
+
+    print("No base cache found. Processing base MCMC runs...")
+    cached_data = {}
+
+    for seed in seeds:
+        print(f'BASE: seed{seed}')
+        _, _, r_chain_post_burnin, bestfit_r, _, raw_chain, logprob, _, good_steps_mask = load_result(
+            (input_dir, model_scatter, seed, True)
+        )
+        cached_data[seed] = {
+            'raw_chain': raw_chain,
+            'logprob': logprob,
+            'r_chain_post_burnin': r_chain_post_burnin,
+            'bestfit_r': bestfit_r,
+            'good_steps_mask': good_steps_mask,
+        }
+
+    print(f"Saving base cache to {cache_file}...")
+    with open(cache_file, 'wb') as f:
+        pickle.dump(cached_data, f)
+
+    return cached_data
+
 def create_jaxoplanet_model(x, p):
     
     #Retrieving ecc and w
@@ -321,163 +364,170 @@ def create_jaxoplanet_model(x, p):
 
 #Check directories exist
 check_dir(input_dir)
-fixed_args['save_loc'] = check_dir(output_dir)
-
+check_dir(output_dir)
 
 #Check model scatter directory exists
 scatter_dir = check_dir(input_dir+f'{jnp.floor(model_scatter)}ppm/')
 print(f"MODEL SCATTER = {model_scatter:.2f}")
 
-#Check seed directory exists
-seed_dir = check_dir(scatter_dir+f'Seed{seed}/')
-print(f"SEED = {seed}")
+#Sigma-clipped MCMC results (Fig2_Storage), across all seeds
+#(cached to input_dir/Fig2_base_processed_cache.pkl so this is only computed once)
+base_cached_data = process_base_data()
 
-#############################
-####### Generate data #######
-#############################
-print('GENERATING DATA')
+for seed in seeds:
+    #Check seed directory exists
+    seed_dir = check_dir(scatter_dir+f'Seed{seed}/')
+    print(f"SEED = {seed}")
 
-#Pure data
-true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
+    #Check output seed directory exists
+    fixed_args['save_loc'] = check_dir(output_dir+f'Seed{seed}/')
 
-#Build noisy data
-std = model_scatter * 1e-6
-noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
-noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
+    #############################
+    ####### Generate data #######
+    #############################
+    print('GENERATING DATA')
 
-# evaluate this likelihood
-print(f"initial chi2: {jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 )}, initial chi2: {-0.5* ( jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 ) + jnp.sum(jnp.log(2*jnp.pi*noisy_std**2)) ) }")
+    #Pure data
+    true_lc = create_jaxoplanet_model(init_state_dic['times'], init_state_dic)
 
-#Plotting
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=[10, 6], sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-ax1.errorbar(init_state_dic['times'], noisy_LC, yerr=noisy_std, fmt='.', zorder=1)
-ax1.plot(init_state_dic['times'], true_lc, color='red', zorder=2)
-ax2.errorbar(init_state_dic['times'], 1e6*(noisy_LC - true_lc), yerr=noisy_std, fmt='r.', zorder=1)
-for ax in [ax1, ax2]:
-    ax.axvline(-0.5 * T_dur, color='black', linestyle='dashed')
-    ax.axvline(0.5 * T_dur, color='black', linestyle='dashed')
-    ax.axvline(-1.5 * T_dur, color='black', linestyle='dotted')
-    ax.axvline(1.5 * T_dur, color='black', linestyle='dotted')
-ax1.set_title('Model LC with %.f ppm scatter'%model_scatter)
-ax2.set_xlabel('Time (BJD)')
-ax1.set_ylabel('Flux')
-ax2.set_ylabel('Difference (ppm)')
-fig.tight_layout()
-plt.savefig(fixed_args['save_loc']+'init_guess.pdf')
-plt.close()
+    #Build noisy data
+    std = model_scatter * 1e-6
+    noisy_LC = true_lc + std * random.normal(jax.random.PRNGKey(seed), shape=true_lc.shape)
+    noisy_std = std * jnp.ones(true_lc.shape, dtype=float)
 
-#Loading the MCMC results
-print(f'Retrieving MCMC')
-raw_chain = jnp.load(seed_dir+"chains.npy")
-logprob = jnp.load(seed_dir+"logprob.npy")
-_, _, _, _, _, _, _, _, good_steps_mask = load_result((input_dir, model_scatter, seed, True))
+    # evaluate this likelihood
+    print(f"initial chi2: {jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 )}, initial chi2: {-0.5* ( jnp.sum( (true_lc - noisy_LC)**2/noisy_std**2 ) + jnp.sum(jnp.log(2*jnp.pi*noisy_std**2)) ) }")
 
-#Finding the index of max log-probability
-max_step, max_walker = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
+    #Plotting
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=[10, 6], sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+    ax1.errorbar(init_state_dic['times'], noisy_LC, yerr=noisy_std, fmt='.', zorder=1)
+    ax1.plot(init_state_dic['times'], true_lc, color='red', zorder=2)
+    ax2.errorbar(init_state_dic['times'], 1e6*(noisy_LC - true_lc), yerr=noisy_std, fmt='r.', zorder=1)
+    for ax in [ax1, ax2]:
+        ax.axvline(-0.5 * T_dur, color='black', linestyle='dashed')
+        ax.axvline(0.5 * T_dur, color='black', linestyle='dashed')
+        ax.axvline(-1.5 * T_dur, color='black', linestyle='dotted')
+        ax.axvline(1.5 * T_dur, color='black', linestyle='dotted')
+    ax1.set_title('Model LC with %.f ppm scatter'%model_scatter)
+    ax2.set_xlabel('Time (BJD)')
+    ax1.set_ylabel('Flux')
+    ax2.set_ylabel('Difference (ppm)')
+    fig.tight_layout()
+    plt.savefig(fixed_args['save_loc']+'init_guess.pdf')
+    plt.close()
 
-# Get highest log probability parameters
-best_params = {}
-for i, param in enumerate(fixed_args['var_param_list']):
-    best_params[param] = raw_chain[max_walker, max_step, i]
-for idx, param in enumerate(fixed_args['fix_param_list']):
-    best_params[param] = fixed_args['fix_param_val'][idx]
+    #Loading the MCMC results (from cache)
+    print(f'Retrieving MCMC')
+    raw_chain = base_cached_data[seed]['raw_chain']
+    logprob = base_cached_data[seed]['logprob']
+    good_steps_mask = base_cached_data[seed]['good_steps_mask']
 
-#Generate bestfit vector 
-theta_best = jnp.array([best_params[p] for p in fixed_args['all_param_list']])
+    #Finding the index of max log-probability
+    max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
 
-#Calculate the bestfit LC to use for comparison
-bestfit_LC = create_jaxoplanet_model(init_state_dic['times'], best_params)
+    # Get highest log probability parameters
+    best_params = {}
+    for i, param in enumerate(fixed_args['var_param_list']):
+        best_params[param] = raw_chain[max_walker, max_step, i]
+    for idx, param in enumerate(fixed_args['fix_param_list']):
+        best_params[param] = fixed_args['fix_param_val'][idx]
+
+    #Generate bestfit vector 
+    theta_best = jnp.array([best_params[p] for p in fixed_args['all_param_list']])
+
+    #Calculate the bestfit LC to use for comparison
+    bestfit_LC = create_jaxoplanet_model(init_state_dic['times'], best_params)
 
 
 
-#######################
-### More functions ####
-#######################
+    #######################
+    ### More functions ####
+    #######################
 
-#Helper function to unpack array into a dictionary
-def unpack_params(theta):
-    p = {}
-    for i, name in enumerate(fixed_args['all_param_list']):
-        p[name] = theta[i]
-    return p
+    #Helper function to unpack array into a dictionary
+    def unpack_params(theta):
+        p = {}
+        for i, name in enumerate(fixed_args['all_param_list']):
+            p[name] = theta[i]
+        return p
 
-def chi2_from_theta(theta, x, y, yerr):
-    #Build dictionary from vector
-    p = unpack_params(theta)
-    #Create the light curve with jaxoplanet function
-    y_pred = create_jaxoplanet_model(x, p)
-    #Calculate chi2
-    return jnp.sum((y_pred - y)**2 / yerr**2)
+    def chi2_from_theta(theta, x, y, yerr):
+        #Build dictionary from vector
+        p = unpack_params(theta)
+        #Create the light curve with jaxoplanet function
+        y_pred = create_jaxoplanet_model(x, p)
+        #Calculate chi2
+        return jnp.sum((y_pred - y)**2 / yerr**2)
 
-def chi2_1d(param_idx, param_vals):
-    
-    def eval_one(val):
-        theta = theta_best.at[param_idx].set(val)
-        return chi2_from_theta(theta, init_state_dic['times'], bestfit_LC, noisy_std)
-
-    return jax.vmap(eval_one)(param_vals)
-
-def chi2_2d(idx1, idx2, vals1, vals2):
-    V1, V2 = jnp.meshgrid(vals1, vals2, indexing="ij")
-    flat_v1 = V1.ravel()
-    flat_v2 = V2.ravel()
-
-    def eval_one(v1, v2):
-        theta = theta_best.at[idx1].set(v1)
-        theta = theta.at[idx2].set(v2)
-        return chi2_from_theta(theta, init_state_dic['times'], bestfit_LC, noisy_std)
-
-    chi2_flat = jax.vmap(eval_one)(flat_v1, flat_v2)
-    return chi2_flat.reshape((vals1.size, vals2.size))
-
-#######################################
-##### Chi-squared map calculation #####
-#######################################
-
-# Replace the chi2_dic dictionary approach with individual file saves
-for i, param1 in enumerate(fixed_args['var_param_list']):
-    for j, param2 in enumerate(fixed_args['var_param_list']):
-        if j < i:
-            continue
-
-        print(f'CHI2 RETRIEVAL: {param1} vs {param2}')
-
-        if param1 == param2:
-            #Generate chi2 range
-            param_vals = jnp.linspace(
-                raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                fixed_args['sample_pts']
-            )
-            #Calculate chi2 values
-            chi2_vals = chi2_1d(i, param_vals)
-            chi2_vals -= jnp.min(chi2_vals)
-            
-            #Save values
-            jnp.save(fixed_args['save_loc'] + f"chi2_{param1}_{param1}.npy", chi2_vals)
-            
-            #Delete variables (frees memory)
-            del chi2_vals, param_vals
-            
-        else:
-            #Generate 2D chi2 range
-            param1_vals = jnp.linspace(
-                raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                fixed_args['sample_pts']
-            )
-            param2_vals = jnp.linspace(
-                raw_chain[max_walker, max_step, j] - jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
-                raw_chain[max_walker, max_step, j] + jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
-                fixed_args['sample_pts']
-            )
-            #Calculate chi2 values
-            chi2_map = chi2_2d(i, j, param1_vals, param2_vals)
-            chi2_map -= jnp.min(chi2_map)
-            
-            #Save values
-            jnp.save(fixed_args['save_loc'] + f"chi2_{param1}_{param2}.npy", chi2_map)
-            
-            #Delete variables (frees memory)
-            del chi2_map, param1_vals, param2_vals
+    def chi2_1d(param_idx, param_vals):
         
+        def eval_one(val):
+            theta = theta_best.at[param_idx].set(val)
+            return chi2_from_theta(theta, init_state_dic['times'], bestfit_LC, noisy_std)
+
+        return jax.vmap(eval_one)(param_vals)
+
+    def chi2_2d(idx1, idx2, vals1, vals2):
+        V1, V2 = jnp.meshgrid(vals1, vals2, indexing="ij")
+        flat_v1 = V1.ravel()
+        flat_v2 = V2.ravel()
+
+        def eval_one(v1, v2):
+            theta = theta_best.at[idx1].set(v1)
+            theta = theta.at[idx2].set(v2)
+            return chi2_from_theta(theta, init_state_dic['times'], bestfit_LC, noisy_std)
+
+        chi2_flat = jax.vmap(eval_one)(flat_v1, flat_v2)
+        return chi2_flat.reshape((vals1.size, vals2.size))
+
+    #######################################
+    ##### Chi-squared map calculation #####
+    #######################################
+
+    # Replace the chi2_dic dictionary approach with individual file saves
+    for i, param1 in enumerate(fixed_args['var_param_list']):
+        for j, param2 in enumerate(fixed_args['var_param_list']):
+            if j < i:
+                continue
+
+            print(f'CHI2 RETRIEVAL: {param1} vs {param2}')
+
+            if param1 == param2:
+                #Generate chi2 range
+                param_vals = jnp.linspace(
+                    raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
+                    raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
+                    fixed_args['sample_pts']
+                )
+                #Calculate chi2 values
+                chi2_vals = chi2_1d(i, param_vals)
+                chi2_vals -= jnp.min(chi2_vals)
+                
+                #Save values
+                jnp.save(fixed_args['save_loc'] + f"chi2_{param1}_{param1}.npy", chi2_vals)
+                
+                #Delete variables (frees memory)
+                del chi2_vals, param_vals
+                
+            else:
+                #Generate 2D chi2 range
+                param1_vals = jnp.linspace(
+                    raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
+                    raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
+                    fixed_args['sample_pts']
+                )
+                param2_vals = jnp.linspace(
+                    raw_chain[max_walker, max_step, j] - jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
+                    raw_chain[max_walker, max_step, j] + jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
+                    fixed_args['sample_pts']
+                )
+                #Calculate chi2 values
+                chi2_map = chi2_2d(i, j, param1_vals, param2_vals)
+                chi2_map -= jnp.min(chi2_map)
+                
+                #Save values
+                jnp.save(fixed_args['save_loc'] + f"chi2_{param1}_{param2}.npy", chi2_map)
+                
+                #Delete variables (frees memory)
+                del chi2_map, param1_vals, param2_vals
+            
