@@ -18,6 +18,7 @@ import jax
 print(f"JAX devices: {jax.devices()}")
 print(f"Default backend: {jax.default_backend()}")
 import jax.numpy as jnp
+import matplotlib
 import matplotlib.pyplot as plt
 import astropy.units as u
 from astropy.constants import G
@@ -471,7 +472,7 @@ for i, param1 in enumerate(fixed_args['var_param_list']):
 
             # Filled contours
             fill_levels = [0.0] + list(lvls)
-            fill_colors = plt.get_cmap('Greens')(jnp.linspace(0., 1, len(lvls)))  # light -> dark green
+            fill_colors = matplotlib.colormaps['Greens'](jnp.linspace(0., 1, len(lvls)))  # light -> dark green
             ax.contourf(A, B, chi2_grid, levels=fill_levels, colors=fill_colors, alpha=0.5, antialiased=True)
 
             # Outline the three contours with black lines

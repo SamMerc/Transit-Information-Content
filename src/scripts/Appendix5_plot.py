@@ -60,7 +60,7 @@ for model in models:
 
     # ── Cluster colours (tab10, same as Appendix 3) ──────────────────────────
     n_cl           = len(unique_cl)
-    cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
+    cluster_cmap   = matplotlib.colormaps['tab10'].resampled(n_cl)
     cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
 
     # ── Colormaps ─────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ for model in models:
     logg_bounds = np.concatenate([[logg_unique[0] - hw_g[0]],
                                    logg_unique[:-1] + hw_g,
                                    [logg_unique[-1] + hw_g[-1]]])
-    logg_cmap   = plt.cm.get_cmap('viridis', n_logg)
+    logg_cmap   = matplotlib.colormaps['viridis'].resampled(n_logg)
     logg_norm   = mcolors.BoundaryNorm(logg_bounds, ncolors=logg_cmap.N)
     sm_g_disc   = cm.ScalarMappable(cmap=logg_cmap, norm=logg_norm)
 
@@ -82,7 +82,7 @@ for model in models:
     met_bounds = np.concatenate([[met_unique[0] - hw_m[0]],
                                   met_unique[:-1] + hw_m,
                                   [met_unique[-1] + hw_m[-1]]])
-    met_cmap   = plt.cm.get_cmap('winter', n_met)
+    met_cmap   = matplotlib.colormaps['winter'].resampled(n_met)
     met_norm   = mcolors.BoundaryNorm(met_bounds, ncolors=met_cmap.N)
     sm_m_disc  = cm.ScalarMappable(cmap=met_cmap, norm=met_norm)
 

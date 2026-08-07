@@ -60,7 +60,7 @@ for model in models:
 
     # ── Cluster colours (tab10, same as Appendix 3) ──────────────────────────
     n_cl           = len(unique_cl)
-    cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
+    cluster_cmap   = matplotlib.colormaps['tab10'].resampled(n_cl)
     cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
 
     # ── Colormaps ─────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ for model in models:
     teff_bounds = np.concatenate([[teff_unique[0] - hw_t[0]],
                                    teff_unique[:-1] + hw_t,
                                    [teff_unique[-1] + hw_t[-1]]])
-    teff_cmap   = plt.cm.get_cmap('inferno', n_teff)
+    teff_cmap   = matplotlib.colormaps['inferno'].resampled(n_teff)
     teff_norm   = mcolors.BoundaryNorm(teff_bounds, ncolors=teff_cmap.N)
     sm_t_disc   = cm.ScalarMappable(cmap=teff_cmap, norm=teff_norm)
 

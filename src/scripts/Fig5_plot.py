@@ -70,7 +70,7 @@ for model in models:
     cluster_labels       = res['cluster_labels']
 
     n_cl           = len(unique_cl)
-    cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
+    cluster_cmap   = matplotlib.colormaps['tab10'].resampled(n_cl)
     cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
 
     # ── Physical-parameter lookup for each mode ───────────────────────────────

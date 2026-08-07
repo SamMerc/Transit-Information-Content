@@ -16,6 +16,7 @@ import jax
 print(f"JAX devices: {jax.devices()}")
 print(f"Default backend: {jax.default_backend()}")
 import jax.numpy as jnp
+import matplotlib
 import matplotlib.pyplot as plt
 from jaxoplanet.orbits.keplerian import System, Central
 import astropy.units as u
@@ -441,7 +442,7 @@ elem_size = 10
 for param, paramlabel, color, shape in zip(
                                             perturb_params,
                                             perturb_labels,
-                                            plt.get_cmap('coolwarm')(jnp.linspace(0., 1, 8)),
+                                            matplotlib.colormaps['coolwarm'](jnp.linspace(0., 1, 8)),
                                             ['.','.','.','.','.','.','.','.']):
 
     mean_curve = perturbation_mean[param]

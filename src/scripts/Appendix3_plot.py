@@ -45,7 +45,7 @@ for model in models:
     cluster_mode_indices = res['cluster_mode_indices']  # (n_cl,) indices of cluster modes
 
     n_cl           = len(unique_cl)
-    cluster_cmap   = plt.cm.get_cmap('tab10', n_cl)
+    cluster_cmap   = matplotlib.colormaps['tab10'].resampled(n_cl)
     cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
 
     # ── Plot configuration ────────────────────────────────────────────────────
