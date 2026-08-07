@@ -51,11 +51,11 @@ dependencies:
   src/scripts/Fig3_run.py:
     - src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
   src/scripts/Fig3_plot.py:
-    - src/data/Fig3_Storage/chi2_r_r.npy
+    - src/data/Fig3_Storage/Seed70/chi2_r_r.npy
     - src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
     - src/data/Fig3_prerun_Storage/processed_data_cache.pkl
   src/scripts/Appendix1_plot.py:
-    - src/data/Fig3_Storage/chi2_r_r.npy
+    - src/data/Fig3_Storage/Seed70/chi2_r_r.npy
     - src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
   src/scripts/Appendix2_plot.py:
     - src/data/Fig5_Storage/mps1/results.npz

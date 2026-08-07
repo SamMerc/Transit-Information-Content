@@ -352,7 +352,7 @@ def ellipse_parameters_from_conic(p):
 ################ Running code ###############
 #############################################
 
-fixed_args['save_loc'] = output_dir
+fixed_args['save_loc'] = output_dir + f'Seed{seed}/'
 
 print(f"MODEL SCATTER = {model_scatter:.2f}")
 print(f"SEED = {seed}")

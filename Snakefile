@@ -28,7 +28,7 @@ rule Fig3_run:
         script="src/scripts/Fig3_run.py",
         fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
     output:
-        "src/data/Fig3_Storage/chi2_r_r.npy"
+        "src/data/Fig3_Storage/Seed70/chi2_r_r.npy"
     cache: True
     script:
         "src/scripts/Fig3_run.py"
@@ -36,8 +36,8 @@ rule Fig3_run:
 
 rule Fig3:
     input:
-        script="src/scripts/Fig3_plot.py",  
-        chi2="src/data/Fig3_Storage/chi2_r_r.npy",
+        script="src/scripts/Fig3_plot.py",
+        chi2="src/data/Fig3_Storage/Seed70/chi2_r_r.npy",
         fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
         fig3_cache="src/data/Fig3_prerun_Storage/processed_data_cache.pkl",
     output:
@@ -59,7 +59,7 @@ rule Fig5:
 rule Appendix1:
     input:
         script="src/scripts/Appendix1_plot.py",
-        chi2="src/data/Fig3_Storage/chi2_r_r.npy",
+        chi2="src/data/Fig3_Storage/Seed70/chi2_r_r.npy",
         fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
     output:
         "src/tex/figures/Appendix1.pdf"
