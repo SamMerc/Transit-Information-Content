@@ -36,7 +36,7 @@ datasets:
       Fig5_mps1_data.pkl: src/data/Fig5_Storage/mps1/data.pkl
       Fig5_mps2_data.pkl: src/data/Fig5_Storage/mps2/data.pkl
       Fig5_results.npz: src/data/Fig5_Storage/mps1/results.npz
-      Appendix4_mps1_results.npz: src/data/Appendix4_Storage/mps1/results.npz
+      Appendix4_msp1_results.npz: src/data/Appendix4_Storage/mps1/results.npz
       Appendix4_mps2_results.npz: src/data/Appendix4_Storage/mps2/results.npz
       Fig4_C0_cache.pkl: src/data/Fig4_Storage/C0/processed_data_cache.pkl
       Fig4_C2_cache.pkl: src/data/Fig4_Storage/C2/processed_data_cache.pkl
