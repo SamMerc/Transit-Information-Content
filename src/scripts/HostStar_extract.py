@@ -33,11 +33,11 @@ import paths
 
 save_data_path = str(paths.data / "HostStar_Storage") + "/"
 
+# Either cache the response from a NASA Exoplanet Archive query or load the cached response from disk.
+host_star_mode = 'load'  # 'query' or 'load'
+
 # Pin the archive query to this date so the extracted sample matches what would have been
-# returned on that day, regardless of when this script is actually run. The composite
-# `pscomppars` table has no per-row update timestamp, so we instead query the underlying
-# per-reference `ps` table (which does carry `rowupdate`) and, for each host, keep the most
-# recently updated row as of this date - see fetch_host_star_properties().
+# returned on that day, regardless of when this script is actually run.
 query_asof_date = '2026-07-08'
 
 archive_table  = 'ps'
@@ -66,6 +66,7 @@ def fetch_host_star_properties():
     )
     df = table.to_pandas()
     df = df.dropna(subset=['st_teff', 'st_logg', 'st_met'])
+    df = df.sort_values('rowupdate', ascending=False)
     df = df.drop_duplicates(subset='hostname', keep='first')
     return df
 
@@ -182,12 +183,22 @@ def plot_kde_corner(df, axes_1d, marginal_1d, marginal_2d, save_path):
 if not os.path.exists(save_data_path):
     os.makedirs(save_data_path)
 
-print('Querying NASA Exoplanet Archive ...')
-host_star_df = fetch_host_star_properties()
-print(f'  {len(host_star_df)} unique host stars with Teff, logg, and metallicity')
+if host_star_mode == 'query':
+    print('Querying NASA Exoplanet Archive ...')
+    host_star_df = fetch_host_star_properties()
+    print(f'  {len(host_star_df)} unique host stars with Teff, logg, and metallicity')
 
-host_star_df.to_pickle(save_data_path + 'host_star_properties.pkl')
-print(f'  Saved host star properties -> {save_data_path}host_star_properties.pkl')
+    host_star_df.to_pickle(save_data_path + 'host_star_properties.pkl')
+    print(f'  Saved host star properties -> {save_data_path}host_star_properties.pkl')
+
+elif host_star_mode == 'load':
+    print('Loading cached host star properties (host_star_mode="load") ...')
+    host_star_df = pd.read_pickle(save_data_path + 'host_star_properties.pkl')
+    print(f'  {len(host_star_df)} unique host stars with Teff, logg, and metallicity '
+          f'(from {save_data_path}host_star_properties.pkl)')
+
+else:
+    raise ValueError('host_star_mode not recognized.')
 
 print('Plotting histograms ...')
 plot_histograms(host_star_df, save_data_path)
