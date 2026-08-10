@@ -25,7 +25,7 @@ dag:
 
 # Externally-hosted datasets, e.g. on Zenodo
 datasets:
-  10.5281/zenodo.21829339:
+  10.5281/zenodo.21876341:
     contents:
       Fig1_chains.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chains.npy
       Fig1_chi2_chain.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chi2_chain.npy

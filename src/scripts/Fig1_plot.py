@@ -786,7 +786,7 @@ if __name__ == '__main__':
     t_plot_start = time.time()
 
     PLD_order = 3
-    model_scatter = 359.0
+    model_scatter = 359.38136638046257
     seed = 100
     #Setting base LDCs
     init_PLD_coeffs = [0.1, 0.2, 0.4]

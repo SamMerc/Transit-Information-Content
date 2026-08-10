@@ -53,6 +53,11 @@ Teff_ranges = {'mps1': [3500, 9000], 'mps2': [3500, 9000]}
 logg_ranges = {'mps1': [3.0,  5.0],  'mps2': [3.0,  5.0]}
 met_ranges  = {'mps1': [-5.0, 1.5],  'mps2': [-5.0, 1.5]}
 
+# Seed for the random initial guesses used when fitting each profile's 4th-order NLLD
+# coefficients (see Fig5_run.py's `fit_init_seed` for the same convention) - fixed so the
+# fit initial guesses, and therefore results.npz, are reproducible across runs.
+fit_init_seed = 42
+
 
 ############################
 ###### Function block ######
@@ -203,6 +208,7 @@ for model in models:
 
     print(f'[{model}] Fitting {n_valid:,} profiles with 4th-order NLLD ...')
     all_coeffs = np.zeros((n_valid, 4), dtype=np.float64)
+    fit_rng    = np.random.default_rng(fit_init_seed)
 
     for idx in tqdm(range(n_valid), desc=f'[{model}] NLLD fit'):
         prof_idx = int_profile[idx]
@@ -212,7 +218,7 @@ for model in models:
             continue
         params = Parameters()
         for ip in range(4):
-            params.add(f'c{ip+1}', value=np.random.uniform(0, 1))
+            params.add(f'c{ip+1}', value=fit_rng.uniform(0, 1))
         try:
             result          = minimize(residual_fn, params, args=(mus_idx, prof_idx))
             all_coeffs[idx] = [result.params[f'c{ic+1}'].value for ic in range(4)]
