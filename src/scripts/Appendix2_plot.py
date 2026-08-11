@@ -3,12 +3,12 @@
 #############################
 
 # Appendix 2 shows a double corner plot of the 4th-order NLLD coefficients [c1, c2, c3, c4]:
-#   - Bottom-left triangle : scatter coloured by Teff (inferno).
-#   - Top-right triangle   : scatter coloured by wavelength (turbo).
+#   - Bottom-left triangle : scatter coloured by log g (viridis).
+#   - Top-right triangle   : scatter coloured by metallicity (RdBu_r).
 #   - Diagonal             : variable labels (c1, c2, c3, c4), no histograms.
-#   - Left extra column    : 1D histograms decomposed by Teff value.
-#   - Right extra column   : 1D histograms decomposed by wavelength bin.
-# Data produced by Fig5_run.py and downloaded from Zenodo as results.npz.
+#   - Left extra column    : 1D histograms decomposed by log g value.
+#   - Right extra column   : 1D histograms decomposed by metallicity value.
+# Data produced by Fig3_run.py and downloaded from Zenodo as results.npz.
 
 
 ######################################
@@ -30,7 +30,7 @@ from matplotlib.lines import Line2D
 ########## Hyper-parameters ##########
 ######################################
 
-input_save_path = str(paths.data / "Fig5_Storage") + "/"
+input_save_path = str(paths.data / "Fig3_Storage") + "/"
 models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 clusters_2_show = [0, 2, 3, 4, 7] # clusters to highlight with diamonds in the corner plot
 
@@ -55,8 +55,8 @@ for model in models:
     cluster_mode_indices = res['cluster_mode_indices']  # (n_cl,) indices of cluster modes
 
     # ── Physical parameter arrays ─────────────────────────────────────────────
-    teff_vals = T_vals_arr[corner_meta[:, 0]]
-    wav_vals  = wavs_ref[corner_meta[:, 3]] / 1e4   # µm
+    logg_vals = g_vals_arr[corner_meta[:, 1]]
+    met_vals  = m_vals_arr[corner_meta[:, 2]]
 
     # ── Cluster colours (tab10, same as Appendix 3) ──────────────────────────
     n_cl           = len(unique_cl)
@@ -64,20 +64,27 @@ for model in models:
     cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
 
     # ── Colormaps ─────────────────────────────────────────────────────────────
-    # Teff: discrete inferno with exactly one colour per sampled grid point
-    teff_unique = np.unique(teff_vals)
-    n_teff      = len(teff_unique)
-    hw_t        = np.diff(teff_unique) / 2
-    teff_bounds = np.concatenate([[teff_unique[0] - hw_t[0]],
-                                   teff_unique[:-1] + hw_t,
-                                   [teff_unique[-1] + hw_t[-1]]])
-    teff_cmap   = matplotlib.colormaps['inferno'].resampled(n_teff)
-    teff_norm   = mcolors.BoundaryNorm(teff_bounds, ncolors=teff_cmap.N)
-    sm_t_disc   = cm.ScalarMappable(cmap=teff_cmap, norm=teff_norm)
+    # log g: discrete viridis with exactly one colour per sampled grid point
+    logg_unique = np.unique(logg_vals)
+    n_logg      = len(logg_unique)
+    hw_g        = np.diff(logg_unique) / 2
+    logg_bounds = np.concatenate([[logg_unique[0] - hw_g[0]],
+                                   logg_unique[:-1] + hw_g,
+                                   [logg_unique[-1] + hw_g[-1]]])
+    logg_cmap   = matplotlib.colormaps['viridis'].resampled(n_logg)
+    logg_norm   = mcolors.BoundaryNorm(logg_bounds, ncolors=logg_cmap.N)
+    sm_g_disc   = cm.ScalarMappable(cmap=logg_cmap, norm=logg_norm)
 
-    # Wavelength: continuous turbo
-    wav_cmap  = plt.cm.turbo
-    wav_norm  = mcolors.Normalize(vmin=wav_vals.min(),  vmax=wav_vals.max())
+    # Metallicity: discrete RdBu_r with exactly one colour per sampled grid point
+    met_unique = np.unique(met_vals)
+    n_met      = len(met_unique)
+    hw_m       = np.diff(met_unique) / 2
+    met_bounds = np.concatenate([[met_unique[0] - hw_m[0]],
+                                  met_unique[:-1] + hw_m,
+                                  [met_unique[-1] + hw_m[-1]]])
+    met_cmap   = matplotlib.colormaps['winter'].resampled(n_met)
+    met_norm   = mcolors.BoundaryNorm(met_bounds, ncolors=met_cmap.N)
+    sm_m_disc  = cm.ScalarMappable(cmap=met_cmap, norm=met_norm)
 
     # ── Plot configuration ────────────────────────────────────────────────────
     ndim   = 4
@@ -88,21 +95,20 @@ for model in models:
     # ── Scatter subsamples sorted by colour value for correct Z-ordering ──────
     N    = len(corner_data)
     n_sc = min(N, 40_000)
-    rng_t = np.random.default_rng(42)
-    idx_t = rng_t.choice(N, size=n_sc, replace=False)
-    idx_t = idx_t[np.argsort(teff_vals[idx_t])]
-    rng_w = np.random.default_rng(43)
-    idx_w = rng_w.choice(N, size=n_sc, replace=False)
-    idx_w = idx_w[np.argsort(wav_vals[idx_w])]
+    rng_g = np.random.default_rng(42)
+    idx_g = rng_g.choice(N, size=n_sc, replace=False)
+    idx_g = idx_g[np.argsort(logg_vals[idx_g])]
+    rng_m = np.random.default_rng(43)
+    idx_m = rng_m.choice(N, size=n_sc, replace=False)
+    idx_m = idx_m[np.argsort(met_vals[idx_m])]
 
     # ── Figure layout ─────────────────────────────────────────────────────────
     # Outer GridSpec: 4 rows × 5 cols
-    #   col 0 : Teff colorbar   (narrow)
-    #   col 1 : Teff 1D histograms
+    #   col 0 : log g colorbar   (narrow)
+    #   col 1 : log g 1D histograms
     #   col 2 : 4×4 corner block  (subdivided below, wspace=0.05)
-    #   col 3 : wavelength 1D histograms
-    #   col 4 : wavelength colorbar  (narrow)
-    # wspace=0.30 gives the wide gap between histograms and the corner block.
+    #   col 3 : metallicity 1D histograms
+    #   col 4 : metallicity colorbar  (narrow)
     fig = plt.figure(figsize=(16, 9))
     outer_gs = GridSpec(ndim, 5, figure=fig,
                         wspace=0.05, hspace=0.27,
@@ -114,27 +120,27 @@ for model in models:
                                        wspace=0.05, hspace=0.05)
 
     # Colorbar axes span all rows
-    cax_t = fig.add_subplot(outer_gs[:, 0])
-    cax_w = fig.add_subplot(outer_gs[:, 4])
+    cax_g = fig.add_subplot(outer_gs[:, 0])
+    cax_m = fig.add_subplot(outer_gs[:, 4])
 
     # Histogram and corner axes
-    ax_ht = np.empty(ndim, dtype=object)
-    ax_hw = np.empty(ndim, dtype=object)
+    ax_hg = np.empty(ndim, dtype=object)
+    ax_hm = np.empty(ndim, dtype=object)
     ax_c  = np.empty((ndim, ndim), dtype=object)
     for d in range(ndim):
-        ax_ht[d] = fig.add_subplot(outer_gs[d, 1])
-        ax_hw[d] = fig.add_subplot(outer_gs[d, 3])
+        ax_hg[d] = fig.add_subplot(outer_gs[d, 1])
+        ax_hm[d] = fig.add_subplot(outer_gs[d, 3])
     for ir in range(ndim):
         for ic in range(ndim):
             ax_c[ir, ic] = fig.add_subplot(inner_gs[ir, ic])
 
-    # ── Left column: 1D histograms decomposed by Teff ─────────────────────────
+    # ── Left column: 1D histograms decomposed by log g ───────────────────────
     for d in range(ndim):
-        a = ax_ht[d]
-        for uv in teff_unique:
-            m = teff_vals == uv
+        a = ax_hg[d]
+        for uv in logg_unique:
+            m = logg_vals == uv
             a.hist(corner_data[m, d], bins=50, range=ranges[d],
-                   alpha=0.55, color=sm_t_disc.to_rgba(uv), density=False,
+                   alpha=0.55, color=sm_g_disc.to_rgba(uv), density=False,
                    histtype='stepfilled', edgecolor='none')
         a.set_xlim(ranges[d])
         a.set_yticks([])
@@ -143,20 +149,13 @@ for model in models:
         a.tick_params(labelsize=7)
         a.set_xlabel(labels[d], fontsize=10)
 
-    # ── Right column: 1D histograms decomposed by wavelength ──────────────────
-    n_wb    = 10
-    w_edges = np.linspace(wav_vals.min(), wav_vals.max(), n_wb + 1)
-    w_ctrs  = 0.5 * (w_edges[:-1] + w_edges[1:])
+    # ── Right column: 1D histograms decomposed by metallicity ────────────────
     for d in range(ndim):
-        a = ax_hw[d]
-        for ib, ctr in enumerate(w_ctrs):
-            m = (wav_vals >= w_edges[ib]) & (wav_vals < w_edges[ib + 1])
-            if ib == n_wb - 1:
-                m |= (wav_vals == w_edges[ib + 1])
-            if not m.any():
-                continue
+        a = ax_hm[d]
+        for uv in met_unique:
+            m = met_vals == uv
             a.hist(corner_data[m, d], bins=50, range=ranges[d],
-                   alpha=0.55, color=wav_cmap(wav_norm(ctr)), density=False,
+                   alpha=0.55, color=sm_m_disc.to_rgba(uv), density=False,
                    histtype='stepfilled', edgecolor='none')
         a.set_xlim(ranges[d])
         a.set_yticks([])
@@ -179,9 +178,9 @@ for model in models:
                        transform=a.transAxes)
 
             elif ir > ic:
-                # Below diagonal — scatter coloured by Teff
-                a.scatter(corner_data[idx_t, ic], corner_data[idx_t, ir],
-                          c=teff_vals[idx_t], cmap=teff_cmap, norm=teff_norm,
+                # Below diagonal — scatter coloured by log g
+                a.scatter(corner_data[idx_g, ic], corner_data[idx_g, ir],
+                          c=logg_vals[idx_g], cmap=logg_cmap, norm=logg_norm,
                           s=1.5, alpha=0.35, linewidths=0, rasterized=True)
                 # Cluster mode diamonds for clusters 1, 3, 4
                 for ci, cl in enumerate(unique_cl):
@@ -206,9 +205,9 @@ for model in models:
                     a.tick_params(labelright=False, labeltop=False)
 
             else:   # ir < ic
-                # Above diagonal — scatter coloured by wavelength, mirrored axes
-                a.scatter(corner_data[idx_w, ic], corner_data[idx_w, ir],
-                          c=wav_vals[idx_w], cmap=wav_cmap, norm=wav_norm,
+                # Above diagonal — scatter coloured by metallicity, mirrored axes
+                a.scatter(corner_data[idx_m, ic], corner_data[idx_m, ir],
+                          c=met_vals[idx_m], cmap=met_cmap, norm=met_norm,
                           s=1.5, alpha=0.35, linewidths=0, rasterized=True)
                 # Cluster mode diamonds for clusters 1, 3, 4
                 for ci, cl in enumerate(unique_cl):
@@ -231,20 +230,21 @@ for model in models:
                     a.tick_params(labelleft=False, labelbottom=False)
 
     # ── Colorbars ─────────────────────────────────────────────────────────────
-    sm_t_disc.set_array([])
-    cb_t = fig.colorbar(sm_t_disc, cax=cax_t)
-    cb_t.set_label(r'$T_{\rm eff}$ (K)', fontsize=11)
-    cb_t.set_ticks(teff_unique)
-    cb_t.set_ticklabels([f'{v:.0f}' for v in teff_unique])
-    cb_t.ax.tick_params(labelsize=9)
-    cax_t.yaxis.set_ticks_position('left')
-    cax_t.yaxis.set_label_position('left')
+    sm_g_disc.set_array([])
+    cb_g = fig.colorbar(sm_g_disc, cax=cax_g)
+    cb_g.set_label(r'$\log g$', fontsize=11)
+    cb_g.set_ticks(logg_unique)
+    cb_g.set_ticklabels([f'{v:.1f}' for v in logg_unique])
+    cb_g.ax.tick_params(labelsize=9)
+    cax_g.yaxis.set_ticks_position('left')
+    cax_g.yaxis.set_label_position('left')
 
-    sm_w = cm.ScalarMappable(cmap=wav_cmap, norm=wav_norm)
-    sm_w.set_array([])
-    cb_w = fig.colorbar(sm_w, cax=cax_w)
-    cb_w.set_label(r'Wavelength ($\mu$m)', fontsize=11)
-    cb_w.ax.tick_params(labelsize=9)
+    sm_m_disc.set_array([])
+    cb_m = fig.colorbar(sm_m_disc, cax=cax_m)
+    cb_m.set_label(r'$[\rm M/H]$', fontsize=11)
+    cb_m.set_ticks(met_unique)
+    cb_m.set_ticklabels([f'{v:+.1f}' for v in met_unique])
+    cb_m.ax.tick_params(labelsize=9)
 
     # ── Cluster legend centred below the 4×4 corner block ────────────────────
     legend_handles = (
@@ -257,8 +257,6 @@ for model in models:
                   markeredgecolor='black', markeredgewidth=0.7,
                   markersize=13, label='Global mode')]
     )
-    # Derive the horizontal centre and bottom edge of the 4×4 block in figure
-    # coordinates from the corner axes positions (available before draw).
     pos_left  = ax_c[0, 0].get_position()
     pos_right = ax_c[0, ndim - 1].get_position()
     pos_bot   = ax_c[ndim - 1, 0].get_position()

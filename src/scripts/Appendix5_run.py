@@ -3,12 +3,12 @@
 #############################
 
 # Generates the full (unsubsampled) LDC datasets for both MPS-ATLAS set1 and
-# set2 for the inter-model comparison in Appendix 4.  For each model the script
+# set2 for the inter-model comparison in Appendix 5.  For each model the script
 # loads the raw intensity profiles from a data.pkl (produced by running
-# Fig5_run.py with intr_prof_mode='build' for both mps1 and mps2), applies the
-# same wavelength-filtering and monotonicity masking as Fig5_run.py, fits ALL
+# Fig3_run.py with intr_prof_mode='build' for both mps1 and mps2), applies the
+# same wavelength-filtering and monotonicity masking as Fig3_run.py, fits ALL
 # valid profiles with the 4th-order NLLD, and saves corner_data + corner_meta
-# to Appendix4_Storage/{model}/results.npz.  No subsampling is applied so that
+# to Appendix5_Storage/{model}/results.npz.  No subsampling is applied so that
 # the plot script can intersect on (i_Teff, j_logg, k_met, i_wav) tuples and
 # obtain ~580 k matched pairs from the full parameter space.
 
@@ -39,13 +39,13 @@ LD_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/LD_s
 # Paths to pre-built data.pkl files for each model.  Set a value to None to
 # build from scratch via ExoTiC-LD (slow — only needed if pkl is missing).
 pkl_load_paths = {
-    'mps1': str(paths.data / "Fig5_Storage") + "/mps1/data.pkl",
-    'mps2': str(paths.data / "Fig5_Storage") + "/mps2/data.pkl",
+    'mps1': str(paths.data / "Fig3_Storage") + "/mps1/data.pkl",
+    'mps2': str(paths.data / "Fig3_Storage") + "/mps2/data.pkl",
 }
 
 models = ['mps1', 'mps2']
 
-N_star    = 10        # grid points per stellar parameter axis — must match Fig5_run.py
+N_star    = 10        # grid points per stellar parameter axis — must match Fig3_run.py
 n_mu_fine = 100       # mu points after cubic-spline interpolation
 wav_region = [6000, 53000]  # Angstrom  (0.6 – 5.3 µm, JWST NIRSpec PRISM)
 
@@ -54,7 +54,7 @@ logg_ranges = {'mps1': [3.0,  5.0],  'mps2': [3.0,  5.0]}
 met_ranges  = {'mps1': [-5.0, 1.5],  'mps2': [-5.0, 1.5]}
 
 # Seed for the random initial guesses used when fitting each profile's 4th-order NLLD
-# coefficients (see Fig5_run.py's `fit_init_seed` for the same convention) - fixed so the
+# coefficients (see Fig3_run.py's `fit_init_seed` for the same convention) - fixed so the
 # fit initial guesses, and therefore results.npz, are reproducible across runs.
 fit_init_seed = 42
 
@@ -81,7 +81,7 @@ def residual_fn(params, x, base_prof):
 
 for model in models:
 
-    save_data_path = str(paths.data / "Appendix4_Storage") + f"/{model}/"
+    save_data_path = str(paths.data / "Appendix5_Storage") + f"/{model}/"
     os.makedirs(save_data_path, exist_ok=True)
 
     T_vals_arr = np.linspace(Teff_ranges[model][0], Teff_ranges[model][1], N_star)
@@ -107,7 +107,7 @@ for model in models:
         print(f'[{model}] Loading intensity profiles from {resolved_pkl}')
         with open(resolved_pkl, 'rb') as f:
             raw = pickle.load(f)
-        # data.pkl written by Fig5_run.py wraps arrays in a model-keyed dict
+        # data.pkl written by Fig3_run.py wraps arrays in a model-keyed dict
         for key in ('stellar_wavelengths', 'global_intensity_profiles', 'global_mus'):
             src = raw[key]
             gen_dict[key] = src[model] if isinstance(src, dict) else src

@@ -23,101 +23,101 @@ rule Fig2:
         "src/scripts/Fig2_plot.py"
 
 
-rule Fig3_run:
+rule Fig4_run:
     input:
-        script="src/scripts/Fig3_run.py",
+        script="src/scripts/Fig4_run.py",
         fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
     output:
-        "src/data/Fig3_Storage/Seed70/chi2_r_r.npy"
+        "src/data/Fig4_Storage/Seed70/chi2_r_r.npy"
     cache: True
     script:
-        "src/scripts/Fig3_run.py"
+        "src/scripts/Fig4_run.py"
 
+
+rule Fig4:
+    input:
+        script="src/scripts/Fig4_plot.py",
+        chi2="src/data/Fig4_Storage/Seed70/chi2_r_r.npy",
+        fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
+        fig4_cache="src/data/Fig4_prerun_Storage/processed_data_cache.pkl",
+    output:
+        "src/tex/figures/Fig4.pdf"
+    cache: True
+    script:
+        "src/scripts/Fig4_plot.py"
 
 rule Fig3:
     input:
         script="src/scripts/Fig3_plot.py",
-        chi2="src/data/Fig3_Storage/Seed70/chi2_r_r.npy",
-        fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
-        fig3_cache="src/data/Fig3_prerun_Storage/processed_data_cache.pkl",
+        results="src/data/Fig3_Storage/mps1/results.npz",
     output:
         "src/tex/figures/Fig3.pdf"
     cache: True
     script:
         "src/scripts/Fig3_plot.py"
 
-rule Fig5:
+rule Appendix4:
     input:
-        script="src/scripts/Fig5_plot.py",
-        results="src/data/Fig5_Storage/mps1/results.npz",
+        script="src/scripts/Appendix4_plot.py",
+        chi2="src/data/Fig4_Storage/Seed70/chi2_r_r.npy",
+        fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
     output:
-        "src/tex/figures/Fig5.pdf"
+        "src/tex/figures/Appendix4.pdf"
     cache: True
     script:
-        "src/scripts/Fig5_plot.py"
-
+        "src/scripts/Appendix4_plot.py"
+        
 rule Appendix1:
     input:
         script="src/scripts/Appendix1_plot.py",
-        chi2="src/data/Fig3_Storage/Seed70/chi2_r_r.npy",
-        fig2_cache="src/data/Fig2_Storage/Fig2_base_processed_cache.pkl",
+        results="src/data/Fig3_Storage/mps1/results.npz",
     output:
         "src/tex/figures/Appendix1.pdf"
     cache: True
     script:
         "src/scripts/Appendix1_plot.py"
-        
-rule Appendix2:
-    input:
-        script="src/scripts/Appendix2_plot.py",
-        results="src/data/Fig5_Storage/mps1/results.npz",
-    output:
-        "src/tex/figures/Appendix2.pdf"
-    cache: True
-    script:
-        "src/scripts/Appendix2_plot.py"
 
 rule Appendix3:
     input:
         script="src/scripts/Appendix3_plot.py",
-        results="src/data/Fig5_Storage/mps1/results.npz",
+        results="src/data/Fig3_Storage/mps1/results.npz",
     output:
         "src/tex/figures/Appendix3.pdf"
     cache: True
     script:
         "src/scripts/Appendix3_plot.py"
 
+rule Appendix2:
+    input:
+        script="src/scripts/Appendix2_plot.py",
+        results="src/data/Fig3_Storage/mps1/results.npz",
+    output:
+        "src/tex/figures/Appendix2.pdf"
+    cache: True
+    script:
+        "src/scripts/Appendix2_plot.py"
+
 rule Appendix5:
     input:
         script="src/scripts/Appendix5_plot.py",
-        results="src/data/Fig5_Storage/mps1/results.npz",
+        mps1="src/data/Appendix5_Storage/mps1/results.npz",
+        mps2="src/data/Appendix5_Storage/mps2/results.npz",
     output:
         "src/tex/figures/Appendix5.pdf"
     cache: True
     script:
         "src/scripts/Appendix5_plot.py"
 
-rule Appendix4:
+rule Fig5:
     input:
-        script="src/scripts/Appendix4_plot.py",
-        mps1="src/data/Appendix4_Storage/mps1/results.npz",
-        mps2="src/data/Appendix4_Storage/mps2/results.npz",
+        script="src/scripts/Fig5_plot.py",
+        c0_cache="src/data/Fig5_Storage/C0/processed_data_cache.pkl",
+        c2_cache="src/data/Fig5_Storage/C2/processed_data_cache.pkl",
+        c3_cache="src/data/Fig5_Storage/C3/processed_data_cache.pkl",
+        c4_cache="src/data/Fig5_Storage/C4/processed_data_cache.pkl",
+        c7_cache="src/data/Fig5_Storage/C7/processed_data_cache.pkl",
     output:
-        "src/tex/figures/Appendix4.pdf"
+        "src/tex/figures/Fig5.pdf"
     cache: True
     script:
-        "src/scripts/Appendix4_plot.py"
-
-rule Fig4:
-    input:
-        script="src/scripts/Fig4_plot.py",
-        c0_cache="src/data/Fig4_Storage/C0/processed_data_cache.pkl",
-        c2_cache="src/data/Fig4_Storage/C2/processed_data_cache.pkl",
-        c3_cache="src/data/Fig4_Storage/C3/processed_data_cache.pkl",
-        c4_cache="src/data/Fig4_Storage/C4/processed_data_cache.pkl",
-        c7_cache="src/data/Fig4_Storage/C7/processed_data_cache.pkl",
-    output:
-        "src/tex/figures/Fig4.pdf"
-    cache: True
-    script:
-        "src/scripts/Fig4_plot.py"
+        "src/scripts/Fig5_plot.py"

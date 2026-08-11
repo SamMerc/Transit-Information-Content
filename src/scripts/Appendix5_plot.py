@@ -2,13 +2,18 @@
 ########## Purpose ##########
 #############################
 
-# Appendix 5 shows a double corner plot of the 4th-order NLLD coefficients [c1, c2, c3, c4]:
-#   - Bottom-left triangle : scatter coloured by log g (viridis).
-#   - Top-right triangle   : scatter coloured by metallicity (RdBu_r).
-#   - Diagonal             : variable labels (c1, c2, c3, c4), no histograms.
-#   - Left extra column    : 1D histograms decomposed by log g value.
-#   - Right extra column   : 1D histograms decomposed by metallicity value.
-# Data produced by Fig5_run.py and downloaded from Zenodo as results.npz.
+# Appendix 5 shows the inter-model spread in 4th-order NLLD coefficients
+# between MPS-ATLAS set1 and set2, motivating the 10-20% Gaussian prior widths
+# used in Section 5.  Both datasets are produced by Appendix5_run.py, which
+# fits ALL valid profiles from each model without subsampling (~580 k each).
+# Profiles are compared as matched pairs identified by sharing the same physical
+# parameter values (Teff, logg, [M/H], wavelength), rounded to avoid floating-
+# point mismatch.  Matching on values rather than grid indices is robust to any
+# difference in the grid arrays stored in the two results files.
+#
+# Top panels: histograms of (c_set2 - c_set1) / |c_set1| for each coefficient.
+# Bottom panels: median signed relative difference vs each physical parameter,
+#   with 16th-84th percentile shading per coefficient.
 
 
 ######################################
@@ -20,253 +25,190 @@ import matplotlib
 import paths
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import matplotlib.colors as mcolors
-from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
-from matplotlib.lines import Line2D
+from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import MultipleLocator
 
 
 ######################################
 ########## Hyper-parameters ##########
 ######################################
 
-input_save_path = str(paths.data / "Fig5_Storage") + "/"
-models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
-clusters_2_show = [0, 2, 3, 4, 7] # clusters to highlight with diamonds in the corner plot
+mps1_path   = str(paths.data / "Appendix5_Storage") + "/mps1/results.npz"
+mps2_path   = str(paths.data / "Appendix5_Storage") + "/mps2/results.npz"
+output_path = str(paths.figures) + "/Appendix5.pdf"
+
+# Minimum |c_mps1| to include in the relative-difference calculation.
+eps = 0.05
+
 
 ################################
 ########## Code block ##########
 ################################
 
-for model in models:
+# ── Load both datasets ────────────────────────────────────────────────────────
 
-    # ── Load pre-computed results ─────────────────────────────────────────────
-    res = np.load(input_save_path + f'{model}/results.npz', allow_pickle=False)
+res1 = np.load(mps1_path, allow_pickle=False)
+res2 = np.load(mps2_path, allow_pickle=False)
 
-    corner_data          = res['corner_data']           # (N, 4)  NLLD coefficients
-    corner_meta          = res['corner_meta']           # (N, 4)  [i_Teff, j_logg, k_met, i_wav]
-    T_vals_arr           = res['T_vals_arr']
-    g_vals_arr           = res['g_vals_arr']
-    m_vals_arr           = res['m_vals_arr']
-    wavs_ref             = res['wavs_ref']
-    cluster_labels       = res['cluster_labels']        # (N,)   0-indexed cluster IDs
-    unique_cl            = res['unique_cl']
-    typical_idx          = int(res['typical_idx'])
-    cluster_mode_indices = res['cluster_mode_indices']  # (n_cl,) indices of cluster modes
+corner_data1 = res1['corner_data']   # (N1, 4)
+corner_meta1 = res1['corner_meta']   # (N1, 4)  [i_T, j_g, k_m, i_wav]
+corner_data2 = res2['corner_data']   # (N2, 4)
+corner_meta2 = res2['corner_meta']   # (N2, 4)
 
-    # ── Physical parameter arrays ─────────────────────────────────────────────
-    logg_vals = g_vals_arr[corner_meta[:, 1]]
-    met_vals  = m_vals_arr[corner_meta[:, 2]]
+T_vals_arr1 = res1['T_vals_arr'];  g_vals_arr1 = res1['g_vals_arr']
+m_vals_arr1 = res1['m_vals_arr'];  wavs_ref1   = res1['wavs_ref']    # Angstrom
 
-    # ── Cluster colours (tab10, same as Appendix 3) ──────────────────────────
-    n_cl           = len(unique_cl)
-    cluster_cmap   = matplotlib.colormaps['tab10'].resampled(n_cl)
-    cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
+T_vals_arr2 = res2['T_vals_arr'];  g_vals_arr2 = res2['g_vals_arr']
+m_vals_arr2 = res2['m_vals_arr'];  wavs_ref2   = res2['wavs_ref']
 
-    # ── Colormaps ─────────────────────────────────────────────────────────────
-    # log g: discrete viridis with exactly one colour per sampled grid point
-    logg_unique = np.unique(logg_vals)
-    n_logg      = len(logg_unique)
-    hw_g        = np.diff(logg_unique) / 2
-    logg_bounds = np.concatenate([[logg_unique[0] - hw_g[0]],
-                                   logg_unique[:-1] + hw_g,
-                                   [logg_unique[-1] + hw_g[-1]]])
-    logg_cmap   = matplotlib.colormaps['viridis'].resampled(n_logg)
-    logg_norm   = mcolors.BoundaryNorm(logg_bounds, ncolors=logg_cmap.N)
-    sm_g_disc   = cm.ScalarMappable(cmap=logg_cmap, norm=logg_norm)
+# ── Match profiles by physical parameter values ───────────────────────────────
 
-    # Metallicity: discrete RdBu_r with exactly one colour per sampled grid point
-    met_unique = np.unique(met_vals)
-    n_met      = len(met_unique)
-    hw_m       = np.diff(met_unique) / 2
-    met_bounds = np.concatenate([[met_unique[0] - hw_m[0]],
-                                  met_unique[:-1] + hw_m,
-                                  [met_unique[-1] + hw_m[-1]]])
-    met_cmap   = matplotlib.colormaps['winter'].resampled(n_met)
-    met_norm   = mcolors.BoundaryNorm(met_bounds, ncolors=met_cmap.N)
-    sm_m_disc  = cm.ScalarMappable(cmap=met_cmap, norm=met_norm)
+def make_phys_keys(meta, T_arr, g_arr, m_arr, wav_arr):
+    T   = np.round(T_arr[meta[:, 0]], 2)
+    g   = np.round(g_arr[meta[:, 1]], 4)
+    m   = np.round(m_arr[meta[:, 2]], 4)
+    wav = np.round(wav_arr[meta[:, 3]], 2)
+    return list(zip(T, g, m, wav))
 
-    # ── Plot configuration ────────────────────────────────────────────────────
-    ndim   = 4
-    labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
-    ranges = [(np.percentile(corner_data[:, i], 0.1),
-               np.percentile(corner_data[:, i], 99.9)) for i in range(ndim)]
+keys1 = make_phys_keys(corner_meta1, T_vals_arr1, g_vals_arr1, m_vals_arr1, wavs_ref1)
+keys2 = make_phys_keys(corner_meta2, T_vals_arr2, g_vals_arr2, m_vals_arr2, wavs_ref2)
 
-    # ── Scatter subsamples sorted by colour value for correct Z-ordering ──────
-    N    = len(corner_data)
-    n_sc = min(N, 40_000)
-    rng_g = np.random.default_rng(42)
-    idx_g = rng_g.choice(N, size=n_sc, replace=False)
-    idx_g = idx_g[np.argsort(logg_vals[idx_g])]
-    rng_m = np.random.default_rng(43)
-    idx_m = rng_m.choice(N, size=n_sc, replace=False)
-    idx_m = idx_m[np.argsort(met_vals[idx_m])]
+lookup1 = {k: n for n, k in enumerate(keys1)}
+lookup2 = {k: n for n, k in enumerate(keys2)}
 
-    # ── Figure layout ─────────────────────────────────────────────────────────
-    # Outer GridSpec: 4 rows × 5 cols
-    #   col 0 : log g colorbar   (narrow)
-    #   col 1 : log g 1D histograms
-    #   col 2 : 4×4 corner block  (subdivided below, wspace=0.05)
-    #   col 3 : metallicity 1D histograms
-    #   col 4 : metallicity colorbar  (narrow)
-    fig = plt.figure(figsize=(16, 9))
-    outer_gs = GridSpec(ndim, 5, figure=fig,
-                        wspace=0.05, hspace=0.27,
-                        width_ratios=[0.10, 1.4, 4.0, 1.4, 0.10])
+common_keys = set(lookup1.keys()) & set(lookup2.keys())
+N_matched   = len(common_keys)
 
-    # Inner GridSpec: 4×4 within the corner block, with tight wspace
-    inner_gs = GridSpecFromSubplotSpec(ndim, ndim,
-                                       subplot_spec=outer_gs[:, 2],
-                                       wspace=0.05, hspace=0.05)
+print(f'mps1 valid profiles : {len(lookup1):,}')
+print(f'mps2 valid profiles : {len(lookup2):,}')
+print(f'Matched pairs       : {N_matched:,}')
 
-    # Colorbar axes span all rows
-    cax_g = fig.add_subplot(outer_gs[:, 0])
-    cax_m = fig.add_subplot(outer_gs[:, 4])
+idx1 = np.array([lookup1[k] for k in common_keys])
+idx2 = np.array([lookup2[k] for k in common_keys])
 
-    # Histogram and corner axes
-    ax_hg = np.empty(ndim, dtype=object)
-    ax_hm = np.empty(ndim, dtype=object)
-    ax_c  = np.empty((ndim, ndim), dtype=object)
-    for d in range(ndim):
-        ax_hg[d] = fig.add_subplot(outer_gs[d, 1])
-        ax_hm[d] = fig.add_subplot(outer_gs[d, 3])
-    for ir in range(ndim):
-        for ic in range(ndim):
-            ax_c[ir, ic] = fig.add_subplot(inner_gs[ir, ic])
+data1 = corner_data1[idx1]   # (N_matched, 4)
+data2 = corner_data2[idx2]   # (N_matched, 4)
 
-    # ── Left column: 1D histograms decomposed by log g ───────────────────────
-    for d in range(ndim):
-        a = ax_hg[d]
-        for uv in logg_unique:
-            m = logg_vals == uv
-            a.hist(corner_data[m, d], bins=50, range=ranges[d],
-                   alpha=0.55, color=sm_g_disc.to_rgba(uv), density=False,
-                   histtype='stepfilled', edgecolor='none')
-        a.set_xlim(ranges[d])
-        a.set_yticks([])
-        for sp in ['top', 'right', 'left']:
-            a.spines[sp].set_visible(False)
-        a.tick_params(labelsize=7)
-        a.set_xlabel(labels[d], fontsize=10)
+# Physical coordinates for the matched set
+common_keys_arr = np.array(list(common_keys))   # (N_matched, 4): T, g, m, wav_A
+phys_Teff = common_keys_arr[:, 0]               # K
+phys_logg = common_keys_arr[:, 1]
+phys_MH   = common_keys_arr[:, 2]
+phys_wav  = common_keys_arr[:, 3] / 1e4         # µm
 
-    # ── Right column: 1D histograms decomposed by metallicity ────────────────
-    for d in range(ndim):
-        a = ax_hm[d]
-        for uv in met_unique:
-            m = met_vals == uv
-            a.hist(corner_data[m, d], bins=50, range=ranges[d],
-                   alpha=0.55, color=sm_m_disc.to_rgba(uv), density=False,
-                   histtype='stepfilled', edgecolor='none')
-        a.set_xlim(ranges[d])
-        a.set_yticks([])
-        for sp in ['top', 'left', 'right']:
-            a.spines[sp].set_visible(False)
-        a.tick_params(labelsize=7)
-        a.set_xlabel(labels[d], fontsize=10)
+# ── Signed fractional differences (N_matched × 4), NaN where |c1| <= eps ─────
 
-    # ── Inner 4×4 double corner ───────────────────────────────────────────────
-    for ir in range(ndim):
-        for ic in range(ndim):
-            a = ax_c[ir, ic]
+rel_diff_mat = np.full((N_matched, 4), np.nan)
+for ic in range(4):
+    c1    = data1[:, ic]
+    c2    = data2[:, ic]
+    valid = np.abs(c1) > eps
+    rel_diff_mat[valid, ic] = (c2[valid] - c1[valid]) / np.abs(c1[valid]) * 100.0
 
-            if ir == ic:
-                # Diagonal — variable name only, no frame
-                a.axis('off')
-                a.text(0.5, 0.5, labels[ir],
-                       ha='center', va='center',
-                       fontsize=17, fontweight='bold',
-                       transform=a.transAxes)
+coeff_labels = [r'$c_1$', r'$c_2$', r'$c_3$', r'$c_4$']
+coeff_colors = plt.cm.tab10(np.linspace(0, 0.4, 4))
 
-            elif ir > ic:
-                # Below diagonal — scatter coloured by log g
-                a.scatter(corner_data[idx_g, ic], corner_data[idx_g, ir],
-                          c=logg_vals[idx_g], cmap=logg_cmap, norm=logg_norm,
-                          s=1.5, alpha=0.35, linewidths=0, rasterized=True)
-                # Cluster mode diamonds for clusters 1, 3, 4
-                for ci, cl in enumerate(unique_cl):
-                    if cl in clusters_2_show:
-                        cidx = cluster_mode_indices[ci]
-                        a.scatter(corner_data[cidx, ic], corner_data[cidx, ir],
-                                  color=cluster_colors[ci], s=45, marker='D', zorder=9,
-                                  edgecolors='black', linewidths=0.7)
-                # Overall mode: orange star on top
-                a.scatter(corner_data[typical_idx, ic], corner_data[typical_idx, ir],
-                          color='orange', s=160, marker='*', zorder=10,
-                          edgecolors='black', linewidths=0.7)
-                a.set_xlim(ranges[ic])
-                a.set_ylim(ranges[ir])
-                a.grid(True, alpha=0.15)
-                a.tick_params(labelsize=7)
-                # Ticks on inner sides (right + top, toward the diagonal)
-                a.yaxis.tick_right()
-                a.xaxis.tick_top()
-                # Labels only on cells immediately adjacent to the diagonal
-                if ic != ir - 1:
-                    a.tick_params(labelright=False, labeltop=False)
+for ic in range(4):
+    rdiff = rel_diff_mat[:, ic]
+    rdiff = rdiff[~np.isnan(rdiff)]
+    med   = np.median(rdiff)
+    p25, p75 = np.percentile(rdiff, [25, 75])
+    print(f'{coeff_labels[ic]}: median = {med:+.1f}%  '
+          f'25–75th = [{p25:+.1f}%, {p75:+.1f}%]  N = {len(rdiff):,}')
 
-            else:   # ir < ic
-                # Above diagonal — scatter coloured by metallicity, mirrored axes
-                a.scatter(corner_data[idx_m, ic], corner_data[idx_m, ir],
-                          c=met_vals[idx_m], cmap=met_cmap, norm=met_norm,
-                          s=1.5, alpha=0.35, linewidths=0, rasterized=True)
-                # Cluster mode diamonds for clusters 1, 3, 4
-                for ci, cl in enumerate(unique_cl):
-                    if cl in clusters_2_show:
-                        cidx = cluster_mode_indices[ci]
-                        a.scatter(corner_data[cidx, ic], corner_data[cidx, ir],
-                                  color=cluster_colors[ci], s=45, marker='D', zorder=9,
-                                  edgecolors='black', linewidths=0.7)
-                # Overall mode: orange star on top
-                a.scatter(corner_data[typical_idx, ic], corner_data[typical_idx, ir],
-                          color='orange', s=160, marker='*', zorder=10,
-                          edgecolors='black', linewidths=0.7)
-                a.set_xlim(ranges[ic])
-                a.set_ylim(ranges[ir])
-                a.grid(True, alpha=0.15)
-                a.tick_params(labelsize=7)
-                # Ticks on inner sides (left + bottom, toward the diagonal)
-                # Labels only on cells immediately adjacent to the diagonal
-                if ic != ir + 1:
-                    a.tick_params(labelleft=False, labelbottom=False)
+# ═════════════════════════════════════════════════════════════════════════════
+# Single combined figure: two GridSpec blocks with a gap between them
+# ═════════════════════════════════════════════════════════════════════════════
 
-    # ── Colorbars ─────────────────────────────────────────────────────────────
-    sm_g_disc.set_array([])
-    cb_g = fig.colorbar(sm_g_disc, cax=cax_g)
-    cb_g.set_label(r'$\log g$', fontsize=11)
-    cb_g.set_ticks(logg_unique)
-    cb_g.set_ticklabels([f'{v:.1f}' for v in logg_unique])
-    cb_g.ax.tick_params(labelsize=9)
-    cax_g.yaxis.set_ticks_position('left')
-    cax_g.yaxis.set_label_position('left')
+hist_color  = '#4C72B0'
+vline_color = '#C44E52'
+band_color  = '#4C72B0'
 
-    sm_m_disc.set_array([])
-    cb_m = fig.colorbar(sm_m_disc, cax=cax_m)
-    cb_m.set_label(r'$[\rm M/H]$', fontsize=11)
-    cb_m.set_ticks(met_unique)
-    cb_m.set_ticklabels([f'{v:+.1f}' for v in met_unique])
-    cb_m.ax.tick_params(labelsize=9)
+fig = plt.figure(figsize=(12, 10))
 
-    # ── Cluster legend centred below the 4×4 corner block ────────────────────
-    legend_handles = (
-        [Line2D([0], [0], marker='D', color='w',
-                markerfacecolor=cluster_colors[ci],
-                markeredgecolor='black', markeredgewidth=0.7,
-                markersize=8, label=f'Cluster {cl}')
-         for ci, cl in enumerate(unique_cl) if cl in clusters_2_show]
-        + [Line2D([0], [0], marker='*', color='w', markerfacecolor='orange',
-                  markeredgecolor='black', markeredgewidth=0.7,
-                  markersize=13, label='Global mode')]
-    )
-    pos_left  = ax_c[0, 0].get_position()
-    pos_right = ax_c[0, ndim - 1].get_position()
-    pos_bot   = ax_c[ndim - 1, 0].get_position()
-    center_x  = (pos_left.x0 + pos_right.x1) / 2
-    bottom_y  = pos_bot.y0
-    fig.legend(handles=legend_handles, ncols=int((len(clusters_2_show) + 1)//2),
-               loc='upper center',
-               bbox_to_anchor=(center_x, bottom_y - 0.01),
-               bbox_transform=fig.transFigure,
-               fontsize=9, framealpha=0.85)
+gs_top = GridSpec(2, 2, figure=fig, top=0.97, bottom=0.54,
+                  hspace=0.24, wspace=0.18)
+gs_bot = GridSpec(2, 2, figure=fig, top=0.48, bottom=0.04,
+                  hspace=0.26, wspace=0.15)
 
-    plt.savefig(paths.figures / "Appendix5.pdf", bbox_inches='tight', dpi=150)
-    plt.close(fig)
+hist_axes  = [fig.add_subplot(gs_top[r, c]) for r in range(2) for c in range(2)]
+param_axes = [fig.add_subplot(gs_bot[r, c]) for r in range(2) for c in range(2)]
+
+# ── Top panels: histograms ────────────────────────────────────────────────────
+
+for ic, ax in enumerate(hist_axes):
+    row, col = divmod(ic, 2)
+
+    rdiff = rel_diff_mat[:, ic]
+    rdiff = rdiff[~np.isnan(rdiff)]
+
+    p5,  p95 = np.percentile(rdiff, [5,  95])
+    p25, p75 = np.percentile(rdiff, [25, 75])
+    med       = np.median(rdiff)
+    disp_range = (max(p5 - 5, -100), min(p95 + 5, 100))
+
+    ax.hist(rdiff, bins=80, range=disp_range,
+            color=hist_color, alpha=0.80, density=True, edgecolor='none')
+    ax.axvline(med, color=vline_color, linestyle='--', linewidth=1.8, zorder=3)
+    ax.axvspan(p25, p75, color=band_color, alpha=0.15)
+    ax.axvline(0, color='black', linewidth=0.8, alpha=0.5)
+
+    ax.text(0.97 if ic in [0, 2] else 0.27, 0.95, f'Med: {med:+.1f}%', transform=ax.transAxes,
+            ha='right', va='top', fontsize=12, color=vline_color)
+    ax.text([0.97, 0.4, 0.97, 0.45][ic], 0.8, f'1Q/3Q: {p25:+.1f}/{p75:+.1f}%', transform=ax.transAxes,
+            ha='right', va='top', fontsize=12, color=vline_color)
+    
+    ax.set_title(coeff_labels[ic], fontsize=12, pad=6)
+    if row == 1:
+        ax.set_xlabel(r'$(c_{\rm set2} - c_{\rm set1})\,/\,|c_{\rm set1}|\ (\%)$',
+                      fontsize=12)
+    if col == 0:
+        ax.set_ylabel('Probability density', fontsize=12)
+    ax.grid(True, alpha=0.25)
+    ax.xaxis.set_minor_locator(MultipleLocator(5))
+
+# ── Bottom panels: median relative difference vs physical parameter ────────────
+
+param_specs = [
+    (phys_Teff, r'$T_{\rm eff}$ (K)'),
+    (phys_logg, r'$\log g$'),
+    (phys_MH,   r'$[{\rm M/H}]$'),
+    (phys_wav,  r'$\lambda\ (\mu{\rm m})$'),
+]
+
+for ip, (ax, (param_vals, xlabel)) in enumerate(zip(param_axes, param_specs)):
+    row, col = divmod(ip, 2)
+    unique_vals = np.sort(np.unique(param_vals))
+
+    for ic in range(4):
+        medians = np.full(len(unique_vals), np.nan)
+        p25s    = np.full(len(unique_vals), np.nan)
+        p75s    = np.full(len(unique_vals), np.nan)
+
+        for iv, val in enumerate(unique_vals):
+            mask = (param_vals == val) & ~np.isnan(rel_diff_mat[:, ic])
+            if mask.sum() < 3:
+                continue
+            rdiff_bin          = rel_diff_mat[mask, ic]
+            medians[iv]        = np.median(rdiff_bin)
+            p25s[iv], p75s[iv] = np.percentile(rdiff_bin, [25, 75])
+
+        finite = ~np.isnan(medians)
+        ax.plot(unique_vals[finite], medians[finite],
+                color=coeff_colors[ic], linewidth=1.8,
+                marker='o', markersize=4, label=coeff_labels[ic])
+        ax.fill_between(unique_vals[finite], p25s[finite], p75s[finite],
+                        color=coeff_colors[ic], alpha=0.15)
+
+    ax.axhline(0, color='black', linewidth=0.8, alpha=0.5)
+    ax.set_xlabel(xlabel, fontsize=12)
+    if col == 0:
+        ax.set_ylabel(r'Median $\Delta c\,/\,|c_{\rm set1}|\ (\%)$', fontsize=12)
+    ax.grid(True, alpha=0.25)
+    # ax.yaxis.set_minor_locator(MultipleLocator(5))
+
+param_axes[0].legend(fontsize=12, loc='best', framealpha=0.6, ncols=4)
+
+fig.savefig(output_path, dpi=150, bbox_inches='tight')
+plt.close(fig)
+print(f'Saved → {output_path}')

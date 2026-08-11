@@ -6,7 +6,7 @@
 # coefficients [c1, c2, c3, c4] coloured by hierarchical cluster membership.
 # The overall mode (closest profile to the global centroid) is marked with an
 # orange star and each per-cluster mode with a diamond in the cluster colour.
-# Data produced by Fig5_run.py and downloaded from Zenodo as results.npz.
+# Data produced by Fig3_run.py and downloaded from Zenodo as results.npz.
 
 
 ######################################
@@ -25,7 +25,7 @@ from matplotlib.lines import Line2D
 ########## Hyper-parameters ##########
 ######################################
 
-input_save_path = str(paths.data / "Fig5_Storage") + "/"
+input_save_path = str(paths.data / "Fig3_Storage") + "/"
 models = ['mps1']
 clusters_2_show = [0, 2, 3, 4, 7] # clusters to highlight with diamonds in the corner plot
 

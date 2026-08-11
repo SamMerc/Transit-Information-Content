@@ -3,7 +3,7 @@
 #############################
 
 # A reviewer of the paper pointed out that the grid of stellar properties (Teff, logg, metallicity)
-# explored in Fig5_run.py for the limb-darkening clustering analysis is not representative of the
+# explored in Fig3_run.py for the limb-darkening clustering analysis is not representative of the
 # population of known exoplanet-hosting stars. This is step 1 of 3 in addressing this:
 #   1. Extract the Teff / logg / metallicity distribution of confirmed exoplanet hosts from the
 #      NASA Exoplanet Archive and histogram it (this file).

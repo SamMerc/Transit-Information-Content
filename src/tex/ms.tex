@@ -4,8 +4,13 @@
 \newcommand\aastex{AAS\TeX}
 \newcommand\latex{La\TeX}
 
-% Macro to highlight changes (replace with {{#1}} after acceptance)
-\newcommand{\vone}[1]{\textbf{#1}}
+% Revisions
+%% First response
+% \newcommand{\vone}[1]{\textbf{#1}}
+\newcommand{\vone}[1]{{#1}}
+%% Second response
+% \newcommand{\vtwo}[1]{\textbf{#1}}
+% \newcommand{\vtwo}[1]{{#1}}
 
 % Preferences
 \def\sectionautorefname{Section}
@@ -65,7 +70,6 @@ While in theory $A$ should be $\sim\sqrt{3}$, we find that it \vone{departs subs
 % Main body
 \section{Introduction}
 \label{sec:intro}
-
 Since its launch, \vone{the James Webb Space Telescope (}JWST\vone{)} has ushered in a new era of exoplanet science. Thanks to the unprecedented \vone{precision} of its data, we can probe in finer detail the structure and composition of exoplanet atmospheres \citep[\textit{e.g.},][]{Xue2024, Welbanks2024} and investigate novel processes such as photochemistry \citep[\textit{e.g.},][]{Tsai2023, Dyrek2024}, atmosphere--interior interactions \citep[\textit{e.g.},][]{Tsai2021, Benneke2024}, and planetary oblateness \citep[\textit{i.e.}, internal processes, \textit{e.g.},][]{Berardo2022, Liu2025}.
 
 Although instrumentation has improved drastically over the last decades, the models and frameworks used to interpret data have lagged behind. One example is our incomplete understanding of stars: stellar magnetic active regions (spots and faculae) consistently contaminate photometric and spectroscopic observations \citep[\textit{e.g.},][]{Dumusque2011a, Dumusque2011b, Meunier2017, Rackham2017, Rackham2018, Rackham2019, Rackham2023, Saba2025}. Our inability to model or mitigate these effects leads to biased measurements of the radial velocity amplitude and transit depth from which the most basic exoplanet properties---mass and radius, respectively---are measured \citep[\textit{e.g.},][]{Rabus2009, Carter2011, Lovis2011}. Similar biases can arise from other model limitations, such as with line shape parameterizations in opacity models \citep{Niraula2022, Niraula2023}. These model limitations propagate throughout our analyses and hamper our ability to draw meaningful conclusions on exoplanet characteristics. 
@@ -149,9 +153,9 @@ We demonstrate in \autoref{sec:boosting_science} this provides the best compromi
 \vone{\textit{Profile generation.} Using \texttt{ExoTic-LD} \citep{ExoTiC-LD}, we extract stellar intensity profiles from the MPS-ATLAS set1 stellar models \citep{mpsset1} on a $10\times10\times10$ grid, uniformly sampling $T_{\rm eff} \in [3500, 9000]$\,K, $\log g \in [3.0, 5.0]$, and $[\rm M/\rm H] \in[-5.0, 1.5]$. Profiles are available at 1221 wavelengths ($\lambda \in [0.0099, 160]$\,$\mu$m) per grid point, yielding a total dataset size of $1{,}221{,}000$. We adopt MPS-ATLAS set1 as it is among the most up-to-date set of stellar models and yields LDCs consistent with its set2 counterpart \citep{mpsset2}. Restricting ourselves to only MPS-ATLAS set1 avoids introducing inter-model variability unrelated to our driving question. This choice also defines the parameter ranges explored, as different models cover differently the ($T_{\rm eff}$, $\log g$, $[\rm M/\rm H]$, $\lambda$)-space.}
 
 \begin{figure*}[ht]
-    \script{Fig5_plot.py}
+    \script{Fig3_plot.py}
     \centering
-    \includegraphics[trim = 0 05mm 0 0 , width=0.95\textwidth]{figures/Fig5.pdf}
+    \includegraphics[trim = 0 05mm 0 0 , width=0.95\textwidth]{figures/Fig3.pdf}
     \caption{\vone{\textbf{Representative intensity profiles.} Intensity profiles for the global and cluster modes introduced in \autoref{sec:framework} and used in the analyses of \autoref{sec:amp_factor_cause} and \autoref{sec:boosting_science}. \emph{Top:} A random subset of 100 profiles is shown in each panel's background: for the global mode panel, profiles are colored by their cluster assignment (see \autoref{fig:appendix_fig3}); for each cluster mode panel, profiles belonging to that cluster are shown in gray. The modal intensity profile for each panel is overlaid as a solid colored line, with its fourth-order non-linear LDL fit shown as a dashed black line. The resulting LDCs along with the stellar parameters and wavelength used to generate each profile are reported in \autoref{tab:tab1}. \emph{Bottom:} Relative difference residuals between the fourth-order non-linear LDL fit and the true intensity profile. These clearly remain well below the 1\% level, with the exception of the cluster 4 mode where residuals grow towards the low-$\mu$ tail as the intensity profile's behavior becomes increasingly complex.}}
     \label{fig:fig5}
 \end{figure*}
@@ -179,9 +183,9 @@ The global mode is used as the injection vector for the analyses in \autoref{sec
 
 
 \begin{figure*}[ht!]
-    \script{Fig3_plot.py}
+    \script{Fig4_plot.py}
     \centering
-    \includegraphics[width=0.9\textwidth]{figures/Fig3.pdf}
+    \includegraphics[width=0.9\textwidth]{figures/Fig4.pdf}
     \caption{\textbf{Revealing \vone{the} underlying network of correlations.} \vone{\textit{Left:} Correlation matrix resulting from the sensitivity analysis. The lower triangle reports correlation values derived from $\chi^2$ maps, with shading scaled to their absolute values. Colored boxes highlight families of related parameters.} The upper triangle provides a circular representation of the same matrix, where circle size and shading scale with correlation strength, making the \vone{families} easier to distinguish. The transit depth is most strongly correlated with \vone{the polynomial LDCs} $u_1$, $u_2$, and $u_3$. \textit{Right:} Network representation of \vone{the same} correlations\vone{ with parameters} grouped into families using the same color scheme as in the matrix. Blue lines highlight the strongest links between parameters of different families.}
     \label{fig:fig3}
 \end{figure*}
@@ -213,9 +217,9 @@ Together the perturbation and sensitivity analyses paint a consistent picture: \
 \section{Reliably boosting transit science}\label{sec:boosting_science}
 
 \begin{figure*}[htbp]
-    \script{Fig4_plot.py}
+    \script{Fig5_plot.py}
     \centering
-    \includegraphics[width=0.85\textwidth]{figures/Fig4.pdf}
+    \includegraphics[width=0.85\textwidth]{figures/Fig5.pdf}
     \caption{ \textbf{Towards optimal limb-darkening parametrization}. Amplification factor (top \vone{panels}) and transit depth bias (bottom \vone{panels}) from our injection--retrieval tests \vone{shown for three representative cluster modes}. Results are shown as a function of the number of LDCs (x-axis) under different limb-darkening priors assumptions, ranging from \vone{uniform} priors to Gaussian priors of varying widths. Polynomial LDLs are used for cases with 2-9 LDCs, while ``4NLLD" refers to the fourth-order non-linear LDL. Since this is the injection LDL, it yields the best performance.
     Priors informed by current stellar models are highlighted in blue (\vone{$10$--$20\%$}). As in \autoref{fig:fig1}, the black dashed horizontal line marks $A$'s theoretical limit, and box plots summarize the results from \vone{ten} MCMC retrievals with different noise realizations. Green vertical bands indicate the regimes considered acceptable: for the bias, results within $2\sigma$ of truth and for the amplification factor, \vone{$A \leq 6$}.  As discussed in \autoref{sec:impact_prior_choice}, \vone{parameterizations meeting both criteria are highlighted with green x-axis labels, and those failing one or both are in red}.}
     \label{fig:fig4}
@@ -249,7 +253,7 @@ We conclude that reducing the number of LDCs is not a viable route to mitigating
 
 \textbf{\vone{Finally, the trends with prior strength reveal a tension}.} Tighter priors consistently reduce $A$, as expected\vone{,} since narrower priors constrain both the LDC and transit depth posteriors\vone{. The corresponding effect on bias is less clear. For polynomial retrievals, biases broadly grow as priors tighten, due to the prior-centering procedure described above}. Because polynomial LDLs cannot perfectly reproduce the injected non-linear profile\vone{, especially at low orders}, the LDC \vone{prior means} are intrinsically \vone{shifted away from optimum. Tightening around them confines} the chains to biased regions of parameter space and other parameters such as the transit depth \vone{shift to compensate, inflating their biases. However, as we observe it here, the trend with prior width is not monotonic. This likely reflects two effects: the limited statistical power of $10$ noise realizations per configuration, and the fact that prior-induced biases on different LDCs do not necessarily point in the same direction, so their net effect on $D$ can vary non-trivially across different injection--retrievals. The fourth-order non-linear LDL is immune to this tension since it functionally matches the injection model, meaning tighter priors reduce $A$ without inflating bias}.
 
-Taken together, these results suggest that observers should fit modern light curves with both a third-order polynomial and fourth-order non-linear LDL. Both prescriptions provide an optimal compromise between $A$ and bias, while also serving as useful cross-checks: their distinct functional forms make them sensitive to different aspects of the stellar intensity profile, enabling a more complete characterization of the underlying stellar properties. As a community, we should therefore encourage the use of multiple LDLs when fitting light curves and recommend reporting results from each prescription to highlight whether transit depth measurements differ or remain consistent across models. \vone{Particular care should also be paid to the wavelength dependence of limb-darkening parametrization (exemplified in \autoref{fig:appendix_fig2}), since inadequate choices can introduce spurious features in transmission spectra that mimic genuine atmospheric signals \citep[\textit{e.g.},][]{Keers2024}.}
+Taken together, these results suggest that observers should fit modern light curves with,,   both a third-order polynomial and fourth-order non-linear LDL. Both prescriptions provide an optimal compromise between $A$ and bias, while also serving as useful cross-checks: their distinct functional forms make them sensitive to different aspects of the stellar intensity profile, enabling a more complete characterization of the underlying stellar properties. As a community, we should therefore encourage the use of multiple LDLs when fitting light curves and recommend reporting results from each prescription to highlight whether transit depth measurements differ or remain consistent across models. \vone{Particular care should also be paid to the wavelength dependence of limb-darkening parametrization (exemplified in \autoref{fig:appendix_fig2}), since inadequate choices can introduce spurious features in transmission spectra that mimic genuine atmospheric signals \citep[\textit{e.g.},][]{Keers2024}.}
 
 
 \section{Conclusion}\label{sec:conclusion}
@@ -383,17 +387,17 @@ $T_0$ (days)           & \multicolumn{2}{c}{Fixed}                              
 \vone{\autoref{fig:appendix_fig2} and \autoref{fig:appendix_fig5} shows the full distribution of fourth-order non-linear LDCs across $T_{\rm eff}$, $\log g$, $[{\rm M/H}]$, and wavelength, while \autoref{fig:appendix_fig3} shows the same LDC space partitioned by hierarchical cluster membership.}
 
 \begin{figure}[htbp]
-    \script{Appendix2_plot.py}
+    \script{Appendix1_plot.py}
     \centering
-    \includegraphics[width=\textwidth]{figures/Appendix2.pdf}
+    \includegraphics[width=\textwidth]{figures/Appendix1.pdf}
     \caption{\textbf{Distribution of fourth-order non-linear limb-darkening coefficients from the MPS-ATLAS set1 grid.} Double corner plot of the four LDCs ($c_1$, $c_2$, $c_3$, $c_4$) computed over $T_{\rm eff} \in [3500, 9000]$\,K, $\log g \in [3.0, 5.0]$, $[{\rm M/H}] \in [-5.0, 1.5]$, and JWST NIRSpec PRISM wavelengths. The \textit{lower-left} and \textit{upper-right} triangles show LDCs colored by $T_{\rm eff}$ and wavelength, respectively. The star and diamonds mark the location of the global and cluster modes used as injection LDCs throughout the manuscript. Diamond colors reflect the cluster colors used in \autoref{fig:appendix_fig3}. The star and diamonds mark the location of the global and cluster modes used as injection LDCs throughout the manuscript. The global mode corresponds to a near-solar metallicity K/M-type star at mid-infrared wavelengths, while clusters 1, 3, and 4 respectively probe a metal-poor K/M-type in the near-infrared, a moderately metal-poor G-type in the optical, and a metal-rich K-type in the optical. \textit{Left column:} 1D marginal histograms, grouped by the $T_{\rm eff}$ at which the LDCs were computed. \textit{Right column:} Same as the left column, but with grouping done according to wavelength. An animated version cycling through all four physical dimensions ($T_{\rm eff}$, $\log g$, $[{\rm M/H}]$, and wavelength) is available on GitHub \href{https://github.com/SamMerc/Transit-Information-Content/blob/main/src/static/corner_animation.gif}{\GitHubIcon}.}
     \label{fig:appendix_fig2}
 \end{figure}
 
 \begin{figure}[htbp]
-    \script{Appendix5_plot.py}
+    \script{Appendix2_plot.py}
     \centering
-    \includegraphics[width=\textwidth]{figures/Appendix5.pdf}
+    \includegraphics[width=\textwidth]{figures/Appendix2.pdf}
     \caption{\textbf{Distribution of fourth-order non-linear limb-darkening coefficients from the MPS-ATLAS set1 grid.} Same as \autoref{fig:appendix_fig2} except coloring LDCs by $\log g$ and $[{\rm M/H}]$.}
     \label{fig:appendix_fig5}
 \end{figure}
@@ -413,9 +417,9 @@ $T_0$ (days)           & \multicolumn{2}{c}{Fixed}                              
 \autoref{fig:appendix_fig1} presents the results of our sensitivity \vone{analysis}.
 
 \begin{figure}[htbp]
-    \script{Appendix1_plot.py}
+    \script{Appendix4_plot.py}
     \centering
-    \includegraphics[width=\textwidth]{figures/Appendix1.pdf}
+    \includegraphics[width=\textwidth]{figures/Appendix4.pdf}
     \caption{\textbf{$\chi^2$ maps across parameter pairs}. Corner plot of the $\chi^2$ maps used in our sensitivity test. Each diagonal subplot shows a 1-dimensional evaluation of the chi-squared space for the parameter corresponding to that column\vone{, where the vertical dashed red line indicates the truth value of that parameter}. Off-diagonal subplots display two-dimensional \vone{iso}-$\chi^2$ contours derived from the $\chi^2$ maps, where each map was obtained by varying the parameters indicated on the x and y axes\vone{, and the dashed black lines mark the truth values of the respective parameters}. Finally, for certain contours that are not elliptical (\textit{e.g.}, \vone{$\sqrt{e}\sin{\omega}$} versus $P$) we approximate them as first-order polynomials and compute the rotation angle using $\theta = \mathrm{arctan(m)}$, where m is the slope.}
     \label{fig:appendix_fig1}
 \end{figure}
@@ -424,9 +428,9 @@ $T_0$ (days)           & \multicolumn{2}{c}{Fixed}                              
 \vone{\autoref{fig:appendix_fig4} summarizes the comparison of LDCs produced by the MPS-ATLAS set1 and set2 models and used in \autoref{sec:constraint_stellar_model} to establish the strength of priors that can be placed on LDCs from state-of-the-art stellar models.}
 
 \begin{figure}[htbp]
-    \script{Appendix4_plot.py}
+    \script{Appendix5_plot.py}
     \centering
-    \includegraphics[width=0.93\textwidth]{figures/Appendix4.pdf}
+    \includegraphics[width=0.93\textwidth]{figures/Appendix5.pdf}
     \caption{\textbf{Comparison of LDCs between the MPS-ATLAS set1 and set2 stellar atmosphere models.} \emph{Top four:} Histograms of the signed relative difference $(c_{\rm set2} - c_{\rm set1})\,/\,|c_{\rm set1}|$ for each of the four non-linear LDL coefficients, computed point-by-point across matched grids of $T_{\rm eff}$, $\log g$, $[{\rm M/H}]$, and $\lambda$. Median values (red dashed lines) are near zero for all coefficients, confirming the negligible offset between the two model sets. The IQR grows with coefficient order, from $5\%$ for $c_1$ to $15\%$ for $c_2$ and $18$--$19\%$ for $c_3$ and $c_4$, reflecting the increasing difficulty in constraining higher-order coefficients that capture fine-scale intensity variations. \emph{Bottom four:} Median relative difference as a function of stellar parameters and wavelength, with shaded regions indicating the IQR. The inter-model spread exhibits a clear dependence on the physical parameters considered, underscoring that the IQR derived from the top panels (and used to motivate the LDC priors in \autoref{sec:constraint_stellar_model}) are summary statistics that do not capture the the full breadth of behavior across the parameter space.}
     \label{fig:appendix_fig4}
 \end{figure}

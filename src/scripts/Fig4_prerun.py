@@ -2,11 +2,11 @@
 ########## Purpose ##########
 #############################
 
-# Figure 3's bottom panel showcases the amplification factor change when a given transit
+# Figure 4's bottom panel showcases the amplification factor change when a given transit
 # parameter is fixed rather than fit for during the retrieval.
 # To measure this, we need one MCMC per varying parameter (other than Rp/R*, whose posterior is the
 # quantity of interest) with that parameter fixed to its fiducial value, repeated across the same 10
-# noise seeds used everywhere else in Figure 2/3. This file generates those MCMC chains.
+# noise seeds used everywhere else in Figure 2/4. This file generates those MCMC chains.
 
 
 ######################################
@@ -108,7 +108,7 @@ init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
 
 
 #%% Storing outputs
-raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig3_prerun_Storage/'
+raw_save_dir = '/Users/samsonmercier/Desktop/Work/PhD/Research/TIC/Fig4_prerun_Storage/'
 
 #%% Model parameters
 mod_prop_base = {

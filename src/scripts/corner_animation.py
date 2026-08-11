@@ -9,7 +9,7 @@
 #
 # Output: src/static/corner_animation.gif
 # This file is NOT a Snakemake rule — run it manually once and commit the GIF.
-# Data produced by Fig5_run.py and downloaded from Zenodo as results.npz.
+# Data produced by Fig3_run.py and downloaded from Zenodo as results.npz.
 
 
 ######################################
@@ -32,7 +32,7 @@ from PIL import Image
 ########## Hyper-parameters ##########
 ######################################
 
-input_save_path = str(paths.data / "Fig5_Storage") + "/"
+input_save_path = str(paths.data / "Fig3_Storage") + "/"
 output_path     = paths.data.parent / "static" / "corner_animation.gif"
 model           = 'mps1'
 n_sc            = 40_000      # scatter subsample per frame

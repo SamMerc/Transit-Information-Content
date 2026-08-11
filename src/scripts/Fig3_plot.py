@@ -2,1001 +2,169 @@
 ########## Purpose ##########
 #############################
 
-# Figure 3 is the sensitivity analysis, showcasing the family of correlations that exist within the transit parameters.
-# To generate this figure we must explore the chi-squared space of pair of parameters. To do this, we need perform an MCMC
-# to identify the parts of parameter space that are most relevant to explore i.e. in the locality of the best-fit solution.
-# The same parameters for the injection and retrieval are used in Figure 2 and 3 so we can just use the results of Figure 2's MCMC
-# for this first step. 
-# Once these chi-squared maps are evaluated, a correlation metric is calculated from their shape, and these correlation values
-# are plotted in a colourful matrix.
-# This file retrieves the chi-squared spaces for pairs of parameters and uses it to plots Figure 3 and 6.
+# Figure 3 shows the intensity profiles and NLLD fits for the overall mode and
+# selected cluster modes identified in the coefficient space. The underlying data
+# (profiles, coefficients, cluster labels) are produced by Fig3_run.py and stored
+# in results.npz, which is downloaded from Zenodo by the Snakemake workflow.
+#
+# This version works exclusively with global (disc-integrated) stellar intensity
+# profiles — no transit chord / impact-parameter / planet-size dependence.
+
 
 ######################################
 ########## Import libraries ##########
 ######################################
-from jax import jit
-import jax
-print(f"JAX devices: {jax.devices()}")
-print(f"Default backend: {jax.default_backend()}")
-import jax.numpy as jnp
-import matplotlib
-import matplotlib.pyplot as plt
-import astropy.units as u
-from astropy.constants import G
-from squishyplanet.limb_darkening_laws import nonlinear_4param_ld_law
+
 import numpy as np
-import pandas as pd
-import os
-import pickle
-import matplotlib.cm as cm
+import matplotlib
 import paths
-import matplotlib.patheffects as pe
-
-# For 64-bit precision since JAX defaults to 32-bit
-jax.config.update("jax_enable_x64", True)
-
-#############################################
-########## Define hyper-parameters ##########
-#############################################
-#%% Mock light curve
-
-#%%%% Define G in units needed now to avoid JAX tracing issues
-G_solar_units = G.to(u.Rsun**3 / (u.Msun * u.day**2)).value
-G_cgday = G.to(u.cm**3 / (u.g * u.day**2)).value
-R_star = (1.0 * u.R_sun).value
-#%%%% Mock system - fiducial
-init_state_dic = {}
-init_state_dic['period'] = 1.                                 #days
-a_meters = ( (G.value * (1.0 * u.M_sun).to(u.kg).value * (init_state_dic['period'] * 24 * 3600)**2)/(4 * jnp.pi**2) )**(1/3)  
-init_state_dic['a'] = a_meters / (1.0 * u.R_sun).to(u.m).value  #stellar radius
-init_state_dic['r'] = 0.1                                     #stellar radius
-init_state_dic['i'] = jnp.deg2rad(90)                         #radians
-init_state_dic['omega'] = 0.0                                 #radians
-init_state_dic['e'] = 0.0                                     #unitless
-init_state_dic['t0'] = 0.0                                    #days
-
-#Setting base LDCs
-# Global LDCs : c1 = 0.6245 c2 = -0.1898 c3 = 0.1473 c4 = -0.0634           
-init_NLLD_coeffs = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634)
-
-#Updating initial state dictionary
-for iLD, LD_coeff in enumerate(init_NLLD_coeffs):
-    init_state_dic[f'LD_u{iLD+1}'] = LD_coeff
-
-#Get starting points for the LD coefficients
-init_LD_prop = nonlinear_4param_ld_law(u1=0.6245, u2=-0.1898, u3=0.1473, u4=-0.0634, order=3)
-
-#%%%% Calculate transit duration
-# Impact parameter (eccentricity-corrected)
-b = (
-    (init_state_dic['a'] * jnp.cos(init_state_dic['i'])) / R_star
-    * (1 - init_state_dic['e']**2) / (1 + init_state_dic['e'] * jnp.sin(init_state_dic['omega']))
-)
-# Argument inside arcsin
-arg = (
-    (1/init_state_dic['a'])
-    * jnp.sqrt((1 + init_state_dic['r'])**2 - b**2)
-    / jnp.sin(init_state_dic['i'])
-)
-# Numerical safety
-arg = np.clip(arg, -1.0, 1.0)
-# Transit duration
-T_dur = (
-    (init_state_dic['period'] / jnp.pi)
-    * jnp.sqrt(1 - init_state_dic['e']**2) / (1 + init_state_dic['e'] * jnp.sin(init_state_dic['omega']))
-    * jnp.arcsin(arg)
-)
-
-#%%%% Model time - ensure pre- and post-transit are same duration as transit
-low_t = -1.5*T_dur                                                      #days
-high_t = 1.5*T_dur                                                      #days
-exposure_time = 5                                                       #seconds
-num_t = jnp.floor((((high_t - low_t) * 24 * 3600)/exposure_time))       #number of points
-init_state_dic['times'] = jnp.linspace(low_t, high_t, int(num_t))       #days
-
-#Number of in-transit points, used for the amplification factor calculation
-num_IT_pts = jnp.sum(
-    (init_state_dic['times'] > init_state_dic['t0'] - T_dur / 2) &
-    (init_state_dic['times'] < init_state_dic['t0'] + T_dur / 2)
-)
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 
-#%% Input and outputs directories
-input_dir = str(paths.data / "Fig2_Storage") + "/"
-output_dir = str(paths.data / "Fig3_Storage") + "/"
-prerun_dir = str(paths.data / "Fig3_prerun_Storage") + "/"
+######################################
+########## Hyper-parameters ##########
+######################################
 
-#%% Model parameters
-mod_prop = {
-    'r'         : {'vary':True, 'guess':0.11, 'bounds':[0.07, 0.15]},
-    'i'         : {'vary':True, 'guess':jnp.deg2rad(88.5), 'bounds':[jnp.deg2rad(88.), jnp.deg2rad(92.)]},
-    'a'         : {'vary':True, 'guess':init_state_dic['a']-1, 'bounds':[init_state_dic['a']-2, init_state_dic['a']+2]},
-    'LD_u1'     : {'vary':True, 'guess':init_LD_prop[0], 'bounds':[init_LD_prop[0] - 0.5, init_LD_prop[0] + 0.5]},
-    'LD_u2'     : {'vary':True, 'guess':init_LD_prop[1], 'bounds':[init_LD_prop[1] - 0.5, init_LD_prop[1] + 0.5]},
-    'LD_u3'     : {'vary':True, 'guess':init_LD_prop[2], 'bounds':[init_LD_prop[2] - 0.5, init_LD_prop[2] + 0.5]},
-    'period'    : {'vary':True, 'guess':1., 'bounds':[0.9995, 1.0005]}, #Gaussian prior
-    'sqrtecosw' : {'vary':True, 'guess':0.1, 'bounds':[-0.2, 0.2]},
-    'sqrtesinw' : {'vary':True, 'guess':0.1, 'bounds':[-0.2, 0.2]},
-    't0'        : {'vary':False, 'guess':0., 'bounds':[-100,100]},
-}
+input_save_path = str(paths.data / "Fig3_Storage") + "/"
+models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
+clusters_2_show = [0, 2, 3, 4, 7] # clusters to highlight with diamonds in the corner plot
 
-#%% Defining important lists
-var_param_list = []
-for key in mod_prop:
-    if mod_prop[key]['vary']:
-        var_param_list.append(str(key))
+############################
+###### Function block ######
+############################
 
-#%% Defining dictionary to store additional info. needed for the model
-fixed_args={}
-fixed_args['var_param_list']=var_param_list
-fixed_args['labels'] = [r'R$_p$/R$_{\star}$',r'i (rad)',r'$\rho_{\star}$ (g/cm$^{3}$)',r'u$_1$', r'u$_2$',r'u$_3$',r'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)']
+def fourNLLD(x, coeffs):
+    """4th-order non-linear limb-darkening law."""
+    return (1
+            - coeffs[0] * (1 - x ** 0.5)
+            - coeffs[1] * (1 - x)
+            - coeffs[2] * (1 - x ** 1.5)
+            - coeffs[3] * (1 - x ** 2))
 
-#% Parameters for which a "fixed" MCMC (Fig3_prerun.py output) exists - everything varying except 'r'
-params_to_fix = [p for p in var_param_list if p != 'r']
 
-#% Define number of points to sample the parameter space with
-fixed_args['sample_pts'] = 100
+################################
+########## Code block ##########
+################################
 
-#% Delat chi2 thresholds to include in heatmaps
-fixed_args['delta_chi2_thresh'] = 1.0
+for model in models:
 
-#% Contour levels 
-lvls = np.logspace(np.log10(1), np.log10(1000), base=10, num=10)
+    # ── Load pre-computed results ─────────────────────────────────────────────
+    res = np.load(input_save_path + f'{model}/results.npz', allow_pickle=False)
 
-#%% Number of burn-in steps used in MCMC
-fixed_args['nburn'] = 70000
+    unique_cl             = res['unique_cl']
+    typical_mu            = res['typical_mu']
+    typical_profile       = res['typical_profile']
+    typical_coeff         = res['typical_coeff']
+    cluster_mode_mus      = res['cluster_mode_mus']
+    cluster_mode_profiles = res['cluster_mode_profiles']
+    cluster_mode_coeffs   = res['cluster_mode_coeffs']
+    typical_idx          = int(res['typical_idx'])
+    cluster_mode_indices = res['cluster_mode_indices']
+    corner_meta          = res['corner_meta']
+    T_vals_arr           = res['T_vals_arr']
+    g_vals_arr           = res['g_vals_arr']
+    m_vals_arr           = res['m_vals_arr']
+    wavs_ref             = res['wavs_ref']
+    corner_data          = res['corner_data']
+    cluster_labels       = res['cluster_labels']
 
-#%% Model scatter and seeds to use for the plot
-model_scatter =  16.68100537200059
-seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
+    n_cl           = len(unique_cl)
+    cluster_cmap   = matplotlib.colormaps['tab10'].resampled(n_cl)
+    cluster_colors = [cluster_cmap(c) for c in range(n_cl)]
 
-# Filtering parameters
-THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
-ROUNDS = 3
-verbose = True
+    # ── Physical-parameter lookup for each mode ───────────────────────────────
+    def get_phys(idx):
+        m = corner_meta[idx]
+        return dict(Teff=T_vals_arr[m[0]], logg=g_vals_arr[m[1]],
+                    MH=m_vals_arr[m[2]],   wav=wavs_ref[m[3]] / 1e4)
 
-##############################
-##### Relevant functions #####
-##############################
-def load_result(args):
-    """
-    Optimized file loading with iterative 2D sigma clipping.
-    
-    FILTERING STRATEGY:
-    - Maintains a 2D mask of shape (n_walkers, n_steps_post) throughout
-    - At each round, sigma clipping is computed over all currently-surviving
-      (walker, step) pairs for chi2 and each parameter independently
-    - Individual (walker, step) pairs are removed without discarding the
-      entire walker chain
-    - Returns good_steps_mask (n_walkers, n_steps_post) for fine-grained use
-    """
-    raw_save_dir, model_scatter, seed, return_full = args
-    print(f"  Processing scatter{model_scatter:.3f}, seed{seed}...")
-    try:
-        path_base = f'{raw_save_dir}/{jnp.floor(model_scatter)}ppm/Seed{seed}/'
+    mode_phys = {'Global mode': get_phys(typical_idx)}
+    for ci, cl in enumerate(unique_cl):
+        mode_phys[f'Cluster {cl} mode'] = get_phys(int(cluster_mode_indices[ci]))
 
-        # Load with memory mapping
-        raw_chain = np.load(path_base + 'chains.npy', mmap_mode='r')
-        logprob   = np.load(path_base + 'logprob.npy', mmap_mode='r')
-        chi2      = np.load(path_base + 'chi2_chain.npy', mmap_mode='r')
+    # ── Figure 3: NLLD curves for overall mode and per-cluster mode profiles ──
+    print('    FIGURE 3 - NLLD curves for overall mode and per-cluster mode profiles')
 
-        n_walkers, n_steps, n_params = raw_chain.shape
-        n_steps_post = n_steps - fixed_args['nburn']
+    # Bundle specials: (label, mu array, raw profile, coeff vector, colour, linewidth)
+    special_styles = [
+        ('Global mode', typical_mu, typical_profile, typical_coeff, 'orange', 2.5),
+    ] + [
+        (f'Cluster {cl} mode', cluster_mode_mus[ci], cluster_mode_profiles[ci], cluster_mode_coeffs[ci], cluster_colors[ci], 1.8)
+        for ci, cl in enumerate(unique_cl)
+    ]
 
-        # ======================================================================
-        # BURN: slice to post-burnin only
-        # All arrays are (n_walkers, n_steps_post) or (n_walkers, n_steps_post, n_params)
-        # ======================================================================
-        burnt_chain   = np.array(raw_chain[:, fixed_args['nburn']:, :])   # (n_walkers, n_steps_post, n_params)
-        burnt_chi2    = np.array(chi2[:,    fixed_args['nburn']:])         # (n_walkers, n_steps_post)
-        burnt_logprob = np.array(logprob[:, fixed_args['nburn']:])         # (n_walkers, n_steps_post)
+    # ── Panel layout: left = NLLD curves, right = residuals vs overall mode ──
+    n_cl_plot = len(clusters_2_show) + 1
+    cl_to_plot = ['Global mode'] + [f'Cluster {cl} mode' for cl in clusters_2_show]
+    special_styles_to_plot = [s for s in special_styles if s[0] in cl_to_plot]
 
-        # ======================================================================
-        # 2D MASK: True = this (walker, step) pair is still alive
-        # ======================================================================
-        good_steps_mask = np.ones((n_walkers, n_steps_post), dtype=bool)  # (n_walkers, n_steps_post)
+    fig5, ax5 = plt.subplots(
+        2, n_cl_plot, figsize=(5 * n_cl_plot, 7),
+        gridspec_kw={'wspace': 0.15, 'hspace': 0.05},
+        sharex=True, sharey='row'
+    )
 
-        # ======================================================================
-        # ITERATIVE SIGMA CLIPPING - operates on surviving pairs each round
-        # ======================================================================
-        for round_idx in range(ROUNDS):
+    rng = np.random.default_rng(42)
+    N_BG = 100
 
-            THRESHOLD  = THRESHOLDS[round_idx]
-            n_alive    = np.sum(good_steps_mask)
-            if verbose:print(f'    ROUND {round_idx+1}/{ROUNDS} (threshold={THRESHOLD}σ, {n_alive} pairs alive)')
+    for plot_idx, (sp_label, mu_plot, prof, coeffs, col, lw) in enumerate(special_styles_to_plot):
+        curve = fourNLLD(mu_plot, coeffs)
 
-            # ------------------------------------------------------------------
-            # FILTER 1: CHI2
-            # Extract the chi2 values of currently-alive (walker, step) pairs
-            # ------------------------------------------------------------------
-            alive_chi2 = burnt_chi2[good_steps_mask]                      # (n_alive,)
-
-            quartiles  = np.percentile(alive_chi2, [25, 50, 75])
-            mu, iqr    = quartiles[1], quartiles[2] - quartiles[0]
-
-            # Build a 2D bad mask: False everywhere, then flag outliers among alive pairs
-            chi2_bad_2d                  = np.zeros((n_walkers, n_steps_post), dtype=bool)
-            chi2_bad_2d[good_steps_mask] = (alive_chi2 < mu - THRESHOLD * iqr) | (alive_chi2 > mu + THRESHOLD * iqr)
-
-            if verbose:print(f"      Chi2:  flagged {np.sum(chi2_bad_2d)} / {n_alive} ({100*np.sum(chi2_bad_2d)/n_alive:.1f}%)")
-
-            # ------------------------------------------------------------------
-            # FILTER 2: PARAMETERS
-            # Same pattern: extract alive values per parameter, flag outliers
-            # ------------------------------------------------------------------
-            param_bad_2d = np.zeros((n_walkers, n_steps_post), dtype=bool)
-
-            for param_idx in range(n_params):
-                alive_param = burnt_chain[:, :, param_idx][good_steps_mask]  # (n_alive,)
-
-                quartiles = np.percentile(alive_param, [25, 50, 75])
-                mu, iqr   = quartiles[1], quartiles[2] - quartiles[0]
-
-                outliers_flat = (alive_param < mu - THRESHOLD * iqr) | (alive_param > mu + THRESHOLD * iqr)
-                param_bad_2d[good_steps_mask] |= outliers_flat
-
-                param_name = fixed_args['var_param_list'][param_idx] if param_idx < len(fixed_args['var_param_list']) else f'param_{param_idx}'
-                if verbose:print(f"      {param_name}: flagged {np.sum(outliers_flat)} / {n_alive} ({100*np.sum(outliers_flat)/n_alive:.1f}%)")
-
-            # ------------------------------------------------------------------
-            # UPDATE 2D MASK
-            # ------------------------------------------------------------------
-            round_bad_2d  = chi2_bad_2d | param_bad_2d
-            good_steps_mask &= ~round_bad_2d
-
-            if verbose:print(f"      Round removed {np.sum(round_bad_2d)} / {n_alive} ({100*np.sum(round_bad_2d)/n_alive:.1f}%)")
-
-        if verbose:print(f"    Final: {np.sum(good_steps_mask)} / {n_walkers * n_steps_post} (walker, step) pairs survived ({100 * np.sum(good_steps_mask)/(n_walkers * n_steps_post)} %)")
-
-        # ======================================================================
-        # EXTRACT DATA
-        # ======================================================================
-
-        # Best-fit: find the best logprob among surviving pairs
-        masked_logprob         = np.where(good_steps_mask, burnt_logprob, -np.inf)
-        best_walker, best_step = np.unravel_index(np.argmax(masked_logprob), masked_logprob.shape)
-        bestfit_r              = float(burnt_chain[best_walker, best_step, 0])
-
-        # r chain: collect parameter 0 from all surviving (walker, step) pairs
-        r_chain_post_burnin = burnt_chain[:, :, 0][good_steps_mask]       # (n_surviving_pairs,)
-
-        if return_full:
-            full_chain   = np.array(raw_chain)
-            full_logprob = np.array(logprob)
-            full_chi2    = np.array(chi2)
-
-            return (model_scatter, seed, r_chain_post_burnin, bestfit_r,
-                    True, full_chain, full_logprob, full_chi2, good_steps_mask) 
+        # Background profiles
+        if sp_label == 'Global mode':
+            bg_idxs = rng.choice(len(corner_data), size=N_BG, replace=False)
+            for bi in bg_idxs:
+                cl_bi = cluster_labels[bi]
+                ci_bi = list(unique_cl).index(cl_bi)
+                ax5[0, plot_idx].plot(mu_plot, fourNLLD(mu_plot, corner_data[bi]),
+                                      color=cluster_colors[ci_bi], alpha=0.5,
+                                      linewidth=0.5, zorder=0)
         else:
-            return (model_scatter, seed, r_chain_post_burnin, bestfit_r,
-                    False, None, None, None, None)
-
-    except Exception as e:
-        print(f"Error loading scatter{model_scatter:.3f}, seed{seed}: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-    
-#Helper function to fit an ellipse given points
-def fit_ellipse_conic(x, y):
-    # Build design matrix
-    D = jnp.vstack([x**2, x*y, y**2, x, y, jnp.ones_like(x)]).T
-    # Solve normal equations: minimize ||D @ p||²
-    _, _, V = jnp.linalg.svd(D)
-    p = V[-1]  # solution is last row of V
-    return p  # [A, B, C, D, E, F]
-
-#Helper function to calculate ellipse properties given its fit
-def ellipse_parameters_from_conic(p):
-    a, B, c, D, E, g = p
-    b = B/2.
-    d = D/2.
-    f = E/2.
-
-    #Get center values
-    x0 = ( c*d - b*f )/( b*b - a*c )
-    y0 = ( a*f - b*d )/( b*b - a*c )
-
-    #Get semi-major and semi-minor axes
-    up = 2.0 * (a*f*f + c*d*d + g*b*b - 2.0*b*d*f - a*c*g)
-    down1 = (b*b - a*c) * (jnp.sqrt((a - c)*(a - c) + 4.0*b*b) - (a + c))                 
-    down2 = (b*b - a*c) * (-jnp.sqrt((a - c)*(a - c) + 4.0*b*b) - (a + c))
-    am = jnp.sqrt( up/down1 )
-    bm = jnp.sqrt( up/down2 )
-    
-#Get angle
-    if (a == c):  # Circle case
-        phi = 0.0
-    elif (b == 0):
-        if (a < c):
-            phi = 0.0
-        else:  # a > c
-            phi = 0.5 * jnp.pi
-    else:  # b != 0 and a != c
-        if (a < c):
-            phi = 0.5 * jnp.arctan((2.0 * b) / (a - c))
-        else:  # a > c
-            phi = 0.5 * jnp.pi + 0.5 * jnp.arctan((2.0 * b) / (a - c))
-
-    #Get cardinal points
-    # x = xmid
-    y_card_low = y0 - jnp.sqrt((am*am*bm*bm) / (bm*bm*jnp.sin(phi)**2 + am*am*jnp.cos(phi)**2))
-    y_card_high = y0 + jnp.sqrt((am*am*bm*bm) / (bm*bm*jnp.sin(phi)**2 + am*am*jnp.cos(phi)**2))
-    # y = ymid
-    x_card_low = x0 - jnp.sqrt((am*am*bm*bm) / (bm*bm*jnp.cos(phi)**2 + am*am*jnp.sin(phi)**2))
-    x_card_high = x0 + jnp.sqrt((am*am*bm*bm) / (bm*bm*jnp.cos(phi)**2 + am*am*jnp.sin(phi)**2))
-
-    return {
-        "center": (x0, y0),
-        "angle_rad": phi,
-        "angle_deg": jnp.degrees(phi),
-        "semi_major": am,
-        "semi_minor": bm,
-        'y_card' : (y_card_low, y_card_high),
-        'x_card' : (x_card_low, x_card_high),
-    }
-
-
-@jit
-def compute_amplification_factor_jax(r_chain_flat, bestfit_r, model_scatter, num_IT_pts):
-    std_r              = jnp.std(r_chain_flat)
-    bestfit_r_error    = 2 * std_r * bestfit_r
-    scatter_in_bin     = (model_scatter * 1e-6) / jnp.sqrt(num_IT_pts)
-    return bestfit_r_error / scatter_in_bin
-
-
-@jit
-def compute_sigma_bias_jax(bestfit_r, r_chain_flat, true_r):
-    std_r           = jnp.std(r_chain_flat)
-    bestfit_r_error = 2 * std_r * bestfit_r
-    return jnp.abs((bestfit_r**2 - true_r**2) / bestfit_r_error)
-
-
-def process_prerun_data():
-    """
-    Load (or retrieve from cache) amplification factors and biases for every
-    "fixed parameter" MCMC (Fig3_prerun.py output) in prerun_dir, across all seeds.
-
-    Returns a dict with keys 'amp_factors' and 'biases', each a dict keyed by
-    parameter name holding a 1-D array (over seeds).
-    """
-    cache_file = prerun_dir + 'processed_data_cache.pkl'
-
-    if os.path.exists(cache_file):
-        print(f"Loading cached prerun data from {cache_file}...")
-        with open(cache_file, 'rb') as f:
-            cached_data = pickle.load(f)
-        return cached_data
-
-    print("No prerun cache found. Processing prerun MCMC runs...")
-    cached_data = {'amp_factors': {}, 'biases': {}}
-
-    for param in params_to_fix:
-        amp_factors = []
-        biases = []
-        for seed in seeds:
-            print(f'PRERUN: fix_{param}, seed{seed}')
-            _, _, r_chain_post_burnin, bestfit_r, _, _, _, _, _ = load_result(
-                (f"{prerun_dir}fix_{param}", model_scatter, seed, True)
-            )
-            r_jax = jnp.array(r_chain_post_burnin.flatten())
-            amp_factors.append(float(compute_amplification_factor_jax(
-                r_jax, bestfit_r, model_scatter, num_IT_pts
-            )))
-            biases.append(float(compute_sigma_bias_jax(
-                bestfit_r, r_jax, init_state_dic['r']
-            )))
-        cached_data['amp_factors'][param] = np.array(amp_factors)
-        cached_data['biases'][param]      = np.array(biases)
-
-    print(f"Saving prerun cache to {cache_file}...")
-    with open(cache_file, 'wb') as f:
-        pickle.dump(cached_data, f)
-
-    return cached_data
-
-
-def process_base_data():
-    """
-    Load (or retrieve from cache) the sigma-clipped base MCMC results (Fig2_Storage
-    output, all parameters free) for every seed: raw_chain, logprob,
-    r_chain_post_burnin, bestfit_r, good_steps_mask, amplification factor and bias.
-
-    Shares its cache file (input_dir/Fig2_base_processed_cache.pkl) with
-    Fig2_plot.py/Fig3_run.py, since all three compute the exact same values from the
-    same Fig2_Storage inputs - whichever script runs first builds the cache.
-    amp_factors/biases are cheap to derive from the cached r_chain_post_burnin/
-    bestfit_r, so they're recomputed on the fly each run rather than persisted in a
-    separate (redundant, multi-GB) cache file.
-
-    Returns a dict keyed by seed (raw_chain/logprob/r_chain_post_burnin/bestfit_r/
-    good_steps_mask), plus 'amp_factors'/'biases' arrays (over seeds).
-    """
-    cache_file = input_dir + 'Fig2_base_processed_cache.pkl'
-
-    if os.path.exists(cache_file):
-        print(f"Loading cached base data from {cache_file}...")
-        with open(cache_file, 'rb') as f:
-            shared_cached_data = pickle.load(f)
-    else:
-        print("No base cache found. Processing base MCMC runs...")
-        shared_cached_data = {}
-        for seed in seeds:
-            print(f'BASE: seed{seed}')
-            _, _, r_chain_post_burnin, bestfit_r, _, raw_chain, logprob, _, good_steps_mask = load_result(
-                (input_dir, model_scatter, seed, True)
-            )
-            shared_cached_data[seed] = {
-                'raw_chain': raw_chain,
-                'logprob': logprob,
-                'r_chain_post_burnin': r_chain_post_burnin,
-                'bestfit_r': bestfit_r,
-                'good_steps_mask': good_steps_mask,
-            }
-
-        print(f"Saving base cache to {cache_file}...")
-        with open(cache_file, 'wb') as f:
-            pickle.dump(shared_cached_data, f)
-
-    #Derive amplification factor + bias per seed (cheap - not persisted separately)
-    cached_data = {'raw_chain': {}, 'logprob': {}, 'r_chain_post_burnin': {}, 'bestfit_r': {},
-                    'good_steps_mask': {}, 'amp_factors': [], 'biases': []}
-
-    for seed in seeds:
-        r_chain_post_burnin = shared_cached_data[seed]['r_chain_post_burnin']
-        bestfit_r            = shared_cached_data[seed]['bestfit_r']
-        r_jax = jnp.array(r_chain_post_burnin.flatten())
-        cached_data['raw_chain'][seed]           = shared_cached_data[seed]['raw_chain']
-        cached_data['logprob'][seed]             = shared_cached_data[seed]['logprob']
-        cached_data['r_chain_post_burnin'][seed] = r_chain_post_burnin
-        cached_data['bestfit_r'][seed]           = bestfit_r
-        cached_data['good_steps_mask'][seed]     = shared_cached_data[seed]['good_steps_mask']
-        cached_data['amp_factors'].append(float(compute_amplification_factor_jax(
-            r_jax, bestfit_r, model_scatter, num_IT_pts
-        )))
-        cached_data['biases'].append(float(compute_sigma_bias_jax(
-            bestfit_r, r_jax, init_state_dic['r']
-        )))
-
-    cached_data['amp_factors'] = np.array(cached_data['amp_factors'])
-    cached_data['biases']      = np.array(cached_data['biases'])
-
-    return cached_data
-
-
-#############################################
-################ Running code ###############
-#############################################
-
-print(f"MODEL SCATTER = {model_scatter:.2f}")
-
-####################################
-##### Chi-squared map plotting #####
-####################################
-
-def load_chi2_data(param1, param2, save_loc):
-    """
-    Load chi-squared data for a parameter pair from individual files.
-    Handles both same-parameter (1D) and different-parameter (2D) cases.
-    """
-    # Try both possible file name combinations
-    file1 = os.path.join(save_loc, f"chi2_{param1}_{param2}.npy")
-    file2 = os.path.join(save_loc, f"chi2_{param2}_{param1}.npy")
-    
-    if os.path.exists(file1):
-        return jnp.load(file1)
-    elif os.path.exists(file2):
-        data = jnp.load(file2)
-        # If it's a 2D array and params are different, transpose it
-        if param1 != param2 and data.ndim == 2:
-            return data.T
-        return data
-    else:
-        raise FileNotFoundError(f"Could not find chi2 file for {param1} vs {param2}")
-
-n_params = len(fixed_args['var_param_list'])
-
-#Collecting the per-seed correlation matrices so we can compute their mean and std across seeds
-corr_matrices = []
-
-#Collecting the per-seed amplification factors (Base + one entry per fixed parameter)
-amp_factor_data = {'Base': []}
-for param in params_to_fix:
-    amp_factor_data[param] = []
-
-#Amplification factor + bias for every "fixed parameter" prerun MCMC, across all seeds
-#(cached to prerun_dir/processed_data_cache.pkl so this is only computed once)
-prerun_cached_data = process_prerun_data()
-
-#Sigma-clipped base MCMC results (Fig2_Storage), across all seeds
-#(shares input_dir/Fig2_base_processed_cache.pkl with Fig2_plot.py/Fig3_run.py)
-base_cached_data = process_base_data()
-
-#Loop over each of the 10 MCMC runs (different noise seeds)
-for seed_idx, seed in enumerate(seeds):
-    print(f"SEED = {seed}")
-    seed_dir = input_dir+f'{jnp.floor(model_scatter)}ppm/Seed{seed}/'
-    fixed_args['save_loc'] = output_dir+f'Seed{seed}/'
-
-    #Loading the MCMC results (from cache)
-    print(f'Retrieving MCMC')
-    raw_chain = base_cached_data['raw_chain'][seed]
-    logprob = base_cached_data['logprob'][seed]
-    good_steps_mask = base_cached_data['good_steps_mask'][seed]
-
-    #Amplification factor for the base run (all parameters free, from cached base data)
-    amp_factor_data['Base'].append(float(base_cached_data['amp_factors'][seed_idx]))
-
-    #Amplification factor for each "fixed parameter" MCMC (from cached prerun data)
-    for param in params_to_fix:
-        amp_factor_data[param].append(float(prerun_cached_data['amp_factors'][param][seed_idx]))
-
-    #Finding the index of max log-probability
-    max_walker, max_step = jnp.unravel_index(jnp.argmax(logprob), logprob.shape)
-
-    #Initializing correlation matrix
-    corr_matrix = np.zeros((n_params, n_params))
-
-    #Initializing scratch, only used to compute contour geometry
-    fig, axes = plt.subplots(n_params, n_params, figsize=(2.5 * n_params, 2.5 * n_params))
-
-    for i, param1 in enumerate(fixed_args['var_param_list']):
-        for j, param2 in enumerate(fixed_args['var_param_list']):
-            ax = axes[i, j]
-            ax.tick_params(labelsize=14)
-            print(param1, ' vs ', param2)
-
-            # remove top/right spines for nicer look
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-
-            if j > i:
-                ax.axis('off')  # upper triangle: turn off
-                continue
-
-            # Diagonal: 1D chi2 line plot
-            if i == j:
-
-                # Load chi2 data from file
-                chi2_vals = load_chi2_data(param1, param1, fixed_args['save_loc'])
-
-                param_vals = jnp.linspace(
-                    raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                    raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                    fixed_args['sample_pts']
-                )
-
-                ax.plot(param_vals, chi2_vals, color='black')
-                ax.axvline(raw_chain[max_walker, max_step, i], color='red', linestyle='--', lw=1)
-                ax.set_yticklabels([])
-                ax.set_xticklabels([])
-
-            # Lower triangle: 2D chi2 contours (filled)
-            else:
-                # Use param2 on x-axis, param1 on y-axis (lower triangle convention)
-                param2_vals = jnp.linspace(
-                    raw_chain[max_walker, max_step, j] - jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
-                    raw_chain[max_walker, max_step, j] + jnp.std(raw_chain[:, fixed_args['nburn']:, j][good_steps_mask]),
-                    fixed_args['sample_pts']
-                )
-                param1_vals = jnp.linspace(
-                    raw_chain[max_walker, max_step, i] - jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                    raw_chain[max_walker, max_step, i] + jnp.std(raw_chain[:, fixed_args['nburn']:, i][good_steps_mask]),
-                    fixed_args['sample_pts']
-                )
-
-                #Get normalized arrays
-                norm_param2_vals = jnp.linspace(
-                    - 1,
-                    + 1,
-                    fixed_args['sample_pts']
-                )
-                norm_param1_vals = jnp.linspace(
-                    - 1,
-                    + 1,
-                    fixed_args['sample_pts']
-                )
-
-                key1 = f'{param1}_{param2}'
-                key2 = f'{param2}_{param1}'
-
-                # Load chi2 data from file
-                chi2_grid = load_chi2_data(param1, param2, fixed_args['save_loc'])
-
-                A, B = np.meshgrid(param2_vals, param1_vals)  # (x=param2, y=param1)
-                norm_A, norm_B = np.meshgrid(norm_param2_vals, norm_param1_vals)  # (x=param2, y=param1)
-
-                # Define three nicely spaced contour levels (multiples of the delta threshold)
-                contour_levels = []
-                for lvl in lvls:
-                    lv = lvl * fixed_args['delta_chi2_thresh']
-                    contour_levels.append(lv)
-
-                # Filled contours
-                fill_levels = [0.0] + list(lvls)
-                fill_colors = matplotlib.colormaps['Greens'](jnp.linspace(0., 1, len(lvls)))  # light -> dark green
-                ax.contourf(A, B, chi2_grid, levels=fill_levels, colors=fill_colors, alpha=0.5, antialiased=True)
-
-                # Outline the three contours with black lines
-                cs = ax.contour(A, B, chi2_grid, levels=contour_levels, colors=['black']*len(contour_levels), linewidths=0.8)
-
-                # Also compute normalized contours for later geometry fitting (do not rely on plotted result)
-                norm_cs = ax.contour(norm_A, norm_B, chi2_grid, levels=contour_levels, colors=['none']*len(contour_levels), linewidths=0)
-
-                ax.axvline(raw_chain[max_walker, max_step, j], color='black', linestyle='--', lw=1)
-                ax.axhline(raw_chain[max_walker, max_step, i], color='black', linestyle='--', lw=1)
-
-                # Find largest valid contour fully within bounds using the computed contour objects
-                valid_contours = []
-
-                # Get axis bounds
-                x_bounds = (param2_vals[0], param2_vals[-1])
-                y_bounds = (param1_vals[0], param1_vals[-1])
-
-                for norm_contour_level, contour_level in zip(norm_cs.allsegs, cs.allsegs):
-                    for norm_segment, segment in zip(norm_contour_level, contour_level):
-                        if len(segment) < 15:
-                            continue
-                        x, y = segment[:, 0], segment[:, 1]
-
-                        # Check if entire segment lies within bounds
-                        if (jnp.all((x >= x_bounds[0]) & (x <= x_bounds[1])) and
-                            jnp.all((y >= y_bounds[0]) & (y <= y_bounds[1]))):
-                            valid_contours.append((segment, norm_segment))
-
-                # Select the longest valid contour
-                if valid_contours:
-                    selected, norm_selected = max(valid_contours, key=lambda seg_pair: len(seg_pair[0]))
-                else:
-                    # If no valid contour found, fall back to the longest available contour in cs
-                    all_segments = []
-                    for level_segs in cs.allsegs:
-                        for seg in level_segs:
-                            all_segments.append((seg, None))
-                    if len(all_segments) == 0:
-                        raise KeyError('Need bigger contours')
-                    selected, norm_selected = max(all_segments, key=lambda seg_pair: len(seg_pair[0]))
-
-                #Retrieving contours
-                contour_x, contour_y = selected[:, 0], selected[:, 1]
-                if norm_selected is None:
-                    # build a dummy normalized contour by scaling to unit stds if we don't have normalized seg
-                    norm_contour_x = (contour_x - raw_chain[max_walker, max_step, j]) / jnp.std(raw_chain[max_walker, fixed_args['nburn']:, j][good_steps_mask])
-                    norm_contour_y = (contour_y - raw_chain[max_walker, max_step, i]) / jnp.std(raw_chain[max_walker, fixed_args['nburn']:, i][good_steps_mask])
-                else:
-                    norm_contour_x, norm_contour_y = norm_selected[:, 0], norm_selected[:, 1]
-
-                #Fit the normalized contour to retrieve slope and correlation value
-                ##Fit ellipse
-                bestfit_norm_ellipse = fit_ellipse_conic(norm_contour_x, norm_contour_y)
-                ##Retrieve properties
-                ellipse_norm_params = ellipse_parameters_from_conic(bestfit_norm_ellipse)
-                ##Plot semi-major axis
-                norm_orig_a = ellipse_norm_params['semi_major']
-                norm_orig_b = ellipse_norm_params['semi_minor']
-                norm_xmid, norm_ymid = ellipse_norm_params['center']
-                norm_theta = ellipse_norm_params['angle_rad']
-                ##Swap axes if necessary
-                if norm_orig_a < norm_orig_b:
-                    norm_a = norm_orig_b
-                    norm_theta += jnp.pi/2
-                else:norm_a = norm_orig_a
-                ##Plot the slope
-                norm_x0, norm_x1 = norm_xmid - 1 * (norm_a*jnp.cos(norm_theta)), norm_xmid + 1 * (norm_a*jnp.cos(norm_theta))
-                norm_y0, norm_y1 = norm_ymid - 1 * (norm_a*jnp.sin(norm_theta)), norm_ymid + 1 * (norm_a*jnp.sin(norm_theta))
-                ##Getting correlation value
-                norm_slope = (norm_y1-norm_y0)/(norm_x1-norm_x0)
-                corr_value = jnp.abs( jnp.sin(2 * jnp.arctan(norm_slope)) )
-
-                if jnp.isnan(corr_value):
-                    # fallback: fit line to all points in largest contour
-                    largest_idx = 0
-                    largest_size = 0
-                    for seg_idx, seg in enumerate(cs.allsegs):
-                        if len(seg[0][:,0]) > largest_size:
-                            largest_size = len(seg[0][:,0])
-                            largest_idx = seg_idx
-
-                    x, y = cs.allsegs[largest_idx][0][:, 0], cs.allsegs[largest_idx][0][:, 1]
-                    slope, intercept = jnp.polyfit(x, y, 1)
-                    corr_value = jnp.abs(jnp.sin(2 * jnp.arctan(slope)))
-
-                #Populate correlation matrix
-                corr_matrix[i, j] = corr_value
-
-                if i == n_params - 1:
-                    ax.set_xlabel(fixed_args['labels'][j],fontsize=14)
-                    ax.tick_params(axis="x", labelsize=12, rotation=45)
-                else:
-                    ax.set_xticklabels([])
-                if j == 0:
-                    ax.set_ylabel(fixed_args['labels'][i],fontsize=14)
-                    ax.tick_params(axis="y", labelsize=12, rotation=45)
-                else:
-                    ax.set_yticklabels([])
-
-                #Force the limits of the plot
-                ax.set_xlim([param2_vals[0], param2_vals[-1]])
-                ax.set_ylim([param1_vals[0], param1_vals[-1]])
-
-    plt.close(fig)
-
-    corr_matrices.append(corr_matrix)
-
-#Mean and standard deviation of the correlation matrix across the 10 seeds
-corr_matrix = np.mean(corr_matrices, axis=0)
-corr_matrix_std = np.std(corr_matrices, axis=0)
-
-# Figure 3
-print('STEP 2: FIGURE 3')
-
-# Place correlation matrix (mean across seeds) on top and bottom triangle
-full_corr_matrix = (corr_matrix + corr_matrix.T)
-corr_df = pd.DataFrame(full_corr_matrix, index=fixed_args['labels'], columns=fixed_args['labels'])
-
-# Place correlation std (across seeds) on top and bottom triangle the same way
-full_corr_matrix_std = (corr_matrix_std + corr_matrix_std.T)
-corr_df_std = pd.DataFrame(full_corr_matrix_std, index=fixed_args['labels'], columns=fixed_args['labels'])
-
-#Re-order the matrices
-desired_order_labels = [r'R$_p$/R$_{\star}$', 'P (days)',r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'$\rho_{\star}$ (g/cm$^{3}$)', 'i (rad)', r'u$_1$', r'u$_2$', r'u$_3$']
-corr_df_reordered = corr_df.loc[desired_order_labels, desired_order_labels]
-corr_df_std_reordered = corr_df_std.loc[desired_order_labels, desired_order_labels]
-
-#% Make corrplot
-print('BUILD CORRELATION HEATMAP')
-plot_labels = [r'D', r'P', r'$\sqrt{e}$cos($\omega$)',r'$\sqrt{e}$sin($\omega$)', r'$\rho_{\star}$', 'i', r'u$_1$', r'u$_2$', r'u$_3$']
-matrix = corr_df_reordered.values
-matrix_std = corr_df_std_reordered.values
-labels = plot_labels
-n = len(labels)
-
-def format_metric(val, decimals=2):
-    """Format decimal places"""
-    formatted = f"{val:.{decimals}f}"
-    while float(formatted) == 0 and val != 0:
-        formatted = f"{val:.{decimals+1}f}"
-    return formatted
-
-from matplotlib.patches import FancyBboxPatch
-import matplotlib.colors as mcolors
-import matplotlib.gridspec as gridspec
-
-# TOP_H/BOTTOM_H are in inches: TOP_H hosts the (unchanged) correlation matrix + node
-# diagram, BOTTOM_H is the new amplification-factor panel added below it.
-FIG_W, TOP_H, BOTTOM_H = 32, 14, 6
-FIG_H = TOP_H + BOTTOM_H
-fig = plt.figure(figsize=(FIG_W, FIG_H))
-gs = gridspec.GridSpec(1, 1, figure=fig,
-                       left=0.04, right=0.54,
-                       bottom=(BOTTOM_H + 0.07 * TOP_H) / FIG_H,
-                       top=(BOTTOM_H + 0.97 * TOP_H) / FIG_H)
-ax = fig.add_subplot(gs[0])
-# ax_diag is created AFTER the matrix is drawn (see below) so it
-# renders on top. Full-figure coverage + transparent background mean it
-# is never blocked by ax's clipping box or background patch.
-
-ax.set_xlim(-0.5, n - 0.5)
-ax.set_ylim(-0.5, n - 0.5)
-ax.set_xticks(range(n))
-ax.set_yticks(range(n))
-ax.set_xticklabels(labels, ha='center', rotation=45, fontsize=18)
-ax.set_yticklabels(labels, ha='center', rotation=45, fontsize=18)
-ax.tick_params(axis='y', pad=32)
-ax.invert_yaxis()
-ax.set_aspect('equal')
-
-# Define color normalization
-cmap_diverging = matplotlib.colormaps['Blues']
-max_radius = 0.4
-
-# Draw cells
-for i in range(n):
-    for j in range(n):
-        corr_val = matrix[i, j]
-        strength = abs(corr_val)
-        color = cmap_diverging(corr_val)
-
-        if i < j:
-            # Upper triangle: circle plot, radius from the mean correlation across seeds
-            circle = plt.Circle((j, i), radius=strength * max_radius, color=color)
-            ax.add_patch(circle)
-
-            # Dashed circles at mean - std and mean + std to show the spread across seeds
-            std_val = matrix_std[i, j]
-            for r in (strength - std_val, strength + std_val):
-                if r > 0:
-                    err_circle = plt.Circle((j, i), radius=r * max_radius, fill=False,
-                                             edgecolor='black', linestyle='--', linewidth=1.0, alpha=0.7)
-                    ax.add_patch(err_circle)
-
-        elif i > j:
-            # Lower triangle: heatmap square with annotation (mean and std across seeds)
-            std_val = matrix_std[i, j]
-            rect = plt.Rectangle((j - 0.5, i - 0.5), 1, 1, facecolor=color, edgecolor='white')
-            ax.add_patch(rect)
-            ax.text(j, i, f"{format_metric(corr_val)}\n±{format_metric(std_val)}", ha='center', va='center', color='black', fontsize=16,
-                 path_effects=[pe.withStroke(linewidth=2, foreground='white')])
-
-# Group-highlight boxes: transparent fill, thick outline, one color per group
-def add_group_box(ax_target, row_range, col_range, color, lw=5.5, pad=0.1):
-    r0, r1 = row_range
-    c0, c1 = col_range
-    box = FancyBboxPatch(
-        (c0 - 0.5 + pad, r0 - 0.5 + pad),
-        (c1 - c0 + 1) - 2 * pad,
-        (r1 - r0 + 1) - 2 * pad,
-        boxstyle="round,pad=0.06",
-        linewidth=lw, edgecolor=color, facecolor='none', zorder=10,
-    )
-    ax_target.add_patch(box)
-
-add_group_box(ax, (1, 5), (1, 5), '#e26952')   # system params 5x5 block
-add_group_box(ax, (6, 8), (6, 8), '#f7a789')   # LD 3x3 block
-add_group_box(ax, (0, 0), (5, 8), '#ecd1c2')   # D 4x1 block
-
-# Add colorbar
-sm = cm.ScalarMappable(cmap=cmap_diverging)
-sm.set_array([])
-cbar = plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.02)
-cbar.set_label('Correlation', fontsize=18)
-cbar.ax.tick_params(labelsize=18)
-
-# -----------------------------------------------------------------------
-# Node diagram – overlay covering only the top (TOP_H-inch) block, added
-# AFTER ax so it renders on top. xlim=[0, FIG_W] / ylim=[0, TOP_H] match
-# that block's inch dimensions, so 1 data unit = 1 physical inch and
-# plt.Circle appears perfectly round without needing set_aspect('equal').
-# Transparent background ensures ax content shows through wherever the
-# diagram does not draw anything.
-# -----------------------------------------------------------------------
-ax_diag = fig.add_axes([0, BOTTOM_H / FIG_H, 1, TOP_H / FIG_H])   # covers only the top block
-ax_diag.patch.set_visible(False)
-ax_diag.axis('off')
-ax_diag.set_xlim(0, FIG_W)
-ax_diag.set_ylim(0, TOP_H)
-
-col_sys  = '#e26952'
-col_ld   = '#f7a789'
-col_d    = '#ecd1c2'
-line_col = '#cbe0ef'
-node_fs  = 18
-lbl_fs   = 19
-
-# All radii and positions are now in INCHES (matching xlim/ylim = figure dims).
-# plt.Circle with these values renders as a true circle without set_aspect.
-r_sys    = 0.75    # inch
-r_d      = 0.75    # inch
-r_ld     = 0.75    # inch
-pad_box  = 0.02    # inch – gap between circle edge and bounding box
-node_gap = 0.05    # inch – gap between adjacent circle edges in a block
-
-# --- System parameters ---
-sys_cx       = 19.5                                   # inch from figure left
-node_spacing = 2 * r_sys + node_gap                   # 2.15 inch
-sys_ys       = 6.0 + np.arange(5) * node_spacing      # [6.0, 8.15, 10.3, 12.45, 14.6]
-sys_bx = sys_cx - r_sys - pad_box
-sys_bw = 2 * (r_sys + pad_box)
-sys_by = sys_ys[0]  - r_sys - pad_box
-sys_bh = (sys_ys[-1] - sys_ys[0]) + 2 * (r_sys + pad_box)
-
-ax_diag.add_patch(FancyBboxPatch(
-    (sys_bx, sys_by), sys_bw, sys_bh,
-    boxstyle="round,pad=0.06", linewidth=2.5, edgecolor=col_sys,
-    facecolor=(*mcolors.to_rgb(col_sys), 0.10), zorder=2,
-))
-ax_diag.text(sys_cx, sys_by + 8.25, 'System parameters',
-             ha='center', va='top', fontsize=lbl_fs, color=col_sys, fontweight='bold')
-
-sys_node_labels = ['i', r'$\mathbf{\rho_{\star}}$',
-                   r'$\mathbf{\sqrt{e}}$sin$\mathbf{(\omega)}$', 
-                   r'$\mathbf{\sqrt{e}}$cos$\mathbf{(\omega)}$','P']
-
-for lbl, cy in zip(sys_node_labels, sys_ys):
-    ax_diag.add_patch(plt.Circle((sys_cx, cy), r_sys, color=col_sys, zorder=3))
-    ax_diag.text(sys_cx, cy, lbl, ha='center', va='center',
-                 fontsize=node_fs, fontweight='bold', zorder=4)
-
-# --- Transit depth ---
-d_cx, d_cy  = 27.0, 12.2
-d_bx = d_cx - r_d - pad_box
-d_bw = 2 * (r_d + pad_box)
-d_by = d_cy - r_d - pad_box
-d_bh = 2 * (r_d + pad_box)
-
-ax_diag.add_patch(FancyBboxPatch(
-    (d_bx, d_by), d_bw, d_bh,
-    boxstyle="round,pad=0.06", linewidth=2.5, edgecolor=col_d,
-    facecolor=(*mcolors.to_rgb(col_d), 0.20), zorder=2,
-))
-ax_diag.text(d_cx, d_by + d_bh + 0.25, 'Transit depth',
-             ha='center', va='bottom', fontsize=lbl_fs, color=col_d, fontweight='bold')
-ax_diag.add_patch(plt.Circle((d_cx, d_cy), r_d, color=col_d, zorder=3))
-ax_diag.text(d_cx, d_cy, 'D', ha='center', va='center',
-             fontsize=node_fs, fontweight='bold', zorder=4)
-
-# --- Limb-darkening coefficients ---
-ld_cy        = 3.0
-ld_spacing   = 2 * r_ld + node_gap                    # 2.15 inch
-ld_xs        = 25.5 + np.arange(3) * ld_spacing       # [21.5, 23.65, 25.8]
-ld_bx = ld_xs[0]  - r_ld - pad_box
-ld_bw = (ld_xs[-1] - ld_xs[0]) + 2 * (r_ld + pad_box)
-ld_by = ld_cy - r_ld - pad_box
-ld_bh = 2 * (r_ld + pad_box)
-
-ax_diag.add_patch(FancyBboxPatch(
-    (ld_bx, ld_by), ld_bw, ld_bh,
-    boxstyle="round,pad=0.06", linewidth=2.5, edgecolor=col_ld,
-    facecolor=(*mcolors.to_rgb(col_ld), 0.12), zorder=2,
-))
-ax_diag.text((ld_xs[0] + ld_xs[-1]) / 2, ld_by - 0.35,
-             'Limb-darkening coefficients', ha='center', va='top',
-             fontsize=lbl_fs, color=col_ld, fontweight='bold')
-ld_node_labels = [r'$\mathbf{u_1}$', r'$\mathbf{u_2}$', r'$\mathbf{u_3}$']
-for lbl, cx in zip(ld_node_labels, ld_xs):
-    ax_diag.add_patch(plt.Circle((cx, ld_cy), r_ld, color=col_ld, zorder=3))
-    ax_diag.text(cx, ld_cy, lbl, ha='center', va='center',
-                 fontsize=node_fs, fontweight='bold', zorder=4)
-
-# Connection lines: center-to-center, specific pairs only
-# sys_ys: [P=4, √ecos=3, √esin=2, ρ★=1, i=0]   ld_xs: [u1=0, u2=1, u3=2]
-P_y    = sys_ys[4]
-i_y    = sys_ys[0]
-cosw_y = sys_ys[3]
-
-for lx in ld_xs:          # D → u1, u2, u3
-    ax_diag.plot([d_cx, lx], [d_cy, ld_cy], color=line_col, lw=3.5, zorder=1)
-                          # D → i
-ax_diag.plot([d_cx, sys_cx], [d_cy, i_y], color=line_col, lw=3.5, zorder=1)
-for lx in ld_xs:          # P → u1, u2, u3
-    ax_diag.plot([sys_cx, lx], [P_y, ld_cy], color=line_col, lw=3.5, zorder=1)
-for lx in ld_xs[1:]:      # √ecos(ω) → u2, u3
-    ax_diag.plot([sys_cx, lx], [cosw_y, ld_cy], color=line_col, lw=3.5, zorder=1)
-for lx in ld_xs:          # i → u1, u2, u3
-    ax_diag.plot([sys_cx, lx], [i_y, ld_cy], color=line_col, lw=3.5, zorder=1)
-
-###############################################
-##### Amplification factor (bottom) panel #####
-###############################################
-print('BUILD AMPLIFICATION FACTOR PANEL')
-
-# Computed above, per seed, from the base MCMC (Fig2_Storage) and the fix_{param}
-# MCMCs (Fig3_prerun_Storage): {'Base': array over seeds, param: array over seeds, ...}
-amp_factor_data = {key: np.array(vals) for key, vals in amp_factor_data.items()}
-
-label_by_param = dict(zip(fixed_args['var_param_list'], fixed_args['labels']))
-amp_categories  = [p for p in fixed_args['var_param_list'] if p != 'r']
-amp_tick_labels = [label_by_param[p] for p in amp_categories]
-
-amp_ax = fig.add_axes([0.11, 0.37 * BOTTOM_H / FIG_H, 0.81, 0.58 * BOTTOM_H / FIG_H])
-
-for ic, cat in enumerate(amp_categories):
-    amp_ax.boxplot(
-        np.abs(100 * (amp_factor_data['Base'] - amp_factor_data[cat]) / amp_factor_data['Base']), positions=[ic], patch_artist=True,
-        boxprops=dict(facecolor='skyblue', color='black'),
-        medianprops=dict(color='gold', linewidth=1.5),
-        whiskerprops=dict(color='black', linewidth=1.2),
-        capprops=dict(color='black', linewidth=1.2),
-        flierprops=dict(marker='o', color='black', markersize=4),
-        widths=[0.5],
-        showfliers=False,
-    )
-
-# amp_ax.set_yscale('log')
-amp_ax.set_xlim(-0.6, len(amp_categories) - 0.4)
-amp_ax.set_xticks(range(len(amp_categories)))
-amp_ax.set_xticklabels(amp_tick_labels, fontsize=16)
-amp_ax.tick_params(axis='y', labelsize=14)
-amp_ax.set_ylabel('Amplification Factor\nRelative Difference (%)', fontsize=18)
-amp_ax.set_xlabel('Fixed Parameter', fontsize=18)
-
-# ---- Manual crop: set these in inches (figure is FIG_W x FIG_H inches) ----
-crop_left   = 2.2    # increase to trim left whitespace
-crop_right  = 30.5   # decrease to trim right whitespace
-crop_bottom = 1.5    # increase to trim bottom whitespace
-crop_top    = FIG_H  # decrease to trim top whitespace
-
-from matplotlib.transforms import Bbox
-plt.savefig(paths.figures / "Fig3.pdf",
-            bbox_inches=Bbox([[crop_left, crop_bottom], [crop_right, crop_top]]))
-plt.close()
+            cl_num  = int(sp_label.split()[1])
+            cl_idxs = np.where(cluster_labels == cl_num)[0]
+            bg_idxs = rng.choice(cl_idxs, size=min(N_BG, len(cl_idxs)), replace=False)
+            for bi in bg_idxs:
+                ax5[0, plot_idx].plot(mu_plot, fourNLLD(mu_plot, corner_data[bi]),
+                                      color='gray', alpha=0.2, linewidth=0.5, zorder=0)
+
+        # Left panel: raw intensity profile (solid) + NLLD fit (dashed)
+        ax5[0, plot_idx].plot(mu_plot, curve, '--', color='black', linewidth=lw, zorder=2)
+        ax5[0, plot_idx].plot(mu_plot, prof,  '-',  color=col,     linewidth=lw, zorder=1)
+        p = mode_phys[sp_label]
+        title = (
+            f'{sp_label}'
+        )
+        ax5[0, plot_idx].set_title(title, fontsize=12, pad=5)
+        ax5[0, plot_idx].grid(True)
+
+        # Right panel: residuals
+        resid = 100 * (curve - prof) / prof
+        ax5[1, plot_idx].plot(mu_plot, resid, '--', color=col, linewidth=lw, label=sp_label)
+        ax5[1, plot_idx].axhline(0, color='black', linestyle='-', linewidth=1.2, alpha=0.4)
+        ax5[1, plot_idx].grid(True)
+
+        ax5[1, plot_idx].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)
+
+    ax5[0, 0].set_ylabel('Normalised intensity', fontsize=12)
+    ax5[1, 0].set_ylabel('Residuals (%)', fontsize=12)
+    ax5[1, 0].set_ylim([-0.5, 0.5])
+
+    plt.savefig(paths.figures / "Fig3.pdf", bbox_inches="tight")
+
+    # Print a summary table of all coefficients for easy copy-paste
+    print(f'\n  {"Profile":<14}  {"c1":>8}  {"c2":>8}  {"c3":>8}  {"c4":>8}')
+    print(f'  {"-"*54}')
+    for sp_label, _mu, _prof, coeffs, _col, _lw in special_styles:
+        print(f'  {sp_label:<20}  '
+              f'{coeffs[0]:>8.4f}  {coeffs[1]:>8.4f}  '
+              f'{coeffs[2]:>8.4f}  {coeffs[3]:>8.4f}')
+
+    # Print a summary table of all the physical parameters for easy copy-paste
+    print(f'\n  {"Profile":<14}  {"Wavelength":>10}  {"Teff":>8}  {"logg":>8}  {"[M/H]":>8}')
+    print(f'  {"-"*64}')
+    for sp_label in mode_phys.keys():
+        p = mode_phys[sp_label]
+        print(f'  {sp_label:<20}  '
+              f'{p["wav"]:.2f}  {p["Teff"]:.0f}  '
+              f'{p["logg"]:.2f}  {p["MH"]:.2f}')
