@@ -965,7 +965,10 @@ print('BUILD AMPLIFICATION FACTOR PANEL')
 amp_factor_data = {key: np.array(vals) for key, vals in amp_factor_data.items()}
 
 label_by_param = dict(zip(fixed_args['var_param_list'], fixed_args['labels']))
-amp_categories  = [p for p in fixed_args['var_param_list'] if p != 'r']
+# Same grouping as desired_order_labels above (period/eccentricity, then rho_star/i, then LDCs),
+# for visual consistency between the two panels.
+amp_param_order = ['period', 'sqrtecosw', 'sqrtesinw', 'a', 'i', 'LD_u1', 'LD_u2', 'LD_u3']
+amp_categories  = [p for p in amp_param_order if p in fixed_args['var_param_list']]
 amp_tick_labels = [label_by_param[p] for p in amp_categories]
 
 amp_ax = fig.add_axes([0.11, 0.37 * BOTTOM_H / FIG_H, 0.81, 0.58 * BOTTOM_H / FIG_H])
