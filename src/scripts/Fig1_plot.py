@@ -887,17 +887,18 @@ if __name__ == '__main__':
 
     # --- A definition: placed in the middle-right of the left panel ---
     x_def = x_right * 0.35
-    y_def = y_bottom - y_range * 0.02
+    y_def = y_bottom - y_range * 0.064
     ax_left.text(x_def, y_def,
                 r'$A := \dfrac{\sigma_D}{\sigma_{\rm ref}}$' + '\n' +
-                r'$= \sqrt{3}$, in theory',
+                r'$= \sqrt{3/2}$, in theory',
                 fontsize=10, va='bottom', ha='left')
 
     # Arrow from "= sqrt(3/2), in theory" pointing toward the dashed line on right panel
     # (This is a cross-axes annotation; we use figure coordinates)
     # Simpler: just add a small rightward arrow from the text
+    y_def = y_bottom - y_range * 0.066
     ax_left.annotate("",
-                    xy=(x_right * 0.9, y_def + y_range * 0.02),
+                    xy=(x_right * 0.94, y_def + y_range * 0.02),
                     xytext=(x_def + x_range * 0.48, y_def + y_range * 0.02),
                     arrowprops=dict(arrowstyle="<-", color="black", lw=1.0))
 
