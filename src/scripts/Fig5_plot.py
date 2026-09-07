@@ -92,6 +92,12 @@ seeds             = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 #C4 : 0.5172   -0.1913    0.0819   -0.0316
 #C7 : 0.6383   -0.0511   -0.2722    0.1455
 C_LABELS      = ['C0', 'C2', 'C3', 'C4', 'C7']
+# Fig5 is too tall for a single Overleaf page, so it is split into two figures:
+# Fig5a (clusters 0, 2, 3) and Fig5b (clusters 4, 7).
+C_LABEL_GROUPS = {
+    'Fig5a': ['C0', 'C2', 'C3'],
+    'Fig5b': ['C4', 'C7'],
+}
 C_LABEL_NAMES = {'C0': 'Cluster 0 - M/K type, metal poor, near-infrared', 
                  'C2': 'Cluster 2 - M/K type, metal rich, optical', 
                  'C3': 'Cluster 3 - M/K type, solar metallicity, mid-infrared',
@@ -439,26 +445,16 @@ def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
     return ax1, ax1m, ax1r, ax2, ax2m, ax2r
 
 
-#############################################
-################ Running code ###############
-#############################################
-
-if __name__ == '__main__':
-
-    # ── Load / build cache for each C label ──────────────────────────────
-    all_cached_data    = {}
-    available_c_labels = []
-
-    for c_label in C_LABELS:
-        data = process_c_label(c_label)
-        if data is not None:
-            all_cached_data[c_label] = data
-            available_c_labels.append(c_label)
-
+def build_and_save_figure(c_labels, all_cached_data, out_name):
+    """
+    Build the stacked amp-factor/bias figure for the given list of C labels
+    and save it to paths.figures / f"{out_name}.pdf".
+    """
+    available_c_labels = [c_label for c_label in c_labels if c_label in all_cached_data]
     if not available_c_labels:
-        raise RuntimeError("No C-label data found. Check RAW_BASE_DIR.")
+        print(f"Skipping {out_name}: no data available for {c_labels}.")
+        return
 
-    # ── Build figure ──────────────────────────────────────────────────────
     n_panels   = len(available_c_labels)
     fig_height = n_panels * 6
     fig = plt.figure(figsize=(13, fig_height))
@@ -482,15 +478,36 @@ if __name__ == '__main__':
         draw_matched_breaks(fig, ax2m, ax2r, size=0.006)
 
     # x-axis label centred across the full bottom row
-    if all_axes:
-        ax1_last, _, ax1r_last, ax2_last, _, _ = all_axes[-1]
-        left_box  = ax2_last.get_position()
-        right_box = ax1r_last.get_position()
-        x_center  = 0.5 * (left_box.x0 + right_box.x1)
-        y_label   = left_box.y0 - 0.02
-        fig.text(x_center, y_label, 'Number of LDCs',
-                 ha='center', va='top', fontsize=12)
+    ax1_last, _, ax1r_last, ax2_last, _, _ = all_axes[-1]
+    left_box  = ax2_last.get_position()
+    right_box = ax1r_last.get_position()
+    x_center  = 0.5 * (left_box.x0 + right_box.x1)
+    y_label   = left_box.y0 - 0.02
+    fig.text(x_center, y_label, 'Number of LDCs',
+             ha='center', va='top', fontsize=12)
 
-    plt.savefig(paths.figures / "Fig5.pdf", bbox_inches="tight")
-    plt.close()
-    print("Fig5.pdf saved.")
+    plt.savefig(paths.figures / f"{out_name}.pdf", bbox_inches="tight")
+    plt.close(fig)
+    print(f"{out_name}.pdf saved.")
+
+
+#############################################
+################ Running code ###############
+#############################################
+
+if __name__ == '__main__':
+
+    # ── Load / build cache for each C label ──────────────────────────────
+    all_cached_data = {}
+
+    for c_label in C_LABELS:
+        data = process_c_label(c_label)
+        if data is not None:
+            all_cached_data[c_label] = data
+
+    if not all_cached_data:
+        raise RuntimeError("No C-label data found. Check RAW_BASE_DIR.")
+
+    # ── Build one figure per group (Fig5a: clusters 0,2,3; Fig5b: 4,7) ────
+    for out_name, group_labels in C_LABEL_GROUPS.items():
+        build_and_save_figure(group_labels, all_cached_data, out_name)
