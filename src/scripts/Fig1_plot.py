@@ -898,7 +898,7 @@ if __name__ == '__main__':
     # Simpler: just add a small rightward arrow from the text
     y_def = y_bottom - y_range * 0.066
     ax_left.annotate("",
-                    xy=(x_right * 0.94, y_def + y_range * 0.02),
+                    xy=(x_right * 0.98, y_def + y_range * 0.02),
                     xytext=(x_def + x_range * 0.48, y_def + y_range * 0.02),
                     arrowprops=dict(arrowstyle="<-", color="black", lw=1.0))
 

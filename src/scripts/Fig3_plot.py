@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 input_save_path = str(paths.data / "Fig3_Storage") + "/"
 models = ['mps1']  # ['phoenix','kurucz', 'stagger', 'mps1', 'mps2']
 clusters_2_show = [0, 2, 3, 4, 7] # clusters to highlight with diamonds in the corner plot
-
+fs = 14  # font size for plots
 ############################
 ###### Function block ######
 ############################
@@ -135,7 +135,7 @@ for model in models:
         title = (
             f'{sp_label}'
         )
-        ax5[0, plot_idx].set_title(title, fontsize=12, pad=5)
+        ax5[0, plot_idx].set_title(title, fontsize=fs+2, pad=5)
         ax5[0, plot_idx].grid(True)
 
         # Right panel: residuals
@@ -144,10 +144,13 @@ for model in models:
         ax5[1, plot_idx].axhline(0, color='black', linestyle='-', linewidth=1.2, alpha=0.4)
         ax5[1, plot_idx].grid(True)
 
-        ax5[1, plot_idx].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=12)
+        ax5[1, plot_idx].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=fs)
+        ax5[1, plot_idx].tick_params(axis="x", labelsize=fs, rotation=0)
 
-    ax5[0, 0].set_ylabel('Normalised intensity', fontsize=12)
-    ax5[1, 0].set_ylabel('Residuals (%)', fontsize=12)
+    ax5[0, 0].set_ylabel('Normalised intensity', fontsize=fs)
+    ax5[0, 0].tick_params(axis="y", labelsize=fs, rotation=0)
+    ax5[1, 0].set_ylabel('Residuals (%)', fontsize=fs)
+    ax5[1, 0].tick_params(axis="y", labelsize=fs, rotation=0)
     ax5[1, 0].set_ylim([-0.5, 0.5])
 
     plt.savefig(paths.figures / "Fig3.pdf", bbox_inches="tight")

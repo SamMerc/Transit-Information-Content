@@ -154,6 +154,7 @@ seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 THRESHOLDS = [5, 4, 3]  # Number of IQRs for outlier detection (5 is conservative)
 ROUNDS = 3
 verbose = True
+fs=22  # font size for plots
 
 ##############################
 ##### Relevant functions #####
@@ -780,9 +781,9 @@ ax.set_xlim(-0.5, n - 0.5)
 ax.set_ylim(-0.5, n - 0.5)
 ax.set_xticks(range(n))
 ax.set_yticks(range(n))
-ax.set_xticklabels(labels, ha='center', rotation=45, fontsize=18)
-ax.set_yticklabels(labels, ha='center', rotation=45, fontsize=18)
-ax.tick_params(axis='y', pad=32)
+ax.set_xticklabels(labels, ha='center', rotation=25, fontsize=fs)
+ax.set_yticklabels(labels, ha='center', rotation=45, fontsize=fs)
+ax.tick_params(axis='y', pad=40)
 ax.invert_yaxis()
 ax.set_aspect('equal')
 
@@ -815,7 +816,7 @@ for i in range(n):
             std_val = matrix_std[i, j]
             rect = plt.Rectangle((j - 0.5, i - 0.5), 1, 1, facecolor=color, edgecolor='white')
             ax.add_patch(rect)
-            ax.text(j, i, f"{format_metric(corr_val)}\n±{format_metric(std_val)}", ha='center', va='center', color='black', fontsize=16,
+            ax.text(j, i, f"{format_metric(corr_val)}\n±{format_metric(std_val)}", ha='center', va='center', color='black', fontsize=fs,
                  path_effects=[pe.withStroke(linewidth=2, foreground='white')])
 
 # Group-highlight boxes: transparent fill, thick outline, one color per group
@@ -839,8 +840,8 @@ add_group_box(ax, (0, 0), (5, 8), '#ecd1c2')   # D 4x1 block
 sm = cm.ScalarMappable(cmap=cmap_diverging)
 sm.set_array([])
 cbar = plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.02)
-cbar.set_label('Correlation', fontsize=18)
-cbar.ax.tick_params(labelsize=18)
+cbar.set_label('Correlation', fontsize=fs)
+cbar.ax.tick_params(labelsize=fs)
 
 # -----------------------------------------------------------------------
 # Node diagram – overlay covering only the top (TOP_H-inch) block, added
@@ -971,7 +972,7 @@ amp_param_order = ['period', 'sqrtecosw', 'sqrtesinw', 'a', 'i', 'LD_u1', 'LD_u2
 amp_categories  = [p for p in amp_param_order if p in fixed_args['var_param_list']]
 amp_tick_labels = [label_by_param[p] for p in amp_categories]
 
-amp_ax = fig.add_axes([0.11, 0.37 * BOTTOM_H / FIG_H, 0.81, 0.58 * BOTTOM_H / FIG_H])
+amp_ax = fig.add_axes([0.11, 0.41 * BOTTOM_H / FIG_H, 0.81, 0.58 * BOTTOM_H / FIG_H])
 
 for ic, cat in enumerate(amp_categories):
     amp_ax.boxplot(
@@ -988,10 +989,10 @@ for ic, cat in enumerate(amp_categories):
 # amp_ax.set_yscale('log')
 amp_ax.set_xlim(-0.6, len(amp_categories) - 0.4)
 amp_ax.set_xticks(range(len(amp_categories)))
-amp_ax.set_xticklabels(amp_tick_labels, fontsize=16)
-amp_ax.tick_params(axis='y', labelsize=14)
-amp_ax.set_ylabel('Amplification Factor\nRelative Difference (%)', fontsize=18)
-amp_ax.set_xlabel('Fixed Parameter', fontsize=18)
+amp_ax.set_xticklabels(amp_tick_labels, fontsize=fs)
+amp_ax.tick_params(axis='y', labelsize=fs)
+amp_ax.set_ylabel('Amplification Factor\nRelative Difference (%)', fontsize=fs)
+amp_ax.set_xlabel('Fixed Parameter', fontsize=fs)
 
 # ---- Manual crop: set these in inches (figure is FIG_W x FIG_H inches) ----
 crop_left   = 2.2    # increase to trim left whitespace
