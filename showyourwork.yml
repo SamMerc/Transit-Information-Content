@@ -59,6 +59,12 @@ dependencies:
     - src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
   src/scripts/Appendix1_plot.py:
     - src/data/Fig3_Storage/mps1/results.npz
+  src/scripts/Fig5_plot.py:
+    - src/data/Fig5_Storage/C0/processed_data_cache.pkl
+    - src/data/Fig5_Storage/C2/processed_data_cache.pkl
+    - src/data/Fig5_Storage/C3/processed_data_cache.pkl
+    - src/data/Fig5_Storage/C4/processed_data_cache.pkl
+    - src/data/Fig5_Storage/C7/processed_data_cache.pkl
   # src/tex/ms.tex:
   #   - src/tex/stylesheet.tex
 
