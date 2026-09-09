@@ -23,6 +23,10 @@
 
 % If you can, leave this package for last
 \usepackage{float}
+% Allow full-width (figure*/table*) floats to occupy more of a page's
+% top before LaTeX defers them to a standalone float page.
+\renewcommand{\dbltopfraction}{0.9}
+\renewcommand{\dblfloatpagefraction}{0.8}
 \newcommand{\lt}{^^3c}
 \newcommand{\gt}{^^3e}
 \usepackage{showyourwork}
@@ -37,7 +41,7 @@
 \begin{document}
 
 % Title
-\title{What's in Your Transit? Towards Reliably Getting up to $6\times$ More Science from Exoplanet Transit Data}
+\title{What's in Your Transit? A Path to More Science from Exoplanet Transit Data}
 
 % Author list
 \author[0000-0002-0962-7585]{Samson J.\ Mercier}
@@ -58,12 +62,13 @@ Exoplanetary science heavily relies on transit depth ($D$) measurements.
 Yet, as instrumental precision increases, the uncertainty on $D$ drifts from expectations driven solely by photon-noise. 
 Here, we characterize this shortfall (the Transit-Depth Precision Problem) by defining an amplification factor, $A$, quantifying the discrepancy between measured transit-depth uncertainty and baseline scatter. 
 While in theory $A$ should be $\sim\mathbf{\sqrt{3/2}}$, we find that it departs substantially from this limit due to correlations between $D$\vtwo{, the limb-darkening coefficients (LDCs), and the orbital parameters}. \vtwo{Informing} our analyses with over $500{,}000$ intensity profiles from modern stellar atmosphere models spanning a wide range of $T_{\rm eff}$, $\log g$, $[\rm M/H]$, and wavelength, we show that reliable LDC priors can substantially improve transit-based science, while low-fidelity ones can instead bias $D$.
-\vtwo{We isolate each parameter's contribution and find the LDCs dominate, inflating $A$ by $30$--$50\%$, while the inclination instead contributes $\sim20\%$.}
+\vtwo{We isolate each parameter's contribution to $A$ and find the LDCs dominate, changing $A$ by $30$--$50\%$ when they are fixed to truth, against $\sim20\%$ for the inclination.}
 The prevailing practice of using a quadratic limb-darkening law yields \vtwo{low $A$ but high transit depth biases}---potentially introducing spurious spectral features affecting atmospheric studies. \vtwo{The severity of these biases depends on where the host star and observing bandpass fall in the space of stellar intensity profiles, and varies non-monotonically with wavelength: a parametrization adequate for one target, or one wavelength bin, may be inadequate for another.}
 As a near-term mitigation, we recommend fitting transits with both a third-order polynomial law \textit{and} a fourth-order non-linear law which optimally balance bias and $A$ while cross-checking one another's fidelity. With reasonable LDC priors (10--20\% width) $A$ increases only mildly, while bias drops below $2\sigma$ \vtwo{at the tighter end of that range for all but one of the cases tested}.
-\vtwo{These priors enable the same science with $\sim1$--$3\times$ fewer transits.} The long-term solution lies in improving the stellar atmosphere models and transit-fitting tools to reduce $A$ and bias jointly\vtwo{: should future models support $1\%$ prior strengths, the same science would require $\sim4$--$6\times$ fewer transits}.
-\end{abstract}
+\vtwo{Under inverse-square-root scaling with transit count, these priors would already enable the same science with $\sim1$--$3\times$ fewer transits.} The long-term solution lies in improving transit-fitting tools and stellar atmosphere models to reduce $A$ and bias jointly\vtwo{: should future models support $1\%$ prior strengths, the same science would require $\sim4$--$6\times$ fewer transits}.
 
+
+\end{abstract}
 
 %Adding keywords
 \keywords{Transmission spectroscopy (2133); Stellar atmospheres (1584); Planet hosting stars (1242); Exoplanet atmospheres (487); Fundamental parameters of stars (555)}
@@ -214,7 +219,7 @@ Elliptical iso-$\chi^2$ contours were then overlaid to each map. The ellipses' r
 
 The results are summarized in \autoref{fig:fig4}, and the full set of $\chi^2$ maps is provided in \autoref{fig:appendix_fig4}. The left panel presents the correlation matrix. \vtwo{As in the perturbation analysis, we repeat the correlation-coefficient extraction across ten noise realizations so that each entry in the matrix reports a mean and a $\pm1\sigma$ spread.} From this matrix, \vtwo{three} conclusions can be drawn. First, \vtwo{the LDCs are correlated with $D$, in line with the perturbation analysis and \autoref{fig:fig1}'s results, and confirming them as strong contributors to the TDPP}. \vtwo{Second, $i$ also correlates significantly with $D$---unexpectedly so, since \autoref{fig:fig2} shows it to be the only orbital parameter that leaves the transit ingress, egress, and bottom unperturbed.} \vtwo{Finally,} two intraconnected families of correlations can be distinguished: one for orbital parameters and another for the LDCs. However, these families are not isolated: their members are clearly linked, most importantly $\sqrt{e}\cos{\omega}$, $i$, $P$ and $u_2$, $u_3$---corresponding to the ``$e$-$b$-$\rho$-BD” (for brightness distribution) coupling introduced in \citet{deWit2012}. This mirrors \autoref{fig:fig2}'s results, where correlated parameters (either within each family or across them) produced similar perturbations in transit shape. \vtwo{The spread in correlation values is parameter-dependent: $\sqrt{e}\cos{\omega}$ and $i$ vary far more across realizations than $u_1$ and $P$.} Overall, the LDCs \vtwo{and the inclination} affect $D$ through two channels: directly, via their own strong correlation with $D$, and indirectly, by serving as a conduit through which orbital parameters propagate their uncertainty into $D$.
 
-\vtwo{To assess how these couplings translate into $A$, we ran a separate set of injection--retrievals in which each parameter was, in turn, fixed to its true value. This complements the sensitivity analysis' pairwise view with a multi-dimensional approach. The bottom panel of \autoref{fig:fig4} reports the results, with each box plot summarizing the relative difference in $A$ between the fixed- and free-parameter fits across ten noise seeds. The LDCs dominate, from $\sim30\%$ ($u_1$) to $\sim50\%$ ($u_3$), consistent with the strong influence on $D$ established above. $i$ and $\rho_\star$ follow---expected for $i$ given the sensitivity analysis results, but not for $\rho_\star$. We attribute the $\sim25\%$ shift from fixing $\rho_\star$ to the ``$e$-$b$-$\rho$-BD" pathway: its coupling to the other fitted parameters helps channel uncertainty into $D$, inflating its posterior and hence $A$. Mirroring the correlation matrix, $P$, $\sqrt{e}\cos{\omega}$, and $\sqrt{e}\sin{\omega}$ leave $A$ essentially unchanged.}
+\vtwo{To assess how these couplings translate into $A$, we ran a separate set of injection--retrievals in which each parameter was, in turn, fixed to its true value. This complements the sensitivity analysis' pairwise view with a multi-dimensional approach, and measures how much $A$ would improve were each parameter known perfectly. We stress that these are individual sensitivities rather than a decomposition of $A$ into independent contributions: because the fitted parameters are mutually correlated, fixing one also suppresses the degeneracy pathways it participates in, so the resulting fractional changes are not additive. The bottom panel of \autoref{fig:fig4} reports the results, with each box plot summarizing the relative difference in $A$ between the fixed- and free-parameter fits across ten noise seeds. The LDCs dominate, from $\sim30\%$ ($u_1$) to $\sim50\%$ ($u_3$), consistent with the strong influence on $D$ established above. $i$ and $\rho_\star$ follow---expected for $i$ given the sensitivity analysis results, but not for $\rho_\star$. We attribute the $\sim25\%$ shift from fixing $\rho_\star$ to the ``$e$-$b$-$\rho$-BD" pathway: its coupling to the other fitted parameters helps channel uncertainty into $D$, inflating its posterior and hence $A$. Mirroring the correlation matrix, $P$, $\sqrt{e}\cos{\omega}$, and $\sqrt{e}\sin{\omega}$ leave $A$ essentially unchanged.}
 
 \vtwo{Together these three analyses paint a consistent picture: the LDCs, and to a lesser extent $i$, are at the heart of the TDPP, driving the increase in $A$ both directly through their strong correlation with $D$ and indirectly through the orbital parameters to which they couple. This underscores the need for tighter external constraints: on LDCs, through improved stellar models, and on the orbital parameters, through complementary observations such as spectroscopic time series.}
 
@@ -227,16 +232,6 @@ The results are summarized in \autoref{fig:fig4}, and the full set of $\chi^2$ m
     \caption{ \textbf{Towards optimal limb-darkening parametrization}. Amplification factor (top panels) and transit depth bias (bottom panels) from our injection--retrieval tests shown for \vtwo{five} representative cluster modes. Results are shown as a function of the number of LDCs (x-axis) under different limb-darkening priors assumptions, ranging from uniform priors to Gaussian priors of varying widths. Polynomial LDLs are used for cases with 2-9 LDCs, while ``4NLLD" refers to the fourth-order non-linear LDL. Since this is the injection LDL, it yields the best performance.
     Priors informed by current stellar models are highlighted in blue ($10$--$20\%$). As in \autoref{fig:fig1}, the black dashed horizontal line marks $A$'s theoretical limit, and box plots summarize the results from ten MCMC retrievals with different noise realizations. Green vertical bands indicate the regimes considered acceptable: for the bias, results within $2\sigma$ of truth and for the amplification factor, $A \leq 6$.  As discussed in \autoref{sec:impact_prior_choice}, parameterizations meeting both criteria are highlighted with green x-axis labels, and those failing one or both are in red. Clusters 0, 2, and 3 are shown here; clusters 4 and 7 are continued in \autoref{fig:fig5b}.}
     \label{fig:fig5a}
-\end{figure*}
-
-\clearpage
-
-\begin{figure*}[htbp]
-    \script{Fig5_plot.py}
-    \centering
-    \includegraphics[width=0.85\textwidth]{figures/Fig5b.pdf}
-    \caption{\textbf{Towards optimal limb-darkening parametrization (continued)}. Same as \autoref{fig:fig5a}, but for clusters 4 and 7.}
-    \label{fig:fig5b}
 \end{figure*}
 
 \vtwo{The LDCs are the primary drivers of the TDPP, with the orbital parameters---mainly the inclination---playing a secondary role. In this section we discuss mitigation strategies for constraining the LDCs and quantify the gains in both $A$ and transit depth bias that such strategies could deliver, before turning to the orbital parameters.}
@@ -281,10 +276,7 @@ These correlations broaden $D$'s posterior, while any portion of the true intens
 
 \textit{Long-term solutions.} While the dual-LDL strategy presented is a reliable near-term workaround, it does not eliminate the TDPP at its root. Genuine resolution requires two complementary improvements. First, next-generation, high-fidelity stellar models are needed to enable precise and accurate priors on LDCs---particularly in the regimes where intensity profiles are most complex. Second, transit fitting tools must adopt novel limb-darkening parameterizations that reduce $D$-LDC correlations \citep[\textit{e.g.}, more orthogonal bases as in][]{Maxted2018,Maxted2023} and exploit the wavelength-dependence of intensity profiles in multi-wavelength transit fitting. \vtwo{Beyond limb darkening, complementary constraints on the inclination, for instance from Rossiter--McLaughlin observations, offer a further avenue for recovering precision.}
 
-In conclusion, the limiting factor in transit depth precision and accuracy is not instrumental and future advances in stellar models and transit fitting tools could jointly reduce $A$ and bias---enabling the same science with \vtwo{$\sim4$--$6\times$} fewer transits, and fully exploiting the information content of high-quality data from JWST and future observatories. In the meantime, a dual-LDL strategy is the most effective way to mitigate the bias incurred by the quadratic law.
-
-
-
+The limiting factor in transit depth precision and accuracy is not instrumental. Uncertainty in stellar limb darkening propagates into $D$ measurements through parameter correlations, increasing the observational effort needed to reach a given precision. Improved stellar models could reduce this penalty by enabling tight, accurate priors on the LDCs. In our fourth-order non-linear tests, tightening priors from uniform to $1\%$ width reduces transit depth uncertainty by a factor of $2.1$--$2.5$ at fixed data quality. Assuming these uncertainties decrease as the inverse square root of the number of observed transits, this improvement corresponds to reaching the same target $D$ precision with $\sim4$--$6\times$ fewer transits. Realizing these gains requires sufficiently accurate stellar models and limb-darkening prescriptions, rather than simply imposing narrower priors. In the meantime, a dual-LDL strategy remains the most effective way to mitigate the bias incurred by the quadratic law.
 
 \section*{Acknowledgments}
 
@@ -330,7 +322,7 @@ The transit depth $D$ is measured as the difference between the out-of-transit m
 \begin{equation}
     \sigma_D = \sigma_{\rm OOT}\sqrt{\frac{1}{N} + \frac{1}{2N}} = \sigma_{\rm OOT}\sqrt{\frac{3}{2N}}.
 \end{equation}
-Therefore, with $\sigma_{\rm ref} \equiv \sigma_{\rm OOT}/\sqrt{N}$, the theoretical floor is $A_{\rm theory} = \sigma_D/\sigma_{\rm ref} = \sqrt{3/2}$. \vtwo{Notably, this value depends on how much out-of-transit baseline is available relative to the in-transit segment. Having 2:1 baselines (equal pre-, post-, and in-transit durations) is generally recommended (\textit{e.g.}, JWST/NIRCam\footnote{\url{https://jwst-docs.stsci.edu/jwst-near-infrared-camera/nircam-observing-strategies/nircam-time-series-observation-recommended-strategies}} observing guidelines) and gives the $\sqrt{3/2}$ limit derived above. In practice, though, a large fraction of single-transit observations have a 1:1 baseline (lacking pre- or post-transit data), whether by choice (\textit{e.g.}, JWST/NIRISS\footnote{\url{https://jwst-docs.stsci.edu/jwst-near-infrared-imager-and-slitless-spectrograph/niriss-example-science-programs/niriss-soss-time-series-observations-of-a-transiting-exoplanet/step-by-step-etc-guide-for-niriss-soss-time-series-observations-of-a-transiting-exoplanet}} observing guidelines) or due to observing constraints. In this case, repeating the above derivation returns $A_{\rm theory} = \sqrt{2}$. A further, less favorable limit of $A_{\rm theory} = 2$ is obtained when both pre- and post-transit segments are available but their difference estimators (pre-minus-in-transit and post-minus-in-transit) are erroneously combined as though independent. These three values bracket the range of theoretical floors one might reasonably quote depending on the observational baseline. We stress that none of the quantitative results presented in this paper are computed relative to $A_{\rm theory}$: it is specified purely so that readers have a reference for the amplification factor's noise-limited floor. Because our conclusions are insensitive to which of these values is adopted we default to the 2:1 baseline value, $A_{\rm theory} = \sqrt{3/2}$, throughout the manuscript.}
+Therefore, with $\sigma_{\rm ref} \equiv \sigma_{\rm OOT}/\sqrt{N}$, the theoretical floor is $A_{\rm theory} = \sigma_D/\sigma_{\rm ref} = \sqrt{3/2}$. \vtwo{Notably, this value depends on how much out-of-transit baseline is available relative to the in-transit segment. Having 2:1 baselines (equal pre-, post-, and in-transit durations) is generally recommended (\textit{e.g.}, JWST/NIRCam\footnote{\url{https://jwst-docs.stsci.edu/jwst-near-infrared-camera/nircam-observing-strategies/nircam-time-series-observation-recommended-strategies}} observing guidelines) and gives the $\sqrt{3/2}$ limit derived above. In practice, though, a large fraction of single-transit observations have a 1:1 baseline (lacking pre- or post-transit data), whether by choice (\textit{e.g.}, JWST/NIRISS\footnote{\url{https://jwst-docs.stsci.edu/jwst-near-infrared-imager-and-slitless-spectrograph/niriss-example-science-programs/niriss-soss-time-series-observations-of-a-transiting-exoplanet/step-by-step-etc-guide-for-niriss-soss-time-series-observations-of-a-transiting-exoplanet}} observing guidelines) or due to observing constraints. In this case, repeating the above derivation returns $A_{\rm theory} = \sqrt{2}$. These two values bracket the range of theoretical floors one might reasonably quote depending on the observational baseline. We stress that none of the quantitative results presented in this paper are computed relative to $A_{\rm theory}$: it is specified purely so that readers have a reference for the amplification factor's noise-limited floor. Because our conclusions are insensitive to which of these values is adopted we default to the 2:1 baseline value, $A_{\rm theory} = \sqrt{3/2}$, throughout the manuscript.}
 
 \clearpage
 
@@ -450,5 +442,17 @@ $T_0$ (days) & \multicolumn{3}{c}{Fixed} & \multicolumn{4}{c}{---} \\
     \caption{\textbf{Comparison of LDCs between the MPS-ATLAS set1 and set2 stellar atmosphere models.} \emph{Top four:} Histograms of the signed relative difference $(c_{\rm set2} - c_{\rm set1})\,/\,|c_{\rm set1}|$ for each of the four non-linear LDL coefficients, computed point-by-point across matched grids of $T_{\rm eff}$, $\log g$, $[{\rm M/H}]$, and $\lambda$. Median values (red dashed lines) are near zero for all coefficients, confirming the negligible offset between the two model sets. The IQR grows with coefficient order, from $5\%$ for $c_1$ to $15\%$ for $c_2$ and $18$--$19\%$ for $c_3$ and $c_4$, reflecting the increasing difficulty in constraining higher-order coefficients that capture fine-scale intensity variations. \emph{Bottom four:} Median relative difference as a function of stellar parameters and wavelength, with shaded regions indicating the IQR. The inter-model spread exhibits a clear dependence on the physical parameters considered, underscoring that the IQR derived from the top panels (and used to motivate the LDC priors in \autoref{sec:constraint_stellar_model}) are summary statistics that do not capture the the full breadth of behavior across the parameter space.}
     \label{fig:appendix_fig5}
 \end{figure}
+
+\section{Injection--retrieval results for clusters 4 and 7}\label{sec:appendix_fig5b}
+
+For legibility, the injection--retrieval results of \autoref{sec:impact_prior_choice} are split across two figures. \autoref{fig:fig5a} presents clusters 0, 2, and 3 in the main text and \autoref{fig:fig5b} presents clusters 4 and 7 in the same format. The two are discussed together in \autoref{sec:impact_prior_choice}.
+
+\begin{figure*}[htbp]
+    \script{Fig5_plot.py}
+    \centering
+    \includegraphics[width=0.85\textwidth]{figures/Fig5b.pdf}
+    \caption{\textbf{Towards optimal limb-darkening parametrization (continued).} Amplification factor (top panels) and transit depth bias (bottom panels) for the cluster 4 and cluster 7 injection modes, in the same format and with the same conventions as \autoref{fig:fig5a}: results are shown as a function of the number of LDCs under limb-darkening priors ranging from uniform to Gaussian of varying width, with box plots summarizing ten MCMC retrievals with different noise realizations. Green bands mark the regimes considered acceptable ($A \leq 6$; bias within $2\sigma$ of truth). These two clusters are discussed alongside the others in \autoref{sec:impact_prior_choice}.}
+    \label{fig:fig5b}
+\end{figure*}
 
 \end{document}
