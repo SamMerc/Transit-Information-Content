@@ -147,7 +147,7 @@ for model in models:
         ax5[1, plot_idx].set_xlabel('$\\mu = \\cos(\\theta)$', fontsize=fs)
         ax5[1, plot_idx].tick_params(axis="x", labelsize=fs, rotation=0)
 
-    ax5[0, 0].set_ylabel('Normalised intensity', fontsize=fs)
+    ax5[0, 0].set_ylabel('Normalized intensity', fontsize=fs)
     ax5[0, 0].tick_params(axis="y", labelsize=fs, rotation=0)
     ax5[1, 0].set_ylabel('Residuals (%)', fontsize=fs)
     ax5[1, 0].tick_params(axis="y", labelsize=fs, rotation=0)
