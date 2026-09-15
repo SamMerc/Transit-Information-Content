@@ -2,11 +2,10 @@
 ########## Purpose ##########
 #############################
 
-# Figure 5 showcases the amplification factor change across limb-darkening laws and priors used.
-# The goal of this file is to retrieve the results from the injection-retrievals computed previously
-# and compile them into Figure 5.  Three sub-panels show results for three different sets of
-# injected 4th-order non-linear LDCs (clusters 0, 2, 3). The continuation of this figure for
-# clusters 4 and 7 is produced separately by Appendix6_plot.py.
+# Appendix Figure 6 is the continuation of Figure 5 (see Fig5_plot.py) for
+# clusters 4 and 7, split out because the combined five-cluster figure was
+# too tall for a single Overleaf page. Two sub-panels show results for the
+# injected 4th-order non-linear LDCs of clusters 4 and 7.
 
 
 ######################################
@@ -86,18 +85,13 @@ prior_strengths_labels = ['Uniform', r'$20\%$ Gaussian', r'$10\%$ Gaussian',
                           r'$5\%$ Gaussian', r'$1\%$ Gaussian']
 seeds             = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 
-# C labels correspond to the three stellar LDC sets in Fig5_run.py
-#C0 : 0.5597   -0.1310    0.4556   -0.2398
-#C2 : 0.7617   -0.8502    1.4229   -0.4899
-#C3 : 0.6666   -0.8767    0.8343   -0.2968
+# C labels correspond to the stellar LDC sets in Fig5_run.py
 #C4 : 0.5172   -0.1913    0.0819   -0.0316
 #C7 : 0.6383   -0.0511   -0.2722    0.1455
-# Fig5 is too tall for a single Overleaf page, so clusters 4 and 7 are plotted
-# separately in Appendix6_plot.py (as a continuation of this figure).
-C_LABELS      = ['C0', 'C2', 'C3']
-C_LABEL_NAMES = {'C0': 'Cluster 0 - M/K type, metal poor, near-infrared',
-                 'C2': 'Cluster 2 - M/K type, metal rich, optical',
-                 'C3': 'Cluster 3 - M/K type, solar metallicity, mid-infrared'}
+# This is the continuation of Fig5_plot.py's C_LABELS for clusters 0, 2, 3.
+C_LABELS      = ['C4', 'C7']
+C_LABEL_NAMES = {'C4': 'Cluster 4 - K/G type, solar metallicity, mid-infrared',
+                 'C7': 'Cluster 7 - G type, solar metallicity, near-infrared'}
 
 #%% Filtering / processing parameters (same as Fig1_plot.py)
 NBURN      = 70000
@@ -503,5 +497,5 @@ if __name__ == '__main__':
     if not all_cached_data:
         raise RuntimeError("No C-label data found. Check RAW_BASE_DIR.")
 
-    # ── Build the figure (clusters 0, 2, 3) ────────────────────────────────
-    build_and_save_figure(C_LABELS, all_cached_data, 'Fig5')
+    # ── Build the figure (clusters 4, 7) ───────────────────────────────────
+    build_and_save_figure(C_LABELS, all_cached_data, 'Appendix6')

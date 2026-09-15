@@ -63,6 +63,7 @@ dependencies:
     - src/data/Fig5_Storage/C0/processed_data_cache.pkl
     - src/data/Fig5_Storage/C2/processed_data_cache.pkl
     - src/data/Fig5_Storage/C3/processed_data_cache.pkl
+  src/scripts/Appendix6_plot.py:
     - src/data/Fig5_Storage/C4/processed_data_cache.pkl
     - src/data/Fig5_Storage/C7/processed_data_cache.pkl
   # src/tex/ms.tex:

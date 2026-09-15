@@ -114,10 +114,19 @@ rule Fig5:
         c0_cache="src/data/Fig5_Storage/C0/processed_data_cache.pkl",
         c2_cache="src/data/Fig5_Storage/C2/processed_data_cache.pkl",
         c3_cache="src/data/Fig5_Storage/C3/processed_data_cache.pkl",
-        c4_cache="src/data/Fig5_Storage/C4/processed_data_cache.pkl",
-        c7_cache="src/data/Fig5_Storage/C7/processed_data_cache.pkl",
     output:
         "src/tex/figures/Fig5.pdf"
     cache: True
     script:
         "src/scripts/Fig5_plot.py"
+
+rule Appendix6:
+    input:
+        script="src/scripts/Appendix6_plot.py",
+        c4_cache="src/data/Fig5_Storage/C4/processed_data_cache.pkl",
+        c7_cache="src/data/Fig5_Storage/C7/processed_data_cache.pkl",
+    output:
+        "src/tex/figures/Appendix6.pdf"
+    cache: True
+    script:
+        "src/scripts/Appendix6_plot.py"
