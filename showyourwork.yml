@@ -59,6 +59,16 @@ dependencies:
     - src/data/Fig2_Storage/Fig2_base_processed_cache.pkl
   src/scripts/Appendix1_plot.py:
     - src/data/Fig3_Storage/mps1/results.npz
+  src/scripts/Fig6_plot.py:
+    - src/data/Fig6_Storage/M_dwarf/PLD_2/summary.npz
+    - src/data/Fig6_Storage/M_dwarf/PLD_3/summary.npz
+    - src/data/Fig6_Storage/M_dwarf/4NLLD/summary.npz
+    - src/data/Fig6_Storage/G_dwarf/PLD_2/summary.npz
+    - src/data/Fig6_Storage/G_dwarf/PLD_3/summary.npz
+    - src/data/Fig6_Storage/G_dwarf/4NLLD/summary.npz
+    - src/data/Fig6_Storage/F_dwarf/PLD_2/summary.npz
+    - src/data/Fig6_Storage/F_dwarf/PLD_3/summary.npz
+    - src/data/Fig6_Storage/F_dwarf/4NLLD/summary.npz
   src/scripts/Fig5_plot.py:
     - src/data/Fig5_Storage/C0/processed_data_cache.pkl
     - src/data/Fig5_Storage/C2/processed_data_cache.pkl

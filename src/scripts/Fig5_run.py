@@ -4,8 +4,8 @@
 
 # Figure 5 showcases the amplification factor change across limb-darkening laws and priors used.
 # The goal of this file is to run injection-retrievals for a grid of 1. limb-darkening laws, 2. limb-darkening priors, and 3. noise seeds.
-# In particular the grid is 7 polynomial limb-darkening laws by 5 limb darkening priors by 10 noise seeds, i.e. 350 injection-retrievals.
-# In these tests, the injected LC is done with a 4th order non-linear LDL, while the retrieval is done with polynomial LDLs going from 2-9 and 4NLLD.
+# In particular the grid is 8 polynomial limb-darkening laws by 5 limb darkening priors by 10 noise seeds, i.e. 400 injection-retrievals.
+# In these tests, the injected LC is done with a 4th order non-linear LDL, while the retrieval is done with polynomial LDLs going from 1 (linear) to 9 and 4NLLD.
 # Furthermore, to show the dependence on Teff, metallicity, logg, and wavelength we run this analysis on five different sets of 4th order NLLD LDCs.
 
 ######################################
@@ -156,7 +156,7 @@ model_scatter = 16.68100537200059
 ########## Define parrallelization ##########
 #############################################
 # Define the fit parameters
-LDLs = ['PLD_2','PLD_3','PLD_4','PLD_5','PLD_6','PLD_9','4NLLD']
+LDLs = ['PLD_1','PLD_2','PLD_3','PLD_4','PLD_5','PLD_6','PLD_9','4NLLD']
 prior_strengths = ['uniform', 'gauss_20', 'gauss_10', 'gauss_5', 'gauss_1']
 seeds = [40, 50, 60, 70, 80, 90, 100, 110, 120, 130]
 
