@@ -56,25 +56,25 @@ rule Fig3:
     script:
         "src/scripts/Fig3_plot.py"
 
-# Note: Fig6_run.py runs one joint MCMC (shared orbital parameters + per-wavelength-channel
-# depth/limb-darkening coefficients, jaxoplanet + emcee_jax) per (star, limb-darkening law)
-# combination -- 3 stars x 3 laws = 9 combinations in total -- so it is dispatched externally
-# rather than by this Snakefile, exactly like Fig3/Fig4/Fig5_run.py. Fig6_plot.py assembles
-# whichever combinations have already been run from each one's summary.npz. Once the full
-# 3x3 grid has been run and uploaded to Zenodo, this rule's inputs should be expanded to list
-# the complete set of summary.npz outputs (as Fig3/Fig5's rules do for their own Zenodo data).
+# Note: Fig6_prerun.py builds the per-channel truth + noisy chromatic dataset and fits a
+# white light curve (WLC) per star to constrain the orbital parameters, for all five stars
+# in one invocation. Fig6_run.py then runs one small MCMC (jaxoplanet + emcee_jax; depth +
+# limb-darkening coefficients only, orbital parameters fixed at the WLC best fit) per
+# (star, wavelength channel, limb-darkening law) combination -- 5 stars x ~219 channels x
+# 3 laws in total -- so it is dispatched externally (e.g. an HPC job array) rather than by
+# this Snakefile, exactly like Fig3/Fig4/Fig5_run.py. Fig6_plot.py assembles whichever
+# channels have already been run from each star's wav_grid.npz + per-channel summary.npz
+# files. Once the full grid has been run and uploaded to Zenodo, this rule's inputs should
+# be expanded to list the complete set of per-channel outputs (as Fig3/Fig5's rules do for
+# their own Zenodo data).
 rule Fig6:
     input:
         script="src/scripts/Fig6_plot.py",
-        m_dwarf_quad="src/data/Fig6_Storage/M_dwarf/PLD_2/summary.npz",
-        m_dwarf_cube="src/data/Fig6_Storage/M_dwarf/PLD_3/summary.npz",
-        m_dwarf_nlld="src/data/Fig6_Storage/M_dwarf/4NLLD/summary.npz",
-        g_dwarf_quad="src/data/Fig6_Storage/G_dwarf/PLD_2/summary.npz",
-        g_dwarf_cube="src/data/Fig6_Storage/G_dwarf/PLD_3/summary.npz",
-        g_dwarf_nlld="src/data/Fig6_Storage/G_dwarf/4NLLD/summary.npz",
-        f_dwarf_quad="src/data/Fig6_Storage/F_dwarf/PLD_2/summary.npz",
-        f_dwarf_cube="src/data/Fig6_Storage/F_dwarf/PLD_3/summary.npz",
-        f_dwarf_nlld="src/data/Fig6_Storage/F_dwarf/4NLLD/summary.npz",
+        c5="src/data/Fig6_Storage/C5/prerun.npz",
+        c1="src/data/Fig6_Storage/C1/prerun.npz",
+        c2="src/data/Fig6_Storage/C2/prerun.npz",
+        c7="src/data/Fig6_Storage/C7/prerun.npz",
+        c6="src/data/Fig6_Storage/C6/prerun.npz",
     output:
         "src/tex/figures/Fig6.pdf"
     cache: True

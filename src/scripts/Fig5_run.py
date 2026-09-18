@@ -31,6 +31,7 @@ import os, itertools, sys
 import numpyro
 from numpyro.distributions import Normal, Uniform
 from numpyro.infer import MCMC, NUTS, HMC, init_to_value
+from tqdm.auto import tqdm
 
 # For multi-core parallelism (useful when running multiple MCMC chains in parallel)
 numpyro.set_host_device_count(1)
@@ -554,6 +555,41 @@ def autocorr_new(y, c=5.0):
     window = auto_window(taus, c)
     return taus[window]
 
+
+def run_mcmc(sampler, key1, key2, pos, num_steps, progress_desc='Sampling'):
+    """
+    Manually run an emcee_jax MCMC for `num_steps`, writing each step's ensemble directly
+    into pre-allocated (n_walkers, n_steps, ndim)-shaped numpy arrays.
+
+    This replaces sampler.sample_parallel() / sampler.sample().
+
+    Returns
+    -------
+    raw_chain  : (n_walkers, n_steps, ndim)
+    logprob    : (n_walkers, n_steps)
+    chi2_chain : (n_walkers, n_steps)
+    """
+    state = sampler.init(key1, pos)
+    compiled_step = jax.jit(lambda s, k: sampler.step(k, s))
+    keys = jax.random.split(key2, num_steps)
+
+    n_walkers, ndim = np.asarray(pos).shape
+    raw_chain  = np.empty((n_walkers, num_steps, ndim))
+    logprob    = np.empty((n_walkers, num_steps))
+    chi2_chain = np.empty((n_walkers, num_steps))
+
+    iterator = tqdm(range(num_steps), desc=progress_desc)
+    for i in iterator:
+        state, stats = compiled_step(state, keys[i])
+        raw_chain[:, i, :] = np.asarray(state.ensemble.coordinates)
+        logprob[:, i]      = np.asarray(state.ensemble.log_probability)
+        chi2_chain[:, i]   = np.asarray(state.ensemble.deterministics['step_chi2'])
+        if 'accept_prob' in stats:
+            iterator.set_postfix(accept=f"{float(np.mean(np.asarray(stats['accept_prob']))):.3f}")
+
+    return raw_chain, logprob, chi2_chain
+
+
 #############################################
 ################ Running code ###############
 #############################################
@@ -622,14 +658,10 @@ if fixed_args['run_mode']=='use':
         emceejax_key1, emceejax_key2 = jax.random.split(jaxnoise_key, 2)
 
         sampler = emcee_jax.EnsembleSampler(emcee_log_probability, log_prob_args=(init_state_dic['times'],noisy_LC,noisy_std))
-        state = sampler.init(emceejax_key1, fixed_args['pos'])
-        if fixed_args['nthreads']>1:
-            trace = sampler.sample_parallel(emceejax_key2, state, num_steps=fixed_args['nsteps'], progress=True)
-        else:
-            trace = sampler.sample(emceejax_key2, state, num_steps=fixed_args['nsteps'], progress=True)
-        raw_chain = np.asarray(trace.samples.coordinates).reshape(fixed_args['nwalkers'],fixed_args['nsteps'],fixed_args['ndim'])  # shape (walkers, nsteps, nparams)
-        logprob = np.asarray(trace.samples.log_probability.T) # shape (nwalkers, nsteps)
-        chi2_chain = np.asarray(trace.samples.deterministics['step_chi2'].T) # shape (nwalkers, nsteps)
+        raw_chain, logprob, chi2_chain = run_mcmc(
+            sampler, emceejax_key1, emceejax_key2, fixed_args['pos'], fixed_args['nsteps'],
+            progress_desc=f"{LDL} {prior_strength} Seed{seed}",
+        )
 
         #Convert to ArviZ data structure
         inf_data = az.from_dict(
