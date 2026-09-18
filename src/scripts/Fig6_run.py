@@ -17,8 +17,9 @@
 # Fig6_prerun.py performs steps 1-3 and saves the results. Fig6_run performs the MCMC retrievals for one
 # (star, limb-darkening law, wavelength) combination.
 #
-# The orbital parameters (i, a, period, sqrt(e)cos(w), sqrt(e)sin(w)) are held FIXED at the
-# white-light-curve best fit from Fig6_prerun.py.
+# The orbital parameters (i, a, period, sqrt(e)cos(w), sqrt(e)sin(w)) are FIT alongside the
+# radius ratio and LDCs, with Gaussian priors set by the mean and std of the (sigma-clipped)
+# white-light-curve posterior for this stellar type, saved by Fig6_prerun.py.
 
 ######################################
 ########## Import libraries ##########
@@ -114,19 +115,12 @@ exposure_time = 5                                                        #second
 num_t = jnp.floor((((high_t - low_t) * 24 * 3600) / exposure_time))      #number of points
 times = jnp.linspace(low_t, high_t, int(num_t))                          #days
 
-#%% Per-channel radius-ratio init bounds (used only for walker initialisation); the actual
-#%% prior on r is broad/uniform (see below).
+#%% WLC radius-ratio / limb-darkening init bounds
 r_init_bounds  = [0.07, 0.15]
 r_prior_bounds = [0., 1.]
-
-#%% Broad, uninformative uniform prior on every limb-darkening coefficient -- same
-#%% convention as Fig5_run.py's 'uniform' prior_strength option (not the tighter Gaussian
-#%% prior around the true profile used by its 'gauss_*' options).
 LD_prior_bounds = [-100., 100.]
 
-#%% JWST NIRSpec/PRISM-like wavelength grid -- must match Fig6_prerun.py exactly. Only
-#%% needed here to compute n_bins (for the HPC task grid below); the actual per-channel
-#%% wavelength values used in the fit are loaded from prerun.npz further down.
+#%% JWST NIRSpec/PRISM wavelength grid
 wav_min_um = 0.6    # micron
 wav_max_um = 5.3    # micron
 R_prism    = 100    # nominal (constant) resolving power, lambda / delta_lambda
@@ -135,6 +129,10 @@ R_prism    = 100    # nominal (constant) resolving power, lambda / delta_lambda
 nwalkers = 50
 nsteps   = 100000
 nburn    = 70000
+
+#%% Chain-cleaning settings
+SIGMA_THRESHOLDS = [5, 4, 3]   # IQR multiples, one per round
+SIGMA_ROUNDS     = 3
 
 #%% Whether to produce the full diagnostic suite
 make_full_diagnostics = False
@@ -146,14 +144,11 @@ orig_save_data_path = str(paths.data / "Fig6_Storage") + "/"
 ########## Define parallelization ##########
 #############################################
 
-#%% All five stellar types and three limb-darkening laws -- must match Fig6_prerun.py's
-#%% stellar_types. Used to build the full task grid for HPC dispatch below.
+#%% All five stellar types and three limb-darkening laws
 star_names = ['C5', 'C1', 'C2', 'C7', 'C6']
 LDLs       = ['PLD_2', 'PLD_3', '4NLLD']
 
-#%% Number of wavelength channels, computed the same way as Fig6_prerun.py (rather than
-#%% loaded from a specific star's prerun.npz, which isn't known yet at this point) -- needed
-#%% to build the full (star, channel, LDL) task grid for HPC dispatch below.
+#%% Number of wavelength channels
 n_bins = len(build_R_grid(wav_min_um, wav_max_um, R_prism)[1])
 
 # # Distribute tasks - for HPC usage
@@ -184,13 +179,17 @@ def uniform_logpdf(x, lo, hi):
     return jnp.where((x >= lo) & (x <= hi), -jnp.log(hi - lo), -jnp.inf)
 
 
+def gauss_logpdf(x, val, s):
+    return -0.5 * (jnp.log(2 * jnp.pi * s**2) + ((x - val) / s)**2)
+
+
 def single_channel_lc(r_i, u_i, i_, a_, period_, ecc, w, convert_NLLD, times):
-    """Transit light curve for one wavelength channel, given the (fixed) orbital
-    parameters and this channel's own radius ratio / limb-darkening coefficients. When
-    `convert_NLLD` is True, `u_i` is the channel's 4-parameter NLLD coefficients
-    [c1, c2, c3, c4], converted to an order-12 polynomial (a numerically near-exact
-    representation of the true NLLD profile); otherwise `u_i` is used directly as the
-    native-basis polynomial limb-darkening coefficients (quadratic or 3rd-order law)."""
+    """Transit light curve for one channel (a single wavelength bin, or the white
+    light curve), given the orbital parameters and this channel's Rp/R* / LDCs. 
+    When `convert_NLLD` is True, `u_i` is 4-parameter NLLD
+    coefficients [c1, c2, c3, c4], converted to an order-12 polynomial;
+    otherwise `u_i` is used directly as the native-basis polynomial
+    limb-darkening coefficients."""
     stellar_rho = (3 * jnp.pi * a_**3) / (period_**2 * G_solar_units)
     star = Central(density=stellar_rho)
     planet = System(star).add_body(
@@ -208,28 +207,32 @@ def single_channel_lc(r_i, u_i, i_, a_, period_, ecc, w, convert_NLLD, times):
     return (1.0 + limb_dark_light_curve(planet, ld_u)(times)).reshape(-1)
 
 
-def make_channel_log_prob(orbital_fixed, convert_NLLD, LD_prior_bounds):
+def make_channel_log_prob(orbital_prior_mean, orbital_prior_std, n_u, convert_NLLD, LD_prior_bounds):
     """
-    Build the log-probability function for one (star, LDL, wavelength channel)
-    combination. theta = [r, LD_u1, ..., LD_u_n_u]; the orbital parameters are fixed
-    constants (closed over here), not part of theta.
+    Build the log-probability function for one (star, LDL, wavelength channel) combination.
+    theta = [r, LD_u1, ..., LD_u_n, i, a, period, sqrtecosw, sqrtesinw].
 
-    Every limb-darkening coefficient gets the same broad, uninformative uniform prior
-    (LD_prior_bounds), matching Fig5_run.py's 'uniform' prior_strength option.
+    - r: broad uniform prior; every LD coefficient: broad uniform prior (LD_prior_bounds),
+      matching Fig5_run.py's 'uniform' prior_strength option.
+    - Orbital parameters: independent Gaussian priors with the mean/std of the sigma-clipped
+      WLC posterior for this stellar type (orbital_prior_mean / orbital_prior_std, in the
+      order i, a, period, sqrtecosw, sqrtesinw). e = sqrtecosw^2 + sqrtesinw^2 <= 1 enforced.
     """
-    i_, a_, period_, sqrtecosw_, sqrtesinw_ = (
-        orbital_fixed['i'], orbital_fixed['a'], orbital_fixed['period'],
-        orbital_fixed['sqrtecosw'], orbital_fixed['sqrtesinw'],
-    )
-    ecc = sqrtecosw_**2 + sqrtesinw_**2
-    w = jnp.arctan2(sqrtesinw_, sqrtecosw_)
+    orbital_prior_mean = jnp.asarray(orbital_prior_mean)
+    orbital_prior_std  = jnp.asarray(orbital_prior_std)
 
     def channel_log_probability(theta, times, data, err):
         r_ = theta[0]
-        u_ = theta[1:]
+        u_ = theta[1:1 + n_u]
+        orb = theta[1 + n_u:]
+        i_, a_, period_, sqrtecosw_, sqrtesinw_ = orb
+        ecc = sqrtecosw_**2 + sqrtesinw_**2
+        w = jnp.arctan2(sqrtesinw_, sqrtecosw_)
 
         lp = uniform_logpdf(r_, r_prior_bounds[0], r_prior_bounds[1])
         lp += jnp.sum(uniform_logpdf(u_, LD_prior_bounds[0], LD_prior_bounds[1]))
+        lp += jnp.sum(gauss_logpdf(orb, orbital_prior_mean, orbital_prior_std))
+        lp += jnp.where(ecc <= 1.0, 0.0, -jnp.inf)
         lp = jnp.where(jnp.isfinite(lp), lp, -jnp.inf)
 
         model = single_channel_lc(r_, u_, i_, a_, period_, ecc, w, convert_NLLD, times)
@@ -283,27 +286,68 @@ def autocorr_new(y, c=5.0):
     return taus[window]
 
 
+def sigma_clip_chain(raw_chain, logprob, chi2_chain, nburn, thresholds=(5, 4, 3), rounds=3, verbose=False):
+    """
+    Iterative 2D sigma-clipping of an MCMC chain.
+
+    Returns
+    -------
+    good_steps_mask : (n_walkers, n_steps_post) bool -- True for surviving (walker, step) pairs
+    bestfit_theta   : (n_params,) -- parameters at the highest log-probability among survivors
+    post_chain      : (n_surviving, n_params) -- surviving, post-burn-in samples (flattened)
+    """
+    n_walkers, n_steps, n_params = raw_chain.shape
+    n_steps_post = n_steps - nburn
+
+    burnt_chain   = np.asarray(raw_chain[:, nburn:, :])
+    burnt_chi2    = np.asarray(chi2_chain[:, nburn:])
+    burnt_logprob = np.asarray(logprob[:, nburn:])
+
+    good_steps_mask = np.ones((n_walkers, n_steps_post), dtype=bool)
+
+    for round_idx in range(rounds):
+        threshold = thresholds[round_idx]
+        n_alive = np.sum(good_steps_mask)
+        if verbose:
+            print(f'    round {round_idx+1}/{rounds} (threshold={threshold}sigma, {n_alive} pairs alive)')
+
+        alive_chi2 = burnt_chi2[good_steps_mask]
+        q = np.percentile(alive_chi2, [25, 50, 75])
+        mu, iqr = q[1], q[2] - q[0]
+        chi2_bad_2d = np.zeros((n_walkers, n_steps_post), dtype=bool)
+        chi2_bad_2d[good_steps_mask] = (
+            (alive_chi2 < mu - threshold * iqr) | (alive_chi2 > mu + threshold * iqr)
+        )
+
+        param_bad_2d = np.zeros((n_walkers, n_steps_post), dtype=bool)
+        for param_idx in range(n_params):
+            alive_param = burnt_chain[:, :, param_idx][good_steps_mask]
+            q = np.percentile(alive_param, [25, 50, 75])
+            mu, iqr = q[1], q[2] - q[0]
+            outliers = (alive_param < mu - threshold * iqr) | (alive_param > mu + threshold * iqr)
+            param_bad_2d[good_steps_mask] |= outliers
+
+        round_bad = chi2_bad_2d | param_bad_2d
+        good_steps_mask &= ~round_bad
+        if verbose:
+            print(f'      removed {np.sum(round_bad)}/{n_alive} '
+                  f'({100 * np.sum(round_bad) / n_alive:.1f}%)')
+
+    masked_logprob = np.where(good_steps_mask, burnt_logprob, -np.inf)
+    best_walker, best_step = np.unravel_index(np.argmax(masked_logprob), masked_logprob.shape)
+    bestfit_theta = burnt_chain[best_walker, best_step, :]
+
+    post_chain = burnt_chain[good_steps_mask]   # (n_surviving, n_params)
+
+    return good_steps_mask, bestfit_theta, post_chain
+
+
 def run_mcmc(sampler, key1, key2, pos, num_steps, progress_desc='Sampling'):
     """
     Manually run an emcee_jax MCMC for `num_steps`, writing each step's ensemble directly
     into pre-allocated (n_walkers, n_steps, ndim)-shaped numpy arrays.
 
-    This replaces sampler.sample_parallel() / sampler.sample(), for two reasons:
-
-    1. Performance: on a single-device machine (no GPU/TPU), sample_parallel() falls back to
-       sample(), whose progress=True code path accumulates every step's full ensemble state
-       in a Python list, then calls jnp.stack() on the entire list in one go at the end.
-       That triggers a pathologically slow XLA compilation ("[Compiling module jit_stack
-       ...] Very slow compile?") that can hang for a very long time even though the actual
-       sampling itself already finished. Writing into a pre-allocated array incrementally
-       avoids ever calling jnp.stack on a huge operand list.
-
-    2. Correctness: sampler.sample()'s own post-processing reshapes the stacked coordinates
-       array (native shape (n_steps, n_walkers, ndim)) via `.reshape(n_walkers, n_steps,
-       ndim)` rather than `.transpose(1, 0, 2)` -- a reshape does not swap axes, so this
-       silently scrambles the walker/step correspondence in the saved chain (verified
-       empirically). Writing directly into a (n_walkers, n_steps, ndim) array at index
-       [:, i, :] for step i sidesteps this entirely.
+    This replaces sampler.sample_parallel() / sampler.sample().
 
     Returns
     -------
@@ -354,12 +398,13 @@ r_true             = float(prerun['r_true'])
 model_scatter      = float(prerun['model_scatter'])
 noise_seed         = int(prerun['noise_seed'])
 shared_param_names = [str(s) for s in prerun['shared_param_names']]
-shared_bestfit     = prerun['shared_bestfit']    # WLC best-fit [i, a, period, sqrtecosw, sqrtesinw]
+shared_mean        = prerun['shared_mean']       # WLC posterior mean [i, a, period, sqrtecosw, sqrtesinw]
+shared_std         = prerun['shared_std']        # WLC posterior std  (same order)
 
 n_bins = len(wav_centers)
-orbital_fixed = dict(zip(shared_param_names, [float(v) for v in shared_bestfit]))
-print(f'  Orbital parameters fixed at WLC best fit: ' +
-      ', '.join(f'{k}={v:.6f}' for k, v in orbital_fixed.items()))
+print('  Gaussian priors on orbital parameters from the WLC posterior (mean, std):')
+for k, m, sd in zip(shared_param_names, shared_mean, shared_std):
+    print(f'    {k:<10} {m:.6f} +/- {sd:.6f}')
 
 true_c = coeffs[i_bin]
 
@@ -378,7 +423,10 @@ elif LDL == '4NLLD':
 else:
     raise KeyError('Wrong limb darkening law.')
 
-ndim = 1 + n_u
+n_orb = len(shared_param_names)
+ndim = 1 + n_u + n_orb    # theta = [r, LD_1..LD_n, i, a, period, sqrtecosw, sqrtesinw]
+i_LD  = slice(1, 1 + n_u)
+i_orb = slice(1 + n_u, ndim)
 
 #############################
 ####### Generate data #######
@@ -424,13 +472,17 @@ plt.close(fig)
 ##### Emcee fitting #####
 #########################
 
-log_prob_fn = make_channel_log_prob(orbital_fixed, convert_NLLD, LD_prior_bounds)
+log_prob_fn = make_channel_log_prob(shared_mean, shared_std, n_u, convert_NLLD, LD_prior_bounds)
 
+# Walker initialisation: r and LDCs uniform around their guesses; orbital parameters drawn
+# from their own Gaussian priors.
 minval = np.concatenate([[r_init_bounds[0]], best_fit_LDCs - 0.5])
 maxval = np.concatenate([[r_init_bounds[1]], best_fit_LDCs + 0.5])
-emceejax_key1, emceejax_key2, pos_key = jax.random.split(jaxnoise_key, 3)
-pos = np.asarray(jax.random.uniform(pos_key, minval=jnp.array(minval), maxval=jnp.array(maxval),
-                                     shape=(nwalkers, ndim)))
+emceejax_key1, emceejax_key2, pos_key, orb_key = jax.random.split(jaxnoise_key, 4)
+pos_ld = np.asarray(jax.random.uniform(pos_key, minval=jnp.array(minval), maxval=jnp.array(maxval),
+                                        shape=(nwalkers, 1 + n_u)))
+pos_orb = shared_mean + shared_std * np.asarray(jax.random.normal(orb_key, shape=(nwalkers, n_orb)))
+pos = np.concatenate([pos_ld, pos_orb], axis=1)
 
 print("Running MCMC")
 st0 = time.time()
@@ -452,20 +504,41 @@ np.save(fixed_args_save_loc + 'chi2_chain.npy', chi2_chain)
 ##################
 print('PLOTTING')
 
-max_walker, max_step = np.unravel_index(np.argmax(logprob), logprob.shape)
-bestfit_theta = raw_chain[max_walker, max_step, :]
+# ── Pre-clipping summary (raw, post-burn-in only) -- kept for reproducibility, NOT what
+# Fig6_plot.py reads (see post-clipping block below).
+raw_post_chain = raw_chain[:, nburn:, :].reshape(-1, ndim)
+raw_max_walker, raw_max_step = np.unravel_index(np.argmax(logprob), logprob.shape)
+raw_bestfit_theta = raw_chain[raw_max_walker, raw_max_step, :]
 
-median_theta = np.median(raw_chain[:, nburn:, :].reshape(-1, ndim), axis=0)
-median_lc  = single_channel_lc(median_theta[0], jnp.array(median_theta[1:]),
-                                orbital_fixed['i'], orbital_fixed['a'], orbital_fixed['period'],
-                                orbital_fixed['sqrtecosw']**2 + orbital_fixed['sqrtesinw']**2,
-                                jnp.arctan2(orbital_fixed['sqrtesinw'], orbital_fixed['sqrtecosw']),
-                                convert_NLLD, times)
-bestfit_lc = single_channel_lc(bestfit_theta[0], jnp.array(bestfit_theta[1:]),
-                                orbital_fixed['i'], orbital_fixed['a'], orbital_fixed['period'],
-                                orbital_fixed['sqrtecosw']**2 + orbital_fixed['sqrtesinw']**2,
-                                jnp.arctan2(orbital_fixed['sqrtesinw'], orbital_fixed['sqrtecosw']),
-                                convert_NLLD, times)
+raw_r_median = float(np.median(raw_post_chain[:, 0]))
+raw_r_lo, raw_r_hi = np.percentile(raw_post_chain[:, 0], [16, 84])
+raw_r_bestfit = float(raw_bestfit_theta[0])
+raw_LD_median = np.median(raw_post_chain[:, i_LD], axis=0)
+raw_LD_lo, raw_LD_hi = np.percentile(raw_post_chain[:, i_LD], [16, 84], axis=0)
+raw_orb_median = np.median(raw_post_chain[:, i_orb], axis=0)
+raw_orb_lo, raw_orb_hi = np.percentile(raw_post_chain[:, i_orb], [16, 84], axis=0)
+
+# ── Post-clipping summary (iterative sigma clipping) -- the "primary" fields saved below,
+# which are what Fig6_plot.py reads.
+print('CLEANING CHAIN (iterative sigma clipping)')
+good_steps_mask, bestfit_theta, post_chain = sigma_clip_chain(
+    raw_chain, logprob, chi2_chain, nburn,
+    thresholds=SIGMA_THRESHOLDS, rounds=SIGMA_ROUNDS, verbose=True,
+)
+n_post_total = good_steps_mask.size
+n_post_kept  = int(np.sum(good_steps_mask))
+print(f'  kept {n_post_kept}/{n_post_total} post-burn-in (walker, step) pairs '
+      f'({100 * n_post_kept / n_post_total:.1f}%)')
+
+median_theta = np.median(post_chain, axis=0)
+def lc_from_theta(theta):
+    i_, a_, period_, sqrtecosw_, sqrtesinw_ = theta[i_orb]
+    return single_channel_lc(theta[0], jnp.array(theta[i_LD]), i_, a_, period_,
+                             sqrtecosw_**2 + sqrtesinw_**2, jnp.arctan2(sqrtesinw_, sqrtecosw_),
+                             convert_NLLD, times)
+
+median_lc  = lc_from_theta(median_theta)
+bestfit_lc = lc_from_theta(bestfit_theta)
 median_RMS = jnp.sqrt(jnp.average((noisy_lc - median_lc)**2))
 bestfit_RMS = jnp.sqrt(jnp.average((noisy_lc - bestfit_lc)**2))
 
@@ -484,21 +557,18 @@ plt.tight_layout()
 plt.savefig(fixed_args_save_loc + 'bestfit.pdf')
 plt.close()
 
-# Key posterior summary (used to build the transmission spectrum in Fig6_plot.py) plus a
-# lightweight convergence diagnostic (autocorrelation time for r).
-r_chain_post = raw_chain[:, nburn:, 0]
-r_flat = r_chain_post.reshape(-1)
-
-r_median = float(np.median(r_flat))
-r_lo, r_hi = np.percentile(r_flat, [16, 84])
+r_median = float(np.median(post_chain[:, 0]))
+r_lo, r_hi = np.percentile(post_chain[:, 0], [16, 84])
 r_bestfit = float(bestfit_theta[0])
 
-LD_chain_post = raw_chain[:, nburn:, 1:].reshape(-1, n_u)
-LD_median = np.median(LD_chain_post, axis=0)
-LD_lo, LD_hi = np.percentile(LD_chain_post, [16, 84], axis=0)
+LD_median = np.median(post_chain[:, i_LD], axis=0)
+LD_lo, LD_hi = np.percentile(post_chain[:, i_LD], [16, 84], axis=0)
+orb_median = np.median(post_chain[:, i_orb], axis=0)
+orb_lo, orb_hi = np.percentile(post_chain[:, i_orb], [16, 84], axis=0)
 
+# Autocorrelation needs the per-walker time series, so it's computed on the raw post-burn-in chain
 try:
-    r_tau = float(autocorr_new(r_chain_post))
+    r_tau = float(autocorr_new(raw_chain[:, nburn:, 0]))
 except Exception:
     r_tau = np.nan
 
@@ -509,15 +579,24 @@ np.savez(
     r_true=r_true,
     r_median=r_median, r_lo=r_lo, r_hi=r_hi, r_bestfit=r_bestfit,
     LD_median=LD_median, LD_lo=LD_lo, LD_hi=LD_hi,
+    shared_param_names=np.array(shared_param_names),
+    orb_median=orb_median, orb_lo=orb_lo, orb_hi=orb_hi,
+    orb_prior_mean=shared_mean, orb_prior_std=shared_std,
     r_autocorr_time=r_tau,
     n_steps_post_burn=nsteps - nburn,
+    n_post_kept=n_post_kept, n_post_total=n_post_total,
+    # ── Pre-clipping ──
+    raw_r_median=raw_r_median, raw_r_lo=raw_r_lo, raw_r_hi=raw_r_hi, raw_r_bestfit=raw_r_bestfit,
+    raw_LD_median=raw_LD_median, raw_LD_lo=raw_LD_lo, raw_LD_hi=raw_LD_hi,
+    raw_orb_median=raw_orb_median, raw_orb_lo=raw_orb_lo, raw_orb_hi=raw_orb_hi,
 )
-print(f'  r = {r_median:.5f} (+{r_hi-r_median:.5f} / -{r_median-r_lo:.5f}), bestfit = {r_bestfit:.5f}, tau_r = {r_tau:.1f}')
+print(f'  r (post-clip) = {r_median:.5f} (+{r_hi-r_median:.5f} / -{r_median-r_lo:.5f}), bestfit = {r_bestfit:.5f}, tau_r = {r_tau:.1f}')
+print(f'  r (pre-clip)  = {raw_r_median:.5f} (+{raw_r_hi-raw_r_median:.5f} / -{raw_r_median-raw_r_lo:.5f}), bestfit = {raw_r_bestfit:.5f}')
 
 # ── Optional full diagnostic suite (trace, corner, autocorrelation plots) ─────────────────
 if make_full_diagnostics:
 
-    labels = ['r'] + [f'LD_u{k+1}' for k in range(n_u)]
+    labels = ['r'] + [f'LD_u{k+1}' for k in range(n_u)] + list(shared_param_names)
     inf_data = az.from_dict(
         posterior={name: raw_chain[:, nburn:, k] for k, name in enumerate(labels)},
         log_likelihood={"log_like": logprob},
@@ -527,9 +606,11 @@ if make_full_diagnostics:
     plt.savefig(fixed_args_save_loc + 'trace.pdf')
     plt.close()
 
-    truth_list = [r_true] + list(true_c[:n_u]) if convert_NLLD else [r_true] + list(best_fit_LDCs)
+    truth_list = [r_true] + list(best_fit_LDCs) + list(shared_mean)   # orbital 'truth' = WLC prior mean
+    # Corner plot uses the cleaned (sigma-clipped) samples; trace/autocorrelation plots need
+    # the per-walker time series so they stay on the raw post-burn-in chain.
     fig1 = corner.corner(
-        inf_data, labels=labels, show_titles=True,
+        post_chain, labels=labels, show_titles=True,
         title_kwargs={"fontsize": 10}, label_kwargs={"fontsize": 10}, title_fmt=".4f",
         truths=truth_list,
     )

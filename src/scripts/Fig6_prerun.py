@@ -63,7 +63,7 @@ jaxnoise_key = jax.random.PRNGKey(0)
 
 #%% Stellar intensity data
 LD_data_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/LD_simulation'
-ld_model     = 'mps1'  # mps-atlas set 1
+ld_model     = 'mps1'
 
 #%% Five fiducial stellar types informed from our clustering
 stellar_types = {
@@ -83,14 +83,10 @@ R_prism    = 100    # nominal (constant) resolving power, lambda / delta_lambda
 #%% Number of mu values to interpolate the intensity profile to (as in Fig3)
 n_mu_fine = 100
 
-#%% Seed for the random initial guesses used when fitting each wavelength bin's 4th-order
-#%% NLLD coefficients (see extract_wavelength_LDCs) -- fixes coeffs below.
+#%% Seed for the random initial guesses used when fitting each wavelength bin's 4th-order NLLD coefficients (see extract_wavelength_LDCs).
 fit_init_seed = 42
 
-#%% Base seed for the per-star noise draw. Fig6_run.py regenerates the same noisy
-#%% per-channel dataset from this seed,
-#%% so the per-channel retrievals in Fig6_run.py operate on the same data that
-#%% constrained the orbital parameters here.
+#%% Base seed for the per-star noise draw.
 noise_seed_base = 1000
 
 #%%%% Define G in units needed now to avoid JAX tracing issues
@@ -159,16 +155,12 @@ r_init_bounds   = [0.07, 0.15]
 r_prior_bounds  = [0., 1.]
 LD_prior_bounds = [-100., 100.]
 
-#%% WLC MCMC settings
+#%% MCMC specific settings 
 wlc_nwalkers = 50
 wlc_nsteps   = 100000
 wlc_nburn    = 70000
 
-#%% Chain-cleaning settings -- same iterative 2D sigma-clipping procedure used in
-#%% Fig5_plot.py / Fig4_run.py's load_result, applied here right after the WLC MCMC so the
-#%% saved bestfit/median/percentile summaries are already based on the cleaned chain rather
-#%% than the raw one (walker excursions to bad regions, temporary stuck walkers, etc. are
-#%% removed before any downstream use).
+#%% Chain-cleaning settings
 SIGMA_THRESHOLDS = [5, 4, 3]   # IQR multiples, one per round
 SIGMA_ROUNDS     = 3
 
@@ -295,12 +287,12 @@ def gauss_logpdf(x, val, s):
 
 
 def single_channel_lc(r_i, u_i, i_, a_, period_, ecc, w, convert_NLLD, times):
-    """Transit light curve for one channel (a single wavelength bin, or the co-added white
-    light curve), given the orbital parameters and this channel's own radius ratio / limb-
-    darkening coefficients. When `convert_NLLD` is True, `u_i` is 4-parameter NLLD
-    coefficients [c1, c2, c3, c4], converted to an order-12 polynomial (a numerically near-
-    exact representation of the true NLLD profile); otherwise `u_i` is used directly as the
-    native-basis polynomial limb-darkening coefficients."""
+    """Transit light curve for one channel (a single wavelength bin, or the white
+    light curve), given the orbital parameters and this channel's Rp/R* / LDCs. 
+    When `convert_NLLD` is True, `u_i` is 4-parameter NLLD
+    coefficients [c1, c2, c3, c4], converted to an order-12 polynomial;
+    otherwise `u_i` is used directly as the native-basis polynomial
+    limb-darkening coefficients."""
     stellar_rho = (3 * jnp.pi * a_**3) / (period_**2 * G_solar_units)
     star = Central(density=stellar_rho)
     planet = System(star).add_body(
@@ -323,9 +315,8 @@ def wlc_log_probability(theta, times, data, err, LD_prior_bounds):
     Log-probability for the white-light-curve fit. theta = [i, a, period, sqrtecosw,
     sqrtesinw, r, LD_u1, LD_u2, LD_u3, LD_u4] (10 parameters, 4NLLD law).
 
-    Every limb-darkening coefficient gets the same uniform prior
-    (LD_prior_bounds), matching Fig5_run.py's 'uniform' prior_strength option and
-    Fig6_run.py's per-channel retrieval.
+    Every LDC gets the same uniform prior (LD_prior_bounds), matching Fig5_run.py's
+    'uniform' prior_strength option and Fig6_run.py's per-channel retrieval.
     """
     i_, a_, period_, sqrtecosw_, sqrtesinw_, r_, u1, u2, u3, u4 = theta
     ecc = sqrtecosw_**2 + sqrtesinw_**2
@@ -352,13 +343,7 @@ def wlc_log_probability(theta, times, data, err, LD_prior_bounds):
 
 def sigma_clip_chain(raw_chain, logprob, chi2_chain, nburn, thresholds=(5, 4, 3), rounds=3, verbose=False):
     """
-    Iterative 2D sigma-clipping of an MCMC chain -- the same chain-cleaning procedure used
-    in Fig5_plot.py / Fig4_run.py's load_result, applied here directly to the in-memory WLC
-    chain right after sampling. Removes (walker, step) pairs whose chi2 or any parameter
-    value is an outlier (beyond `threshold` IQRs of the median) relative to the currently-
-    surviving population, over several rounds with progressively tighter thresholds -- this
-    strips out things like temporarily stuck walkers or excursions to bad regions before any
-    posterior summary is computed from the chain.
+    Iterative 2D sigma-clipping of an MCMC chain.
 
     Parameters
     ----------
@@ -427,23 +412,7 @@ def run_mcmc(sampler, key1, key2, pos, num_steps, progress_desc='Sampling'):
     Manually run an emcee_jax MCMC for `num_steps`, writing each step's ensemble directly
     into pre-allocated (n_walkers, n_steps, ndim)-shaped numpy arrays.
 
-    This replaces sampler.sample_parallel() / sampler.sample(), for two reasons:
-
-    1. Performance: on a single-device machine (no GPU/TPU), sample_parallel() falls back to
-       sample(), whose progress=True code path accumulates every step's full ensemble state
-       in a Python list, then calls jnp.stack() on the entire ~100,000-element list in one
-       go at the end. That triggers a pathologically slow XLA compilation ("[Compiling
-       module jit_stack ...] Very slow compile?") that can hang for a very long time even
-       though the actual sampling itself already finished. Writing into a pre-allocated
-       array incrementally avoids ever calling jnp.stack on a huge operand list.
-
-    2. Correctness: sampler.sample()'s own post-processing reshapes the stacked coordinates
-       array (native shape (n_steps, n_walkers, ndim)) via `.reshape(n_walkers, n_steps,
-       ndim)` rather than `.transpose(1, 0, 2)` -- a reshape does not swap axes, so this
-       silently scrambles the walker/step correspondence in the saved chain (verified
-       empirically: it does not match either the untouched library trace or a correctly
-       transposed one). Writing directly into a (n_walkers, n_steps, ndim) array at index
-       [:, i, :] for step i sidesteps this entirely.
+    This replaces sampler.sample_parallel() / sampler.sample().
 
     Returns
     -------
@@ -476,19 +445,19 @@ def run_mcmc(sampler, key1, key2, pos, num_steps, progress_desc='Sampling'):
 ################ Running code ###############
 #############################################
 
-# JWST NIRSpec/PRISM-like wavelength grid (constant R~100, 0.6-5.3 micron) -- shared by
-# every star.
+# JWST NIRSpec/PRISM wavelength grid (constant R~100, 0.6-5.3 micron)
 wav_edges, wav_centers = build_R_grid(wav_min_um, wav_max_um, R_prism)
 n_bins = len(wav_centers)
 print(f'Wavelength grid: {n_bins} channels between {wav_min_um} and {wav_max_um} micron at R={R_prism}')
 
+#Loop over stellar types
 for star_index, star_name in enumerate(star_names):
     star_props = stellar_types[star_name]
     print(f'\n=== STAR: {star_name} ===')
 
     save_path = check_dir(orig_save_data_path + f'{star_name}/')
 
-    # ── Step 1: wavelength-dependent 4th-order NLLD coefficients (Fig3 procedure) ────────
+    # ── Step 1: extract wavelength-dependent 4th-order NLLD coefficients ────────
     coeffs, _, _ = extract_wavelength_LDCs(
         star_props['Teff'], star_props['logg'], star_props['MH'],
         wav_edges, LD_data_path, n_mu_fine=n_mu_fine, fit_seed=fit_init_seed,
@@ -497,10 +466,11 @@ for star_index, star_name in enumerate(star_names):
     if not np.all(valid):
         raise RuntimeError(f'{np.sum(~valid)} channel(s) have no valid intensity data for {star_name}.')
 
+    #Store wavelength grid and corresponding coefficients
     wav_grid_file = save_path + 'wav_grid.npz'
     np.savez(wav_grid_file, wav_edges=wav_edges, wav_centers=wav_centers, coeffs=coeffs)
 
-    # ── Step 2: inject the achromatic-depth chromatic light curve ────────────────────────
+    # ── Step 2: create chromatic light curves ────────────────────────
     print('  GENERATING CHROMATIC DATA')
     true_u_poly = jnp.array(np.array([
         np.asarray(nonlinear_4param_ld_law(*coeffs[c], order=12)) for c in range(n_bins)
@@ -585,6 +555,8 @@ for star_index, star_name in enumerate(star_names):
     raw_max_walker, raw_max_step = np.unravel_index(np.argmax(logprob), logprob.shape)
     raw_bestfit_theta = raw_chain[raw_max_walker, raw_max_step, :]
 
+    raw_shared_mean = np.mean(raw_post_chain[:, :n_shared], axis=0)
+    raw_shared_std  = np.std(raw_post_chain[:, :n_shared], axis=0)
     raw_shared_median = np.median(raw_post_chain[:, :n_shared], axis=0)
     raw_shared_lo, raw_shared_hi = np.percentile(raw_post_chain[:, :n_shared], [16, 84], axis=0)
     raw_shared_bestfit = raw_bestfit_theta[:n_shared]
@@ -605,6 +577,10 @@ for star_index, star_name in enumerate(star_names):
     print(f'    kept {n_post_kept}/{n_post_total} post-burn-in (walker, step) pairs '
           f'({100 * n_post_kept / n_post_total:.1f}%)')
 
+    # Mean/std of the cleaned WLC posterior -- Fig6_run.py uses these as Gaussian priors on the
+    # orbital parameters.
+    shared_mean = np.mean(post_chain[:, :n_shared], axis=0)
+    shared_std  = np.std(post_chain[:, :n_shared], axis=0)
     shared_median = np.median(post_chain[:, :n_shared], axis=0)
     shared_lo, shared_hi = np.percentile(post_chain[:, :n_shared], [16, 84], axis=0)
     shared_bestfit = bestfit_theta[:n_shared]
@@ -627,12 +603,14 @@ for star_index, star_name in enumerate(star_names):
         shared_param_names=np.array(shared_param_names),
         # ── Post-clipping (the only version Fig6_run.py reads) ──────────────────────────
         shared_median=shared_median, shared_lo=shared_lo, shared_hi=shared_hi, shared_bestfit=shared_bestfit,
+        shared_mean=shared_mean, shared_std=shared_std,
         wlc_r_median=wlc_r_median, wlc_r_lo=wlc_r_lo, wlc_r_hi=wlc_r_hi,
         wlc_LD_median=wlc_LD_median,
         n_post_kept=n_post_kept, n_post_total=n_post_total,
         # ── Pre-clipping (reproducibility / inspection only -- not read by Fig6_run.py) ──
         raw_shared_median=raw_shared_median, raw_shared_lo=raw_shared_lo,
         raw_shared_hi=raw_shared_hi, raw_shared_bestfit=raw_shared_bestfit,
+        raw_shared_mean=raw_shared_mean, raw_shared_std=raw_shared_std,
         raw_wlc_r_median=raw_wlc_r_median, raw_wlc_r_lo=raw_wlc_r_lo, raw_wlc_r_hi=raw_wlc_r_hi,
         raw_wlc_LD_median=raw_wlc_LD_median,
     )
