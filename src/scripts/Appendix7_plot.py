@@ -2,10 +2,11 @@
 ########## Purpose ##########
 #############################
 
-# Figure 3 shows the intensity profiles and NLLD fits for the overall mode and
-# selected cluster modes identified in the coefficient space. The underlying data
-# (profiles, coefficients, cluster labels) are produced by Fig3_run.py and stored
-# in results.npz, which is downloaded from Zenodo by the Snakemake workflow.
+# Appendix 7 shows the intensity profiles and NLLD fits for the overall mode and
+# selected cluster modes identified in the coefficient space both on the native mu
+# grid and the restricted mu grid. The underlying data (profiles, coefficients, cluster labels)
+# are produced by Fig3_run.py and stored in results.npz, which is downloaded from
+# Zenodo by the Snakemake workflow.
 #
 # This version works exclusively with global (disc-integrated) stellar intensity
 # profiles — no transit chord / impact-parameter / planet-size dependence.
@@ -52,13 +53,15 @@ for model in models:
     # ── Load pre-computed results ─────────────────────────────────────────────
     res = np.load(input_save_path + f'{model}/results.npz', allow_pickle=False)
 
-    unique_cl             = res['unique_cl']
-    typical_mu            = res['typical_mu']
-    typical_profile       = res['typical_profile']
-    typical_coeff         = res['typical_coeff_native']         # native/full-grid fit
-    cluster_mode_mus      = res['cluster_mode_mus']
-    cluster_mode_profiles = res['cluster_mode_profiles']
-    cluster_mode_coeffs   = res['cluster_mode_coeffs_native']   # native/full-grid fit
+    unique_cl                  = res['unique_cl']
+    typical_mu                 = res['typical_mu']
+    typical_profile            = res['typical_profile']
+    typical_coeff              = res['typical_coeff']          # restricted mu_fit_range fit
+    typical_coeff_native       = res['typical_coeff_native']   # native/full-grid fit
+    cluster_mode_mus           = res['cluster_mode_mus']
+    cluster_mode_profiles      = res['cluster_mode_profiles']
+    cluster_mode_coeffs        = res['cluster_mode_coeffs']         # restricted mu_fit_range fit
+    cluster_mode_coeffs_native = res['cluster_mode_coeffs_native']  # native/full-grid fit
     typical_idx          = int(res['typical_idx'])
     cluster_mode_indices = res['cluster_mode_indices']
     corner_meta          = res['corner_meta']
@@ -83,14 +86,15 @@ for model in models:
     for ci, cl in enumerate(unique_cl):
         mode_phys[f'Cluster {cl} mode'] = get_phys(int(cluster_mode_indices[ci]))
 
-    # ── Figure 3: NLLD curves for overall mode and per-cluster mode profiles ──
-    print('    FIGURE 3 - NLLD curves for overall mode and per-cluster mode profiles')
+    # ── Appendix 7: NLLD curves for overall mode and per-cluster mode profiles ──
+    print('    APPENDIX 7 - NLLD curves for overall mode and per-cluster mode profiles')
 
-    # Bundle specials: (label, mu array, raw profile, coeff vector, colour, linewidth)
+    # Bundle specials: (label, mu array, raw profile, native-fit coeffs, restricted-fit coeffs, colour, linewidth)
     special_styles = [
-        ('Global mode', typical_mu, typical_profile, typical_coeff, 'orange', 2.5),
+        ('Global mode', typical_mu, typical_profile, typical_coeff_native, typical_coeff, 'orange', 2.5),
     ] + [
-        (f'Cluster {cl} mode', cluster_mode_mus[ci], cluster_mode_profiles[ci], cluster_mode_coeffs[ci], cluster_colors[ci], 1.8)
+        (f'Cluster {cl} mode', cluster_mode_mus[ci], cluster_mode_profiles[ci],
+         cluster_mode_coeffs_native[ci], cluster_mode_coeffs[ci], cluster_colors[ci], 1.8)
         for ci, cl in enumerate(unique_cl)
     ]
 
@@ -108,8 +112,9 @@ for model in models:
     rng = np.random.default_rng(42)
     N_BG = 100
 
-    for plot_idx, (sp_label, mu_plot, prof, coeffs, col, lw) in enumerate(special_styles_to_plot):
-        curve = fourNLLD(mu_plot, coeffs)
+    for plot_idx, (sp_label, mu_plot, prof, coeffs_native, coeffs_restricted, col, lw) in enumerate(special_styles_to_plot):
+        curve_native     = fourNLLD(mu_plot, coeffs_native)
+        curve_restricted = fourNLLD(mu_plot, coeffs_restricted)
 
         # Background profiles
         if sp_label == 'Global mode':
@@ -128,9 +133,11 @@ for model in models:
                 ax5[0, plot_idx].plot(mu_plot, fourNLLD(mu_plot, corner_data[bi]),
                                       color='gray', alpha=0.2, linewidth=0.5, zorder=0)
 
-        # Left panel: raw intensity profile (solid) + NLLD fit (dashed)
-        ax5[0, plot_idx].plot(mu_plot, curve, '--', color='black', linewidth=lw, zorder=2)
-        ax5[0, plot_idx].plot(mu_plot, prof,  '-',  color=col,     linewidth=lw, zorder=1)
+        # Left panel: raw intensity profile (solid) + NLLD fits
+        # (native mu grid = dashed, restricted mu grid = dash-dotted)
+        ax5[0, plot_idx].plot(mu_plot, curve_native,     '--', color='black', linewidth=lw, zorder=3)
+        ax5[0, plot_idx].plot(mu_plot, curve_restricted, '-.', color='black', linewidth=lw, zorder=2)
+        ax5[0, plot_idx].plot(mu_plot, prof,             '-',  color=col,     linewidth=lw, zorder=1)
         p = mode_phys[sp_label]
         title = (
             f'{sp_label}'
@@ -138,9 +145,11 @@ for model in models:
         ax5[0, plot_idx].set_title(title, fontsize=fs+2, pad=5)
         ax5[0, plot_idx].grid(True)
 
-        # Right panel: residuals
-        resid = 100 * (curve - prof) / prof
-        ax5[1, plot_idx].plot(mu_plot, resid, '--', color=col, linewidth=lw, label=sp_label)
+        # Right panel: residuals for both fits
+        resid_native     = 100 * (curve_native - prof) / prof
+        resid_restricted = 100 * (curve_restricted - prof) / prof
+        ax5[1, plot_idx].plot(mu_plot, resid_native,     '--', color=col, linewidth=lw, label=sp_label)
+        ax5[1, plot_idx].plot(mu_plot, resid_restricted, '-.', color=col, linewidth=lw)
         ax5[1, plot_idx].axhline(0, color='black', linestyle='-', linewidth=1.2, alpha=0.4)
         ax5[1, plot_idx].grid(True)
 
@@ -153,15 +162,26 @@ for model in models:
     ax5[1, 0].tick_params(axis="y", labelsize=fs, rotation=0)
     ax5[1, 0].set_ylim([-0.5, 0.5])
 
-    plt.savefig(paths.figures / "Fig3.pdf", bbox_inches="tight")
+    fit_style_handles = [
+        plt.Line2D([0], [0], color='black', linestyle='--',  linewidth=1.8, label='Native $\\mu$ grid fit'),
+        plt.Line2D([0], [0], color='black', linestyle='-.', linewidth=1.8, label='Restricted $\\mu$ grid fit'),
+    ]
+    fig5.legend(handles=fit_style_handles, loc='upper center', ncol=2,
+                fontsize=fs, frameon=False, bbox_to_anchor=(0.5, 1.04))
 
-    # Print a summary table of all coefficients for easy copy-paste
-    print(f'\n  {"Profile":<14}  {"c1":>8}  {"c2":>8}  {"c3":>8}  {"c4":>8}')
-    print(f'  {"-"*54}')
-    for sp_label, _mu, _prof, coeffs, _col, _lw in special_styles:
-        print(f'  {sp_label:<20}  '
-              f'{coeffs[0]:>8.4f}  {coeffs[1]:>8.4f}  '
-              f'{coeffs[2]:>8.4f}  {coeffs[3]:>8.4f}')
+    plt.savefig(paths.figures / "Appendix7.pdf", bbox_inches="tight")
+
+    # Print a summary table of all coefficients for easy copy-paste — both the
+    # native/full-mu-grid fit and the restricted mu_fit_range fit, for comparison.
+    print(f'\n  {"Profile":<20}  {"Fit range":<20}  {"c1":>8}  {"c2":>8}  {"c3":>8}  {"c4":>8}')
+    print(f'  {"-"*76}')
+    for sp_label, _mu, _prof, coeffs_native, coeffs_restricted, _col, _lw in special_styles:
+        print(f'  {sp_label:<20}  {"native (full grid)":<20}  '
+              f'{coeffs_native[0]:>8.4f}  {coeffs_native[1]:>8.4f}  '
+              f'{coeffs_native[2]:>8.4f}  {coeffs_native[3]:>8.4f}')
+        print(f'  {"":<20}  {"restricted":<20}  '
+              f'{coeffs_restricted[0]:>8.4f}  {coeffs_restricted[1]:>8.4f}  '
+              f'{coeffs_restricted[2]:>8.4f}  {coeffs_restricted[3]:>8.4f}')
 
     # Print a summary table of all the physical parameters for easy copy-paste
     print(f'\n  {"Profile":<14}  {"Wavelength":>10}  {"Teff":>8}  {"logg":>8}  {"[M/H]":>8}')

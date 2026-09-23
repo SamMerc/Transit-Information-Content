@@ -16,19 +16,20 @@
 #   pr(Mk|D)     = pr(D|Mk) pr(Mk) / sum_l pr(D|Ml) pr(Ml)                      (2)
 #   pr(D|Mk)     = integral pr(D|theta_k,Mk) pr(theta_k|Mk) d(theta_k)          (3)
 # where Delta is the transit depth (r^2). The MCMC pipeline does not compute the
-# marginal likelihood pr(D|Mk) in (3) (no nested sampling / thermodynamic
-# integration is run), so pr(Mk|D) is approximated with BIC-based Bayes factors
-# (Schwarz 1978) -- see compute_bma_bias(). Eq (1) itself, however, is built
-# literally: for each (prior strength, seed) the mixture is realised by Monte
-# Carlo, drawing a model according to its BIC weight and then a posterior sample
-# of that model's depth from its own (sigma-clipped) MCMC chain -- rather than
-# collapsing each model's posterior pr(Delta|D,Mk) to a single point + Gaussian
-# error beforehand.
+# marginal likelihood pr(D|Mk) in (3), so pr(Mk|D) is approximated with BIC-based Bayes factors
+# (Schwarz 1978) -- see compute_bma_bias(). Eq (1) is built literally: for each
+# (prior strength, seed) the mixture is realised by Monte Carlo, drawing a model
+# according to its BIC weight and then a posterior sample of that model's depth
+# from its own (sigma-clipped) MCMC chain -- rather than collapsing each model's
+# posterior pr(Delta|D,Mk) to a single point + Gaussian error beforehand.
 #
-# Two versions of the figure are produced:
-#   - Fig5_BMA_all.pdf:     BMA computed across all 7 fitted LDLs (PLD_2-PLD_6, PLD_9, 4NLLD)
-#   - Fig5_BMA_reduced.pdf: BMA computed across only the quadratic (PLD_2), 3rd-order
-#                           polynomial (PLD_3), and 4th-order non-linear (4NLLD) laws.
+# Fig7.pdf has two columns:
+#   - left:  BMA computed across all 8 fitted LDLs (PLD_1-PLD_6, PLD_9, 4NLLD)
+#   - right: BMA computed across only the linear (PLD_1), quadratic (PLD_2), 3rd-order
+#            polynomial (PLD_3), and 4th-order non-linear (4NLLD) laws.
+#
+# The per-C-label caches (Fig5_Storage/C*/processed_data_cache_bma.pkl) are
+# downloaded from Zenodo by the Snakemake workflow (see showyourwork.yml).
 
 
 ######################################
@@ -93,10 +94,10 @@ N_TOTAL_PTS = int(init_state_dic['times'].shape[0])   # total LC points used in 
 TRUE_DEPTH  = init_state_dic['r']**2
 
 #%% Grid parameters
-RAW_BASE_DIR = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig5_Storage/'
+RAW_BASE_DIR = str(paths.data / 'Fig5_Storage') + '/'
 
-LDLs              = ['PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6', 'PLD_9', '4NLLD']
-REDUCED_LDLs      = ['PLD_2', 'PLD_3', '4NLLD']   # quadratic, 3rd-order polynomial, 4th-order non-linear law
+LDLs              = ['PLD_1', 'PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6', 'PLD_9', '4NLLD']
+REDUCED_LDLs      = ['PLD_1', 'PLD_2', 'PLD_3', '4NLLD']   # linear, quadratic, 3rd-order polynomial, 4th-order non-linear law
 prior_strengths   = ['uniform', 'gauss_20', 'gauss_10', 'gauss_5', 'gauss_1']
 prior_strengths_labels = ['Uniform', r'$20\%$ Gaussian', r'$10\%$ Gaussian',
                           r'$5\%$ Gaussian', r'$1\%$ Gaussian']
@@ -349,8 +350,8 @@ def compute_bma_bias(cached_data, models_to_use):
     return biases_by_prior
 
 
-def plot_bma_row(ax, biases_by_prior, c_label, is_bottom_row):
-    """Draw one C-label's row: a boxplot of BMA bias (10 seeds) per prior strength."""
+def plot_bma_row(ax, biases_by_prior, c_label, is_bottom_row, is_left_col):
+    """Draw one C-label panel: a boxplot of BMA bias (10 seeds) per prior strength."""
     positions = np.arange(1, len(prior_strengths) + 1)
 
     for ips, (prior_strength, prior_label, color) in enumerate(
@@ -367,9 +368,6 @@ def plot_bma_row(ax, biases_by_prior, c_label, is_bottom_row):
             flierprops=dict(marker='o', color=color, markersize=5),
             showfliers=False,
         )
-        # Overlay individual seeds so all 10 points per prior strength are visible.
-        jitter = (np.random.default_rng(0).uniform(-0.08, 0.08, size=len(data)))
-        ax.scatter(positions[ips] + jitter, data, color='0.2', s=10, zorder=3, alpha=0.7)
 
     ax.set_yscale('log')
     ax.set_ylim([0.03, 120])
@@ -381,12 +379,13 @@ def plot_bma_row(ax, biases_by_prior, c_label, is_bottom_row):
     else:
         ax.set_xticklabels([])
 
-    ax.set_ylabel(r'BMA Transit Depth Bias ($\sigma$)', fontsize=11)
+    if is_left_col:
+        ax.set_ylabel(r'BMA Transit Depth Bias ($\sigma$)', fontsize=11)
     ax.set_title(C_LABEL_NAMES[c_label], fontsize=12, fontweight='bold', loc='left')
 
     band_kwargs = dict(facecolor='green', alpha=0.2, edgecolor='none', zorder=-1)
     ax.axhspan(0.1, 2.0, **band_kwargs)
-    if is_bottom_row:
+    if is_bottom_row and is_left_col:
         ax.text(0.5, 2.2, r'No bias', fontsize=10, color='seagreen')
 
     grid_color = '0.85'
@@ -396,22 +395,28 @@ def plot_bma_row(ax, biases_by_prior, c_label, is_bottom_row):
         ax.axhline(val, color=grid_color, zorder=0)
 
 
-def build_and_save_bma_figure(all_biases, out_name):
-    """Build the stacked per-C-label BMA bias figure and save it to paths.figures."""
-    available_c_labels = [c_label for c_label in C_LABELS if c_label in all_biases]
+def build_and_save_bma_figure(biases_per_column, column_titles, out_name):
+    """
+    Build the BMA bias figure and save it to paths.figures. Each entry of
+    `biases_per_column` ({c_label: biases_by_prior}) is drawn as one column,
+    with one row per C label.
+    """
+    available_c_labels = [c_label for c_label in C_LABELS if c_label in biases_per_column[0]]
     if not available_c_labels:
         print(f"Skipping {out_name}: no data available.")
         return
 
-    n_panels   = len(available_c_labels)
-    fig_height = n_panels * 3.2
-    fig, axes  = plt.subplots(n_panels, 1, figsize=(8, fig_height), sharex=True)
-    if n_panels == 1:
-        axes = [axes]
+    n_rows     = len(available_c_labels)
+    n_cols     = len(biases_per_column)
+    fig, axes  = plt.subplots(n_rows, n_cols, figsize=(8 * n_cols, n_rows * 3.2),
+                              sharex=True, sharey=True, squeeze=False)
 
-    for ic, c_label in enumerate(available_c_labels):
-        is_bottom = (ic == n_panels - 1)
-        plot_bma_row(axes[ic], all_biases[c_label], c_label, is_bottom)
+    for icol, (all_biases, col_title) in enumerate(zip(biases_per_column, column_titles)):
+        for ic, c_label in enumerate(available_c_labels):
+            is_bottom = (ic == n_rows - 1)
+            plot_bma_row(axes[ic, icol], all_biases[c_label], c_label, is_bottom, icol == 0)
+        axes[0, icol].annotate(col_title, xy=(0.5, 1.25), xycoords='axes fraction',
+                               ha='center', va='bottom', fontsize=14, fontweight='bold')
 
     fig.tight_layout()
     plt.savefig(paths.figures / f"{out_name}.pdf", bbox_inches="tight")
@@ -435,16 +440,18 @@ if __name__ == '__main__':
     if not all_cached_data:
         raise RuntimeError("No C-label data found. Check RAW_BASE_DIR.")
 
-    # ── Version 1: BMA across all fitted LDLs ────────────────────────────
+    # ── Left column: BMA across all fitted LDLs ──────────────────────────
     all_biases = {
         c_label: compute_bma_bias(cached_data, LDLs)
         for c_label, cached_data in all_cached_data.items()
     }
-    build_and_save_bma_figure(all_biases, "Fig5_BMA_all")
 
-    # ── Version 2: BMA across quadratic / 3rd-order / 4th-order NL laws only ──
+    # ── Right column: BMA across linear / quadratic / 3rd-order / 4th-order NL laws only ──
     reduced_biases = {
         c_label: compute_bma_bias(cached_data, REDUCED_LDLs)
         for c_label, cached_data in all_cached_data.items()
     }
-    build_and_save_bma_figure(reduced_biases, "Fig5_BMA_reduced")
+
+    build_and_save_bma_figure([all_biases, reduced_biases],
+                              ['All limb-darkening laws', 'Reduced set of limb-darkening laws'],
+                              "Fig7")

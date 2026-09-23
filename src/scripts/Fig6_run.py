@@ -127,8 +127,8 @@ R_prism    = 100    # nominal (constant) resolving power, lambda / delta_lambda
 
 #%% MCMC specific settings 
 nwalkers = 50
-nsteps   = 100000
-nburn    = 70000
+nsteps   = 10000
+nburn    = 7000
 
 #%% Chain-cleaning settings
 SIGMA_THRESHOLDS = [5, 4, 3]   # IQR multiples, one per round

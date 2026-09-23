@@ -80,7 +80,7 @@ num_IT_pts = jnp.sum(
 RAW_BASE_DIR = str(paths.data / 'Fig5_Storage') + '/'
 model_scatter = 16.68100537200059
 
-LDLs              = ['PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6', 'PLD_9', '4NLLD']
+LDLs              = ['PLD_1', 'PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6', 'PLD_9', '4NLLD']
 prior_strengths   = ['uniform', 'gauss_20', 'gauss_10', 'gauss_5', 'gauss_1']
 prior_strengths_labels = ['Uniform', r'$20\%$ Gaussian', r'$10\%$ Gaussian',
                           r'$5\%$ Gaussian', r'$1\%$ Gaussian']
@@ -306,7 +306,7 @@ def draw_matched_breaks(fig, left_ax, right_ax, size=0.006, lw=1.0, color='k'):
 def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
     """
     Render amp-factor (top) and bias (bottom) for one C label using a 2x3 broken-axis
-    layout: left panel covers PLD_2-PLD_6, middle panel PLD_9, right panel 4NLLD.
+    layout: left panel covers PLD_1-PLD_6, middle panel PLD_9, right panel 4NLLD.
     Interior spines are hidden; break marks are drawn by the caller via draw_matched_breaks.
     Returns (ax1, ax1m, ax1r, ax2, ax2m, ax2r).
     """
@@ -321,10 +321,10 @@ def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
     ax2m = fig.add_subplot(inner_gs[1, 1])   # bias, middle
     ax2r = fig.add_subplot(inner_gs[1, 2])   # bias, right
 
-    left_LDLs   = ['PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6']
+    left_LDLs   = ['PLD_1', 'PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6']
     middle_LDLs = ['PLD_9']
     right_LDLs  = ['4NLLD']
-    positions_left   = np.array([2, 3, 4, 5, 6])
+    positions_left   = np.array([1, 2, 3, 4, 5, 6])
     positions_middle = np.array([9])
     positions_right  = np.array([10])
 
@@ -369,7 +369,7 @@ def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
         ax.set_ylim([1., 120])
     for ax in [ax2, ax2m, ax2r]:
         ax.set_ylim([0.1, 120])
-    ax1.set_xlim([1.5, 6.5]);   ax2.set_xlim([1.5, 6.5])
+    ax1.set_xlim([0.5, 6.5]);   ax2.set_xlim([0.5, 6.5])
     ax1m.set_xlim([8.5, 9.5]);  ax2m.set_xlim([8.5, 9.5])
     ax1r.set_xlim([9.5, 10.5]); ax2r.set_xlim([9.5, 10.5])
 
@@ -393,8 +393,8 @@ def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
 
     if is_bottom_row:
         ax2.set_xticks(positions_left)
-        ax2.set_xticklabels([2, 3, 4, 5, 6], color='red')
-        ax2.get_xticklabels()[1].set_color('green')   # PLD_3
+        ax2.set_xticklabels([1, 2, 3, 4, 5, 6], color='red')
+        ax2.get_xticklabels()[2].set_color('green')   # PLD_3
         ax2m.set_xticks(positions_middle); ax2m.set_xticklabels([9], color='red')
         ax2r.set_xticks(positions_right);  ax2r.set_xticklabels(['4NLLD'], color='green')
     else:

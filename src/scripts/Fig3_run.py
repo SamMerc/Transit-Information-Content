@@ -94,6 +94,13 @@ N_star = 10
 # Number of mu values to interpolate to — set to EJ16 value.
 n_mu_fine = 100
 
+# After clustering (which uses NLLD coefficients fit on the full/native mu grid above),
+# the representative mode profiles (global mode + per-cluster modes) are re-fit to this 
+# restricted mu range.
+mu_fit_range = [0.2, 1.0]
+n_mu_fit     = 100
+mu_fit_grid  = np.linspace(mu_fit_range[0], mu_fit_range[1], n_mu_fit)
+
 # Number of principal components to use in the PCA.
 n_components = 4
 cmap   = plt.cm.coolwarm
@@ -415,6 +422,23 @@ def fourNLLD(x, coeffs):
 def residual_fn(params, x, base_prof):
     """Residual function for lmfit minimisation of NLLD coefficients."""
     return fourNLLD(x, [params[f'c{ic+1}'].value for ic in range(4)]) - base_prof
+
+
+def fit_nlld_on_mu_grid(mu, profile, mu_grid, rng):
+    """Interpolate (mu, profile) onto mu_grid and fit a 4th-order NLLD to it.
+
+    mu need not be sorted; profile is interpolated (cubic) against sorted mu
+    before being evaluated on mu_grid.
+    """
+    order        = np.argsort(mu)
+    interp_fn    = interp1d(mu[order], profile[order], kind='cubic', bounds_error=False)
+    profile_grid = interp_fn(mu_grid)
+
+    params = Parameters()
+    for ip in range(4):
+        params.add(f'c{ip+1}', value=rng.uniform(0, 1))
+    result = minimize(residual_fn, params, args=(mu_grid, profile_grid))
+    return np.array([result.params[f'c{ic+1}'].value for ic in range(4)])
 
 
 ################################
@@ -1200,9 +1224,9 @@ for model in models:
 
     # ── Generate profiles ────────────────────────────────────────
     # Global mode: profile closest to its own cluster centroid across ALL clusters
-    typical_profile = corner_profiles[typical_idx]
-    typical_coeff   = corner_data[typical_idx]
-    typical_mu      = mus_array[typical_idx]
+    typical_profile      = corner_profiles[typical_idx]
+    typical_coeff_native = corner_data[typical_idx]  # fit on the native/full mu grid
+    typical_mu           = mus_array[typical_idx]
 
     # Per-cluster mode: profile closest to each cluster's centroid
     cluster_mode_indices = []
@@ -1213,9 +1237,23 @@ for model in models:
         dists    = np.linalg.norm(members - centroid, axis=1)
         cluster_mode_indices.append(int(np.where(mask)[0][np.argmin(dists)]))
 
-    cluster_mode_profiles = [corner_profiles[cidx] for cidx in cluster_mode_indices]
-    cluster_mode_coeffs   = [corner_data[cidx]     for cidx in cluster_mode_indices]
-    cluster_mode_mus      = [mus_array[cidx]        for cidx in cluster_mode_indices]
+    cluster_mode_profiles      = [corner_profiles[cidx] for cidx in cluster_mode_indices]
+    cluster_mode_coeffs_native = [corner_data[cidx]     for cidx in cluster_mode_indices]
+    cluster_mode_mus           = [mus_array[cidx]        for cidx in cluster_mode_indices]
+
+    # ── Re-fit the representative mode profiles on the restricted mu range ────
+    # The clustering / mode selection above uses coefficients fit on the native, full
+    # mu grid. The representative "mode" profiles it selects are now additionally
+    # re-fit restricted to mu_fit_range.
+    print(f'    Re-fitting mode profiles on restricted mu range {mu_fit_range} '
+          f'({n_mu_fit} pts)')
+    refit_rng = np.random.default_rng(fit_init_seed)
+
+    typical_coeff       = fit_nlld_on_mu_grid(typical_mu, typical_profile, mu_fit_grid, refit_rng)
+    cluster_mode_coeffs = [
+        fit_nlld_on_mu_grid(mu, prof, mu_fit_grid, refit_rng)
+        for mu, prof in zip(cluster_mode_mus, cluster_mode_profiles)
+    ]
 
     # ── Figure 5: NLLD curves for overall mode and per-cluster mode profiles ──
     print('    FIGURE 5 - NLLD curves for overall mode and per-cluster mode profiles')
@@ -1262,14 +1300,19 @@ for model in models:
                  dpi=150, bbox_inches='tight')
     plt.close(fig4)
 
-    # Print a summary table of all coefficients for easy copy-paste
-    print(f'\n  {"Profile":<14}  {"c1":>8}  {"c2":>8}  {"c3":>8}  {"c4":>8}')
-    print(f'  {"-"*54}')
-    for sp_label, _mu, _prof, coeffs, _col, _lw in special_styles:
-        print(f'  {sp_label:<20}  '
+    # Print a summary table of all coefficients for easy copy-paste — both the
+    # native/full-mu-grid fit and the restricted mu_fit_range fit, for comparison.
+    native_coeffs_list = [typical_coeff_native] + cluster_mode_coeffs_native
+    print(f'\n  {"Profile":<20}  {"Fit range":<20}  {"c1":>8}  {"c2":>8}  {"c3":>8}  {"c4":>8}')
+    print(f'  {"-"*76}')
+    for (sp_label, _mu, _prof, coeffs, _col, _lw), coeffs_native in zip(special_styles, native_coeffs_list):
+        print(f'  {sp_label:<20}  {"native (full grid)":<20}  '
+              f'{coeffs_native[0]:>8.4f}  {coeffs_native[1]:>8.4f}  '
+              f'{coeffs_native[2]:>8.4f}  {coeffs_native[3]:>8.4f}')
+        print(f'  {"":<20}  {f"restricted {mu_fit_range}":<20}  '
               f'{coeffs[0]:>8.4f}  {coeffs[1]:>8.4f}  '
               f'{coeffs[2]:>8.4f}  {coeffs[3]:>8.4f}')
-        
+
     results_file = save_data_path + 'results.npz'
     save_kwargs = dict(
         corner_data           = corner_data,
@@ -1282,12 +1325,15 @@ for model in models:
         wavs_ref              = wavs_ref,
         typical_idx           = np.array(typical_idx),
         cluster_mode_indices  = np.array(cluster_mode_indices),
-        typical_mu            = typical_mu,
-        typical_profile       = typical_profile,
-        typical_coeff         = typical_coeff,
-        cluster_mode_mus      = cluster_mode_mus,
-        cluster_mode_profiles = cluster_mode_profiles,
-        cluster_mode_coeffs   = cluster_mode_coeffs,
+        typical_mu                 = typical_mu,
+        typical_profile            = typical_profile,
+        typical_coeff              = typical_coeff,           # restricted mu_fit_range fit
+        typical_coeff_native       = typical_coeff_native,     # native/full-grid fit (reference)
+        cluster_mode_mus           = cluster_mode_mus,
+        cluster_mode_profiles      = cluster_mode_profiles,
+        cluster_mode_coeffs        = cluster_mode_coeffs,        # restricted mu_fit_range fit
+        cluster_mode_coeffs_native = cluster_mode_coeffs_native, # native/full-grid fit (reference)
+        mu_fit_range               = np.array(mu_fit_range),
     )
     if corner_weights is not None:
         save_kwargs['corner_weights'] = corner_weights
