@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 ########## Hyper-parameters ##########
 ######################################
 
-input_save_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig6_Storage'
+input_save_path = str(paths.data / "Fig6_Storage") + "/"
 
 # Must match the stellar_types dict in Fig6_prerun.py / Fig6_run.py (only Teff/logg/MH are
 # needed here, for the panel titles).
@@ -51,7 +51,7 @@ stellar_types = {
     'C7': {'Teff': 5944.0, 'logg': 4.33, 'MH': 0.06}, # G-star
     'C6': {'Teff': 6556.0, 'logg': 3.89, 'MH': 0.06}, # F-star
 }
-star_order = ['C5', 'C1', 'C2', 'C7', 'C6']
+star_order = ['C1', 'C2', 'C5', 'C6', 'C7']
 
 # Must match the true, injected radius ratio in Fig6_prerun.py
 r_true = 0.1
@@ -122,28 +122,42 @@ def load_star_spectrum(star_name, LDLs, base_path):
 ########## Code block ##########
 ################################
 
-fig, axes = plt.subplots(
-    len(star_order), 1, figsize=(9, 4 * len(star_order)),
-    sharex=True, squeeze=False,
-)
-axes = axes[:, 0]
+# Layout: the first four stars fill a 2x2 grid, and the fifth (last) star sits centered
+# on its own row below, spanning the same width as one of the upper cells.
+fig = plt.figure(figsize=(16, 12))
+# Two independent GridSpecs so the row0-row1 gap can be tightened without touching the
+# (larger) gap above the centered row-2 plot.
+gs_top = fig.add_gridspec(nrows=2, ncols=4, hspace=0.15, wspace=0.3, top=0.95, bottom=0.42)
+gs_bottom = fig.add_gridspec(nrows=1, ncols=4, wspace=0.3, top=0.36, bottom=0.12)
+grid_slots = [gs_top[0, 0:2], gs_top[0, 2:4], gs_top[1, 0:2], gs_top[1, 2:4], gs_bottom[0, 1:3]]
+
+axes = []
+for slot in grid_slots:
+    axes.append(fig.add_subplot(slot, sharex=axes[0] if axes else None))
+bottom_axes = {axes[2], axes[3], axes[4]}
+right_yaxis_axes = {axes[1], axes[3]}  # second column
 
 true_depth_ppm = 1e6 * r_true**2
 
-for istar, star_name in enumerate(star_order):
+for istar, (star_name, ax) in enumerate(zip(star_order, axes)):
 
     print(f'Loading {star_name}...')
     wav_centers, spectra = load_star_spectrum(star_name, LDLs, input_save_path)
-    ax = axes[istar]
+
+    if ax in bottom_axes:
+        ax.set_xlabel('Wavelength (micron)', fontsize=fs)
+    else:
+        ax.tick_params(axis='x', labelbottom=False)
+
+    if ax in right_yaxis_axes:
+        ax.yaxis.tick_right()
+        ax.yaxis.set_label_position('right')
 
     if wav_centers is None:
         ax.text(0.5, 0.5, 'No runs found yet', ha='center', va='center',
                 transform=ax.transAxes, fontsize=fs, color='gray')
         ax.set_title(star_name, fontsize=fs)
         continue
-
-    ax.axhline(true_depth_ppm, color='gray', linestyle='--', linewidth=1.5, zorder=1,
-               label='Injected (flat) depth')
 
     for LDL in LDLs:
         r_median = spectra[LDL]['r_median']
@@ -152,9 +166,9 @@ for istar, star_name in enumerate(star_order):
 
         good = np.isfinite(r_median) & np.isfinite(r_lo) & np.isfinite(r_hi)
 
-        depth_ppm    = 1e6 * r_median[good]**2
-        depth_lo_ppm = 1e6 * r_lo[good]**2
-        depth_hi_ppm = 1e6 * r_hi[good]**2
+        depth_ppm    = 1e6 * r_median[good]**2 - true_depth_ppm
+        depth_lo_ppm = 1e6 * r_lo[good]**2 - true_depth_ppm
+        depth_hi_ppm = 1e6 * r_hi[good]**2 - true_depth_ppm
         yerr = np.vstack([depth_ppm - depth_lo_ppm, depth_hi_ppm - depth_ppm])
 
         ax.errorbar(
@@ -172,7 +186,7 @@ for istar, star_name in enumerate(star_order):
         f'($T_{{\\rm eff}}$={Teff:.0f} K, $\\log g$={logg:.2f}, [M/H]={MH:+.2f})',
         fontsize=fs,
     )
-    ax.set_ylabel('Transit depth (ppm)', fontsize=fs)
+    ax.set_ylabel('Transit depth $-$ truth (ppm)', fontsize=fs)
     ax.tick_params(axis='both', labelsize=fs - 2)
     ax.grid(True, alpha=0.3)
 
@@ -181,9 +195,7 @@ for ax in axes:
     if handles:
         ax.legend(fontsize=fs - 3, loc='best', framealpha=0.9)
         break
-axes[-1].set_xlabel('Wavelength (micron)', fontsize=fs)
 
-fig.tight_layout()
 plt.savefig(paths.figures / "Fig6.pdf", bbox_inches="tight")
 
 # Print a short summary of the induced bias per star / limb-darkening law (based on the
