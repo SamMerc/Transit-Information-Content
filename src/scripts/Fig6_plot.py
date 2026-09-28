@@ -17,6 +17,10 @@
 # Since Fig6_run.py is dispatched one (star, law, channel) combination at a time (e.g. as an
 # HPC job array), this script only assembles whichever channels have already been run --
 # channels without a summary.npz yet are simply left as gaps in the spectrum.
+#
+# Since each star's run directory contains thousands of small summary.npz files, the assembled
+# per-star result is cached to a single <star_name>_cache.pkl file the first time it's built
+# (mirroring the pattern used in Fig1_plot.py / Fig5_plot.py).
 
 
 ######################################
@@ -24,6 +28,7 @@
 ######################################
 
 import os
+import pickle
 import numpy as np
 import matplotlib
 import paths
@@ -35,7 +40,7 @@ import matplotlib.pyplot as plt
 ########## Hyper-parameters ##########
 ######################################
 
-input_save_path = str(paths.data / "Fig6_Storage") + "/"
+input_save_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig6_Storage'
 
 # Must match the stellar_types dict in Fig6_prerun.py / Fig6_run.py (only Teff/logg/MH are
 # needed here, for the panel titles).
@@ -69,7 +74,15 @@ def load_star_spectrum(star_name, LDLs, base_path):
     law arrays of the posterior median / 16th / 84th percentile radius ratio, indexed by
     wavelength channel. Channels whose summary.npz has not been produced yet (i.e. that
     combination hasn't been run) are left as NaN.
+
+    Results are cached to a single <star_name>_cache.pkl file so that repeated calls (and
+    repeated pipeline runs) don't need to re-scan the many per-channel summary.npz files.
     """
+    cache_file = os.path.join(base_path, star_name, f'{star_name}_cache.pkl')
+    if os.path.exists(cache_file):
+        with open(cache_file, 'rb') as f:
+            return pickle.load(f)
+
     wav_grid_file = os.path.join(base_path, star_name, 'wav_grid.npz')
     if not os.path.exists(wav_grid_file):
         return None, None
@@ -98,6 +111,9 @@ def load_star_spectrum(star_name, LDLs, base_path):
 
         print(f'  [{star_name}] {LDL}: {n_done}/{n_bins} channels completed')
         spectra[LDL] = dict(r_median=r_median, r_lo=r_lo, r_hi=r_hi)
+
+    with open(cache_file, 'wb') as f:
+        pickle.dump((wav_centers, spectra), f)
 
     return wav_centers, spectra
 

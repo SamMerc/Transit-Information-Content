@@ -25,7 +25,7 @@ dag:
 
 # Externally-hosted datasets, e.g. on Zenodo
 datasets:
-  10.5281/zenodo.22921441:
+  10.5281/zenodo.23004451:
     contents:
       Fig1_chains.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chains.npy
       Fig1_chi2_chain.npy: src/data/Fig1_Storage/PLD_3/359.000ppm/Seed100/chi2_chain.npy
@@ -48,6 +48,11 @@ datasets:
       Fig7_C3_bma_cache.pkl: src/data/Fig5_Storage/C3/processed_data_cache_bma.pkl
       Fig7_C4_bma_cache.pkl: src/data/Fig5_Storage/C4/processed_data_cache_bma.pkl
       Fig7_C7_bma_cache.pkl: src/data/Fig5_Storage/C7/processed_data_cache_bma.pkl
+      Fig6_C1_cache.pkl: src/data/Fig6_Storage/C1/C1_cache.pkl
+      Fig6_C2_cache.pkl: src/data/Fig6_Storage/C2/C2_cache.pkl
+      Fig6_C5_cache.pkl: src/data/Fig6_Storage/C5/C5_cache.pkl
+      Fig6_C6_cache.pkl: src/data/Fig6_Storage/C6/C6_cache.pkl
+      Fig6_C7_cache.pkl: src/data/Fig6_Storage/C7/C7_cache.pkl
 
 # Custom file dependencies
 dependencies:
@@ -65,11 +70,11 @@ dependencies:
   src/scripts/Appendix1_plot.py:
     - src/data/Fig3_Storage/mps1/results.npz
   src/scripts/Fig6_plot.py:
-    - src/data/Fig6_Storage/C5/prerun.npz
-    - src/data/Fig6_Storage/C1/prerun.npz
-    - src/data/Fig6_Storage/C2/prerun.npz
-    - src/data/Fig6_Storage/C7/prerun.npz
-    - src/data/Fig6_Storage/C6/prerun.npz
+    - src/data/Fig6_Storage/C1/C1_cache.pkl
+    - src/data/Fig6_Storage/C2/C2_cache.pkl
+    - src/data/Fig6_Storage/C5/C5_cache.pkl
+    - src/data/Fig6_Storage/C6/C6_cache.pkl
+    - src/data/Fig6_Storage/C7/C7_cache.pkl
   src/scripts/Fig5_plot.py:
     - src/data/Fig5_Storage/C0/processed_data_cache.pkl
     - src/data/Fig5_Storage/C2/processed_data_cache.pkl
