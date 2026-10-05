@@ -95,7 +95,7 @@ N_TOTAL_PTS = int(init_state_dic['times'].shape[0])   # total LC points used in 
 TRUE_DEPTH  = init_state_dic['r']**2
 
 #%% Grid parameters
-RAW_BASE_DIR = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig5_Storage/'#str(paths.data / 'Fig5_Storage') + '/'
+RAW_BASE_DIR = str(paths.data / 'Fig5_Storage') + '/'
 
 LDLs              = ['PLD_1', 'PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6', 'PLD_9', '4NLLD']
 REDUCED_LDLs      = ['PLD_1', 'PLD_2', 'PLD_3', '4NLLD']   # linear, quadratic, 3rd-order polynomial, 4th-order non-linear law
