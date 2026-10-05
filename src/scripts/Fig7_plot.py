@@ -95,7 +95,7 @@ N_TOTAL_PTS = int(init_state_dic['times'].shape[0])   # total LC points used in 
 TRUE_DEPTH  = init_state_dic['r']**2
 
 #%% Grid parameters
-RAW_BASE_DIR = str(paths.data / 'Fig5_Storage') + '/'
+RAW_BASE_DIR = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig5_Storage/'#str(paths.data / 'Fig5_Storage') + '/'
 
 LDLs              = ['PLD_1', 'PLD_2', 'PLD_3', 'PLD_4', 'PLD_5', 'PLD_6', 'PLD_9', '4NLLD']
 REDUCED_LDLs      = ['PLD_1', 'PLD_2', 'PLD_3', '4NLLD']   # linear, quadratic, 3rd-order polynomial, 4th-order non-linear law
@@ -344,7 +344,7 @@ def compute_bma_bias(cached_data, models_to_use):
 
             bma_mean = pooled_depth.mean()
             bma_std  = pooled_depth.std()
-            biases.append(np.abs(bma_mean - TRUE_DEPTH) / bma_std)
+            biases.append(np.abs(bma_mean - TRUE_DEPTH)*1e6)
 
         biases_by_prior[prior_strength] = np.array(biases)
 
@@ -352,7 +352,7 @@ def compute_bma_bias(cached_data, models_to_use):
 
 
 def plot_bma_row(ax, all_biases_by_prior, reduced_biases_by_prior, c_label,
-                 show_xticklabels, show_no_bias_text, y_side='left'):
+                 show_xticklabels, y_side='left'):
     """
     Draw one C-label panel: for each prior strength, a pair of boxplots (10 seeds
     each) sharing the prior strength's xtick -- BMA bias using all fitted LDLs
@@ -387,7 +387,7 @@ def plot_bma_row(ax, all_biases_by_prior, reduced_biases_by_prior, c_label,
         )
 
     ax.set_yscale('log')
-    ax.set_ylim([0.03, 120])
+    ax.set_ylim([0.01, 20])
     ax.set_xlim([0.4, len(prior_strengths) + 0.6])
 
     ax.set_xticks(positions)
@@ -396,22 +396,19 @@ def plot_bma_row(ax, all_biases_by_prior, reduced_biases_by_prior, c_label,
     else:
         ax.set_xticklabels([])
 
-    ax.set_ylabel(r'BMA Transit Depth Bias ($\sigma$)', fontsize=11)
+    ax.set_ylabel(r'BMA Transit Depth Bias (ppm)', fontsize=11)
     if y_side == 'right':
         ax.yaxis.tick_right()
         ax.yaxis.set_label_position('right')
+    ax.set_yticks([0.01, 0.1, 1, 10])
+    ax.set_yticklabels([0.01, 0.1, 1, 10])
 
     ax.set_title(C_LABEL_NAMES[c_label], fontsize=12, fontweight='bold', loc='left')
-
-    band_kwargs = dict(facecolor='green', alpha=0.2, edgecolor='none', zorder=-1)
-    ax.axhspan(0.1, 2.0, **band_kwargs)
-    if show_no_bias_text:
-        ax.text(0.5, 2.2, r'No bias', fontsize=10, color='seagreen')
 
     grid_color = '0.85'
     for pos in positions:
         ax.axvline(pos, color=grid_color, zorder=0)
-    for val in [0.1, 1, 10, 100]:
+    for val in [0.01, 0.1, 1, 10]:
         ax.axhline(val, color=grid_color, zorder=0)
 
 
@@ -435,7 +432,6 @@ def build_and_save_bma_figure(all_biases, reduced_biases, out_name):
     legend_elements = [
         Patch(facecolor='0.5', edgecolor='0.5', alpha=0.85, label='All limb-darkening laws'),
         Patch(facecolor='0.5', edgecolor='0.5', alpha=0.4, label='Reduced limb-darkening laws'),
-        Patch(facecolor='green', edgecolor='none', alpha=0.2, label='No bias'),
     ]
 
     if len(available_c_labels) == 5:
@@ -458,7 +454,6 @@ def build_and_save_bma_figure(all_biases, reduced_biases, out_name):
             plot_bma_row(
                 ax, all_biases[c_label], reduced_biases[c_label], c_label,
                 show_xticklabels=(ax in bottom_axes),
-                show_no_bias_text=False,
                 y_side='right' if ax in right_yaxis_axes else 'left',
             )
 
@@ -474,7 +469,6 @@ def build_and_save_bma_figure(all_biases, reduced_biases, out_name):
             plot_bma_row(
                 axes_arr[ic, 0], all_biases[c_label], reduced_biases[c_label], c_label,
                 show_xticklabels=(ic == n_rows - 1),
-                show_no_bias_text=False,
             )
 
         fig.legend(handles=legend_elements, loc='upper center', ncol=3,
