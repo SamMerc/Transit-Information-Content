@@ -167,7 +167,7 @@ for model in models:
         plt.Line2D([0], [0], color='black', linestyle='-.', linewidth=1.8, label='Restricted $\\mu$ grid fit'),
     ]
     fig5.legend(handles=fit_style_handles, loc='upper center', ncol=2,
-                fontsize=fs, frameon=False, bbox_to_anchor=(0.5, 1.04))
+                fontsize=fs+2, frameon=False, bbox_to_anchor=(0.5, 1.01))
 
     plt.savefig(paths.figures / "Appendix7.pdf", bbox_inches="tight")
 

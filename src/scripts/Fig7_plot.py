@@ -53,6 +53,7 @@ from tqdm import tqdm
 from multiprocessing import Pool
 import gc
 import matplotlib.gridspec as gridspec
+from matplotlib.patches import Patch
 
 
 #############################################
@@ -350,22 +351,38 @@ def compute_bma_bias(cached_data, models_to_use):
     return biases_by_prior
 
 
-def plot_bma_row(ax, biases_by_prior, c_label, is_bottom_row, is_left_col):
-    """Draw one C-label panel: a boxplot of BMA bias (10 seeds) per prior strength."""
+def plot_bma_row(ax, all_biases_by_prior, reduced_biases_by_prior, c_label,
+                 show_xticklabels, show_no_bias_text, y_side='left'):
+    """
+    Draw one C-label panel: for each prior strength, a pair of boxplots (10 seeds
+    each) sharing the prior strength's xtick -- BMA bias using all fitted LDLs
+    (slightly before the tick) and using the reduced LDL set (slightly after it).
+    """
     positions = np.arange(1, len(prior_strengths) + 1)
+    offset    = 0.17
+    width     = 0.28
 
     for ips, (prior_strength, prior_label, color) in enumerate(
         zip(prior_strengths, prior_strengths_labels, PRIOR_COLORS)
     ):
-        data = biases_by_prior[prior_strength]
         ax.boxplot(
-            data, positions=[positions[ips]], patch_artist=True,
+            all_biases_by_prior[prior_strength], positions=[positions[ips] - offset], patch_artist=True,
             boxprops=dict(facecolor=color, color=color, alpha=0.85),
-            widths=[0.5],
+            widths=[width],
             medianprops=dict(color='gold', linewidth=1.5),
             whiskerprops=dict(color=color, linewidth=1.5),
             capprops=dict(color=color, linewidth=1.5),
             flierprops=dict(marker='o', color=color, markersize=5),
+            showfliers=False,
+        )
+        ax.boxplot(
+            reduced_biases_by_prior[prior_strength], positions=[positions[ips] + offset], patch_artist=True,
+            boxprops=dict(facecolor=color, edgecolor=color, alpha=0.4),
+            widths=[width],
+            medianprops=dict(color='gold', linewidth=1.5, alpha=0.4),
+            whiskerprops=dict(color=color, linewidth=1.5, alpha=0.4),
+            capprops=dict(color=color, linewidth=1.5, alpha=0.4),
+            flierprops=dict(marker='o', color=color, markersize=5, alpha=0.4),
             showfliers=False,
         )
 
@@ -374,18 +391,21 @@ def plot_bma_row(ax, biases_by_prior, c_label, is_bottom_row, is_left_col):
     ax.set_xlim([0.4, len(prior_strengths) + 0.6])
 
     ax.set_xticks(positions)
-    if is_bottom_row:
+    if show_xticklabels:
         ax.set_xticklabels(prior_strengths_labels, fontsize=10)
     else:
         ax.set_xticklabels([])
 
-    if is_left_col:
-        ax.set_ylabel(r'BMA Transit Depth Bias ($\sigma$)', fontsize=11)
+    ax.set_ylabel(r'BMA Transit Depth Bias ($\sigma$)', fontsize=11)
+    if y_side == 'right':
+        ax.yaxis.tick_right()
+        ax.yaxis.set_label_position('right')
+
     ax.set_title(C_LABEL_NAMES[c_label], fontsize=12, fontweight='bold', loc='left')
 
     band_kwargs = dict(facecolor='green', alpha=0.2, edgecolor='none', zorder=-1)
     ax.axhspan(0.1, 2.0, **band_kwargs)
-    if is_bottom_row and is_left_col:
+    if show_no_bias_text:
         ax.text(0.5, 2.2, r'No bias', fontsize=10, color='seagreen')
 
     grid_color = '0.85'
@@ -395,30 +415,73 @@ def plot_bma_row(ax, biases_by_prior, c_label, is_bottom_row, is_left_col):
         ax.axhline(val, color=grid_color, zorder=0)
 
 
-def build_and_save_bma_figure(biases_per_column, column_titles, out_name):
+def build_and_save_bma_figure(all_biases, reduced_biases, out_name):
     """
-    Build the BMA bias figure and save it to paths.figures. Each entry of
-    `biases_per_column` ({c_label: biases_by_prior}) is drawn as one column,
-    with one row per C label.
+    Build the BMA bias figure and save it to paths.figures. Each panel shows,
+    for every prior strength, a pair of boxplots sharing that prior strength's
+    xtick -- BMA bias using all fitted LDLs (`all_biases`, left of the tick) and
+    using the reduced LDL set (`reduced_biases`, right of it).
+
+    Layout (mirrors Fig6_plot.py): if all 5 C labels are available, the first
+    four fill a 2x2 grid and the fifth sits centered on its own row below,
+    spanning the same width as one of the upper cells. Otherwise falls back to
+    a simple single-column stack (e.g. while only some C-label caches exist).
     """
-    available_c_labels = [c_label for c_label in C_LABELS if c_label in biases_per_column[0]]
+    available_c_labels = [c_label for c_label in C_LABELS if c_label in all_biases]
     if not available_c_labels:
         print(f"Skipping {out_name}: no data available.")
         return
 
-    n_rows     = len(available_c_labels)
-    n_cols     = len(biases_per_column)
-    fig, axes  = plt.subplots(n_rows, n_cols, figsize=(8 * n_cols, n_rows * 3.2),
-                              sharex=True, sharey=True, squeeze=False)
+    legend_elements = [
+        Patch(facecolor='0.5', edgecolor='0.5', alpha=0.85, label='All limb-darkening laws'),
+        Patch(facecolor='0.5', edgecolor='0.5', alpha=0.4, label='Reduced limb-darkening laws'),
+        Patch(facecolor='green', edgecolor='none', alpha=0.2, label='No bias'),
+    ]
 
-    for icol, (all_biases, col_title) in enumerate(zip(biases_per_column, column_titles)):
+    if len(available_c_labels) == 5:
+        fig = plt.figure(figsize=(16, 10))
+        # Two independent GridSpecs so the row0-row1 gap can be tightened without
+        # touching the (larger) gap above the centered row-2 plot.
+        gs_top    = fig.add_gridspec(nrows=2, ncols=4, hspace=0.3, wspace=0.3, top=0.90, bottom=0.42)
+        gs_bottom = fig.add_gridspec(nrows=1, ncols=4, wspace=0.3, top=0.36, bottom=0.12)
+        grid_slots = [gs_top[0, 0:2], gs_top[0, 2:4], gs_top[1, 0:2], gs_top[1, 2:4], gs_bottom[0, 1:3]]
+
+        axes = []
+        for slot in grid_slots:
+            axes.append(fig.add_subplot(
+                slot, sharex=axes[0] if axes else None, sharey=axes[0] if axes else None
+            ))
+        bottom_axes      = {axes[2], axes[3], axes[4]}
+        right_yaxis_axes = {axes[1], axes[3]}   # second column of the top grid
+
+        for ic, (c_label, ax) in enumerate(zip(available_c_labels, axes)):
+            plot_bma_row(
+                ax, all_biases[c_label], reduced_biases[c_label], c_label,
+                show_xticklabels=(ax in bottom_axes),
+                show_no_bias_text=False,
+                y_side='right' if ax in right_yaxis_axes else 'left',
+            )
+
+        fig.legend(handles=legend_elements, loc='upper center', ncol=3,
+                   bbox_to_anchor=(0.5, 0.97), fontsize=11, frameon=False)
+
+    else:
+        n_rows    = len(available_c_labels)
+        fig, axes_arr = plt.subplots(n_rows, 1, figsize=(8, n_rows * 2.0),
+                                     sharex=True, sharey=True, squeeze=False)
+
         for ic, c_label in enumerate(available_c_labels):
-            is_bottom = (ic == n_rows - 1)
-            plot_bma_row(axes[ic, icol], all_biases[c_label], c_label, is_bottom, icol == 0)
-        axes[0, icol].annotate(col_title, xy=(0.5, 1.25), xycoords='axes fraction',
-                               ha='center', va='bottom', fontsize=14, fontweight='bold')
+            plot_bma_row(
+                axes_arr[ic, 0], all_biases[c_label], reduced_biases[c_label], c_label,
+                show_xticklabels=(ic == n_rows - 1),
+                show_no_bias_text=False,
+            )
 
-    fig.tight_layout()
+        fig.legend(handles=legend_elements, loc='upper center', ncol=3,
+                   bbox_to_anchor=(0.5, 1.02), fontsize=11, frameon=False)
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.12)
+
     plt.savefig(paths.figures / f"{out_name}.pdf", bbox_inches="tight")
     plt.close(fig)
     print(f"{out_name}.pdf saved.")
@@ -452,6 +515,4 @@ if __name__ == '__main__':
         for c_label, cached_data in all_cached_data.items()
     }
 
-    build_and_save_bma_figure([all_biases, reduced_biases],
-                              ['All limb-darkening laws', 'Reduced set of limb-darkening laws'],
-                              "Fig7")
+    build_and_save_bma_figure(all_biases, reduced_biases, "Fig7")
