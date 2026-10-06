@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 ########## Hyper-parameters ##########
 ######################################
 
-input_save_path = str(paths.data / "Fig6_Storage") + "/"
+input_save_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig6_Storage/' #str(paths.data / "Fig6_Storage") + "/"
 
 # Must match the stellar_types dict in Fig6_prerun.py / Fig6_run.py (only Teff/logg/MH are
 # needed here, for the panel titles).
@@ -128,7 +128,7 @@ fig = plt.figure(figsize=(16, 12))
 # Two independent GridSpecs so the row0-row1 gap can be tightened without touching the
 # (larger) gap above the centered row-2 plot.
 gs_top = fig.add_gridspec(nrows=2, ncols=4, hspace=0.15, wspace=0.3, top=0.95, bottom=0.42)
-gs_bottom = fig.add_gridspec(nrows=1, ncols=4, wspace=0.3, top=0.36, bottom=0.12)
+gs_bottom = fig.add_gridspec(nrows=1, ncols=4, wspace=0.3, top=0.35, bottom=0.11)
 grid_slots = [gs_top[0, 0:2], gs_top[0, 2:4], gs_top[1, 0:2], gs_top[1, 2:4], gs_bottom[0, 1:3]]
 
 axes = []
@@ -182,8 +182,8 @@ for istar, (star_name, ax) in enumerate(zip(star_order, axes)):
     logg = stellar_types[star_name]['logg']
     MH   = stellar_types[star_name]['MH']
     ax.set_title(
-        f'{star_name} '
-        f'($T_{{\\rm eff}}$={Teff:.0f} K, $\\log g$={logg:.2f}, [M/H]={MH:+.2f})',
+        f'Cluster {star_name[1]} '
+        f'($T_{{\\rm eff}}$={Teff:.0f} K, $\\log g$={logg:.2f}, [M/H]={MH:.2f})',
         fontsize=fs,
     )
     ax.set_ylabel('Transit depth $-$ truth (ppm)', fontsize=fs)
