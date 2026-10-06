@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 ########## Hyper-parameters ##########
 ######################################
 
-input_save_path = '/Volumes/Ajax/Work/PhD/Research/Transit-Information-Content/Fig6_Storage/' #str(paths.data / "Fig6_Storage") + "/"
+input_save_path = str(paths.data / "Fig6_Storage") + "/"
 
 # Must match the stellar_types dict in Fig6_prerun.py / Fig6_run.py (only Teff/logg/MH are
 # needed here, for the panel titles).
