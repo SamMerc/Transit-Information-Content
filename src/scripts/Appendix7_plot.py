@@ -163,7 +163,7 @@ for model in models:
     ax5[1, 0].set_ylim([-0.5, 0.5])
 
     fit_style_handles = [
-        plt.Line2D([0], [0], color='black', linestyle='--',  linewidth=1.8, label='Native $\\mu$ grid fit'),
+        plt.Line2D([0], [0], color='black', linestyle='--',  linewidth=1.8, label='Original $\\mu$ grid fit'),
         plt.Line2D([0], [0], color='black', linestyle='-.', linewidth=1.8, label='Restricted $\\mu$ grid fit'),
     ]
     fig5.legend(handles=fit_style_handles, loc='upper center', ncol=2,
