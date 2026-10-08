@@ -560,6 +560,10 @@ plt.close()
 r_median = float(np.median(post_chain[:, 0]))
 r_lo, r_hi = np.percentile(post_chain[:, 0], [16, 84])
 r_bestfit = float(bestfit_theta[0])
+# Standard deviation of the cleaned, post-burn-in r chain -- used by Fig6_plot.py for the
+# amplification factor, A = (2 * r_std * r_bestfit) / scatter_in_bin (see Fig1_plot.py /
+# Fig5_plot.py's compute_amplification_factor_jax).
+r_std = float(np.std(post_chain[:, 0]))
 
 LD_median = np.median(post_chain[:, i_LD], axis=0)
 LD_lo, LD_hi = np.percentile(post_chain[:, i_LD], [16, 84], axis=0)
@@ -577,7 +581,7 @@ np.savez(
     wav_um=wav_centers[i_bin],
     true_LDCs=true_c,
     r_true=r_true,
-    r_median=r_median, r_lo=r_lo, r_hi=r_hi, r_bestfit=r_bestfit,
+    r_median=r_median, r_lo=r_lo, r_hi=r_hi, r_bestfit=r_bestfit, r_std=r_std,
     LD_median=LD_median, LD_lo=LD_lo, LD_hi=LD_hi,
     shared_param_names=np.array(shared_param_names),
     orb_median=orb_median, orb_lo=orb_lo, orb_hi=orb_hi,

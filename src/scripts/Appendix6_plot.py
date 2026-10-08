@@ -412,8 +412,8 @@ def plot_two_rows(fig, outer_gs_cell, cached_data, c_label, is_bottom_row):
     for ax in [ax2, ax2m, ax2r]: ax.axhspan(0.1, 2.0, **band_kwargs)
     for ax in [ax1, ax1m, ax1r]: ax.axhline(np.sqrt(3/2), linestyle='dashed', color='black')
     ax1.text(2.4, np.sqrt(3/2) + 0.2, r'Theoretical limit @ $\sqrt{3/2}$', fontsize=10, color='black')
-    ax1.text(1.6, 6.4,   r'Acceptable $A$', fontsize=10, color='seagreen')
-    ax2.text(1.6, 2.1, r'No bias',        fontsize=10, color='seagreen')
+    ax1.text(1.0, 6.4,   r'Acceptable $A$', fontsize=10, color='seagreen')
+    ax2.text(1.0, 2.1, r'No bias',        fontsize=10, color='seagreen')
 
     # ── Grid lines ─────────────────────────────────────────────────────────
     grid_color = '0.8'
@@ -445,8 +445,8 @@ def build_and_save_figure(c_labels, all_cached_data, out_name):
         return
 
     n_panels   = len(available_c_labels)
-    fig_height = n_panels * 6
-    fig = plt.figure(figsize=(13, fig_height))
+    fig_height = n_panels * 5
+    fig = plt.figure(figsize=(14, fig_height))
 
     outer_gs = gridspec.GridSpec(n_panels, 1, hspace=0.1, figure=fig)
 
