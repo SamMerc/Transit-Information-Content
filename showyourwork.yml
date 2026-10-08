@@ -90,9 +90,15 @@ dependencies:
     - src/data/Fig5_Storage/C4/processed_data_cache_bma.pkl
     - src/data/Fig5_Storage/C7/processed_data_cache_bma.pkl
   src/scripts/Appendix7_plot.py:
-    - src/data/Fig3_Storage/mps1/results.npz
+    - src/data/Fig6_Storage/C1/C1_cache.pkl
+    - src/data/Fig6_Storage/C2/C2_cache.pkl
+    - src/data/Fig6_Storage/C5/C5_cache.pkl
+    - src/data/Fig6_Storage/C6/C6_cache.pkl
+    - src/data/Fig6_Storage/C7/C7_cache.pkl
   src/scripts/Appendix8_plot.py:
     - src/data/Fig5_Storage/C0_restricted/processed_data_cache.pkl
+  src/scripts/Appendix9_plot.py:
+    - src/data/Fig3_Storage/mps1/results.npz
   # src/tex/ms.tex:
   #   - src/tex/stylesheet.tex
 
