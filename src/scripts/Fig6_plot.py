@@ -274,18 +274,18 @@ for istar, (star_name, amp_ax, bias_ax) in enumerate(zip(star_order, amp_axes, b
         ax.tick_params(axis='both', labelsize=fs - 2)
         ax.grid(True, alpha=0.3)
 
-for ax in list(amp_axes) + list(bias_axes):
-    handles, labels = ax.get_legend_handles_labels()
-    if handles:
-        ax.legend(fontsize=fs - 3, loc='best', framealpha=0.9)
-        break
+# for ax in list(amp_axes) + list(bias_axes):
+#     handles, labels = ax.get_legend_handles_labels()
+#     if handles:
+#         ax.legend(fontsize=fs - 3, loc='best', framealpha=0.9)
+#         break
 
 plt.savefig(paths.figures / "Fig6.pdf", bbox_inches="tight")
 
 # Print a short summary of the induced bias and amplification factor per star / limb-darkening
 # law (based on the posterior median depth, for whichever channels have been run so far)
 print(f'\n  {"Star":<10}  {"LDL":<22}  {"N channels":>10}  {"RMS bias (ppm)":>15}  '
-      f'{"Max |bias| (ppm)":>18}  {"P2P bias (ppm)":>15}  {"Median A":>10}')
+      f'{"Max |bias| (ppm)":>18}  {"P2P bias (ppm)":>15}  {"A decrease factor":>10}')
 print(f'  {"-"*113}')
 for star_name in star_order:
     wav_centers, spectra = load_star_spectrum(star_name, LDLs, input_save_path)
@@ -302,4 +302,4 @@ for star_name in star_order:
         amp_factor = compute_amplification_factor(r_bestfit[good], r_std[good])
         print(f'  {star_name:<10}  {LDL_labels[LDL]:<22}  {np.sum(good):>10d}  '
               f'{np.sqrt(np.mean(depth_ppm**2)):>15.2f}  {np.max(np.abs(depth_ppm)):>18.2f}  '
-              f'{np.ptp(depth_ppm):>15.2f}  {np.median(amp_factor):>10.2f}')
+              f'{np.ptp(depth_ppm):>15.2f}  {amp_factor[0]/amp_factor[-1]:>10.2f}')
